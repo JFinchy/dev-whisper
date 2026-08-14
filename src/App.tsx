@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 type RecordingState = "idle" | "recording";
@@ -7,8 +9,26 @@ function App() {
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  useEffect(() => {
+    const unlistenStart = listen("recording-started", () => setRecordingState("recording"));
+    const unlistenStop = listen("recording-stopped", (event) => {
+      setRecordingState("idle");
+      console.log("recording saved to", event.payload);
+    });
+    const unlistenError = listen<string>("recording-error", (event) => {
+      setRecordingState("idle");
+      console.error("recording error:", event.payload);
+    });
+
+    return () => {
+      unlistenStart.then((f) => f());
+      unlistenStop.then((f) => f());
+      unlistenError.then((f) => f());
+    };
+  }, []);
+
   function toggleRecording() {
-    setRecordingState((prev) => (prev === "idle" ? "recording" : "idle"));
+    invoke("toggle_recording_command");
   }
 
   if (settingsOpen) {

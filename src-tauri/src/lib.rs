@@ -1,16 +1,31 @@
+mod audio;
+mod hotkey;
+mod recording;
+
+use std::sync::atomic::AtomicBool;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
     Manager,
 };
 
+use audio::AudioHandle;
+use recording::{toggle_recording_command, RecordingState};
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .manage(RecordingState {
+            audio: AudioHandle::spawn(),
+            is_recording: AtomicBool::new(false),
+        })
+        .invoke_handler(tauri::generate_handler![toggle_recording_command])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            hotkey::register(app.handle().clone());
 
             let toggle_widget = MenuItem::with_id(app, "toggle_widget", "Show/Hide Widget", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
