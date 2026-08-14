@@ -1,0 +1,5 @@
+[env]
+# Tauri defaults to 10.13 for broad compatibility, but whisper.cpp's use of
+# C++17 std::filesystem requires 10.15+. This is a local dev tool for
+# Apple Silicon only, so pinning to a modern target is fine.
+MACOSX_DEPLOYMENT_TARGET = "12.0"

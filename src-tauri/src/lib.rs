@@ -1,7 +1,10 @@
 mod audio;
 mod hotkey;
+mod paste;
 mod recording;
+mod stt;
 
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -11,6 +14,11 @@ use tauri::{
 
 use audio::AudioHandle;
 use recording::{toggle_recording_command, RecordingState};
+use stt::WhisperEngine;
+
+fn model_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("models/ggml-base.en-q5_1.bin")
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,6 +26,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(RecordingState {
             audio: AudioHandle::spawn(),
+            whisper: WhisperEngine::new(model_path()),
             is_recording: AtomicBool::new(false),
         })
         .invoke_handler(tauri::generate_handler![toggle_recording_command])

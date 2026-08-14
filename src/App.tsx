@@ -3,27 +3,46 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
-type RecordingState = "idle" | "recording";
+type Phase = "idle" | "recording" | "transcribing";
+
+const STATUS_LABEL: Record<Phase, string> = {
+  idle: "Ready",
+  recording: "Listening…",
+  transcribing: "Transcribing…",
+};
 
 function App() {
-  const [recordingState, setRecordingState] = useState<RecordingState>("idle");
+  const [phase, setPhase] = useState<Phase>("idle");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [flashMessage, setFlashMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    const unlistenStart = listen("recording-started", () => setRecordingState("recording"));
-    const unlistenStop = listen("recording-stopped", (event) => {
-      setRecordingState("idle");
-      console.log("recording saved to", event.payload);
+    function flash(message: string) {
+      setFlashMessage(message);
+      setTimeout(() => setFlashMessage(null), 2000);
+    }
+
+    const unlistenStart = listen("recording-started", () => setPhase("recording"));
+    const unlistenStop = listen("recording-stopped", () => setPhase("transcribing"));
+    const unlistenRecordingError = listen<string>("recording-error", (event) => {
+      setPhase("idle");
+      flash(event.payload);
     });
-    const unlistenError = listen<string>("recording-error", (event) => {
-      setRecordingState("idle");
-      console.error("recording error:", event.payload);
+    const unlistenTranscriptReady = listen<string>("transcript-ready", () => {
+      setPhase("idle");
+      flash("Pasted");
+    });
+    const unlistenTranscriptError = listen<string>("transcript-error", (event) => {
+      setPhase("idle");
+      flash(event.payload);
     });
 
     return () => {
       unlistenStart.then((f) => f());
       unlistenStop.then((f) => f());
-      unlistenError.then((f) => f());
+      unlistenRecordingError.then((f) => f());
+      unlistenTranscriptReady.then((f) => f());
+      unlistenTranscriptError.then((f) => f());
     };
   }, []);
 
@@ -60,19 +79,24 @@ function App() {
     <main className="flex h-screen items-center gap-2.5 rounded-2xl border border-white/10 bg-neutral/90 px-3.5 text-neutral-content backdrop-blur-md [-webkit-app-region:drag]">
       <button
         className={`btn btn-circle btn-sm border-none [-webkit-app-region:no-drag] ${
-          recordingState === "recording" ? "bg-white/15" : "bg-white/8 hover:bg-white/15"
+          phase === "recording" ? "bg-white/15" : "bg-white/8 hover:bg-white/15"
         }`}
         onClick={toggleRecording}
-        aria-label={recordingState === "idle" ? "Start recording" : "Stop recording"}
+        disabled={phase === "transcribing"}
+        aria-label={phase === "idle" ? "Start recording" : "Stop recording"}
       >
-        <span
-          className={`h-2.5 w-2.5 rounded-full transition-colors ${
-            recordingState === "recording" ? "bg-error shadow-[0_0_8px] shadow-error" : "bg-neutral-content/40"
-          }`}
-        />
+        {phase === "transcribing" ? (
+          <span className="loading loading-spinner loading-xs" />
+        ) : (
+          <span
+            className={`h-2.5 w-2.5 rounded-full transition-colors ${
+              phase === "recording" ? "bg-error shadow-[0_0_8px] shadow-error" : "bg-neutral-content/40"
+            }`}
+          />
+        )}
       </button>
       <span className="flex-1 truncate text-sm opacity-75">
-        {recordingState === "idle" ? "Ready" : "Listening…"}
+        {flashMessage ?? STATUS_LABEL[phase]}
       </span>
       <button
         className="btn btn-ghost btn-xs btn-circle [-webkit-app-region:no-drag]"

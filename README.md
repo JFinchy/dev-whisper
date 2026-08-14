@@ -1,6 +1,19 @@
-# Tauri + React + Typescript
+# Dev Whisper
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+Local, privacy-first dictation for developers. See `PRODUCT_SPEC.md` for the
+full product spec and build plan.
+
+## Setup
+
+```sh
+bun install
+./scripts/download-model.sh   # downloads the ggml whisper model (~57MB)
+bun run tauri dev
+```
+
+The global push-to-talk hotkey (Cmd+Shift+Space) and paste simulation
+require macOS Accessibility permission; microphone capture requires
+Microphone permission. macOS will prompt for both on first use.
 
 ## Recommended IDE Setup
 
