@@ -30,6 +30,12 @@ pub fn toggle_recording(app: &AppHandle) {
         }
     } else {
         state.audio.start();
+        // The widget starts hidden; without this, triggering a recording via
+        // the global hotkey gives no visual feedback that it's running.
+        if let Some(window) = app.get_webview_window("widget") {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
         let _ = app.emit("recording-started", ());
     }
 }
@@ -57,4 +63,24 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
 #[tauri::command]
 pub fn toggle_recording_command(app: AppHandle) {
     toggle_recording(&app);
+}
+
+#[tauri::command]
+pub fn list_input_devices() -> Vec<String> {
+    crate::audio::list_device_names()
+}
+
+/// Whichever device recording will actually use next: the explicit
+/// selection if one was made, otherwise whatever cpal resolves as default.
+#[tauri::command]
+pub fn get_active_input_device(state: tauri::State<RecordingState>) -> Option<String> {
+    state
+        .audio
+        .selected_device()
+        .or_else(crate::audio::default_device_name)
+}
+
+#[tauri::command]
+pub fn set_input_device(name: Option<String>, state: tauri::State<RecordingState>) {
+    state.audio.set_device(name);
 }

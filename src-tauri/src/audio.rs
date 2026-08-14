@@ -15,11 +15,17 @@ enum AudioCommand {
 /// commands sent over this channel instead.
 pub struct AudioHandle {
     tx: Sender<AudioCommand>,
+    /// `None` means "use the system default input device". Shared with the
+    /// audio thread so a device picked in Settings takes effect on the next
+    /// recording without needing a dedicated command/round-trip.
+    selected_device: Arc<Mutex<Option<String>>>,
 }
 
 impl AudioHandle {
     pub fn spawn() -> Self {
         let (tx, rx) = mpsc::channel::<AudioCommand>();
+        let selected_device: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let selected_device_thread = selected_device.clone();
 
         std::thread::spawn(move || {
             let mut active_stream: Option<cpal::Stream> = None;
@@ -34,7 +40,8 @@ impl AudioHandle {
                             continue;
                         }
                         samples.lock().unwrap().clear();
-                        match build_input_stream(samples.clone()) {
+                        let device_name = selected_device_thread.lock().unwrap().clone();
+                        match build_input_stream(samples.clone(), device_name.as_deref()) {
                             Ok((stream, rate, chans)) => {
                                 sample_rate = rate;
                                 channels = chans;
@@ -62,7 +69,10 @@ impl AudioHandle {
             }
         });
 
-        Self { tx }
+        Self {
+            tx,
+            selected_device,
+        }
     }
 
     pub fn start(&self) {
@@ -78,15 +88,48 @@ impl AudioHandle {
             .recv()
             .map_err(|_| "audio thread did not respond".to_string())?
     }
+
+    /// `None` resets to the system default input device.
+    pub fn set_device(&self, name: Option<String>) {
+        *self.selected_device.lock().unwrap() = name;
+    }
+
+    /// The explicitly selected device, if any (does not resolve the default).
+    pub fn selected_device(&self) -> Option<String> {
+        self.selected_device.lock().unwrap().clone()
+    }
+}
+
+/// Names of all available input devices, for the settings picker.
+pub fn list_device_names() -> Vec<String> {
+    let host = cpal::default_host();
+    host.input_devices()
+        .map(|devices| devices.filter_map(|d| d.name().ok()).collect())
+        .unwrap_or_default()
+}
+
+/// The name of whichever device cpal would pick with no explicit selection.
+pub fn default_device_name() -> Option<String> {
+    cpal::default_host()
+        .default_input_device()
+        .and_then(|d| d.name().ok())
 }
 
 fn build_input_stream(
     samples: Arc<Mutex<Vec<f32>>>,
+    device_name: Option<&str>,
 ) -> Result<(cpal::Stream, u32, u16), String> {
     let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| "no input device available".to_string())?;
+    let device = match device_name {
+        Some(name) => host
+            .input_devices()
+            .map_err(|e| e.to_string())?
+            .find(|d| d.name().map(|n| n == name).unwrap_or(false))
+            .ok_or_else(|| format!("input device '{name}' not found"))?,
+        None => host
+            .default_input_device()
+            .ok_or_else(|| "no input device available".to_string())?,
+    };
     let config = device
         .default_input_config()
         .map_err(|e| e.to_string())?;

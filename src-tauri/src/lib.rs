@@ -13,11 +13,32 @@ use tauri::{
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 use audio::AudioHandle;
-use recording::{toggle_recording, toggle_recording_command, RecordingState};
+use recording::{
+    get_active_input_device, list_input_devices, set_input_device, toggle_recording,
+    toggle_recording_command, RecordingState,
+};
 use stt::WhisperEngine;
 
 fn model_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("models/ggml-base.en-q5_1.bin")
+}
+
+#[tauri::command]
+fn open_settings(app: tauri::AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window("settings") {
+        window.show()?;
+        window.set_focus()?;
+        return Ok(());
+    }
+
+    tauri::WebviewWindowBuilder::new(&app, "settings", tauri::WebviewUrl::App("index.html".into()))
+        .title("Dev Whisper Settings")
+        .inner_size(340.0, 300.0)
+        .resizable(false)
+        .center()
+        .build()?;
+
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -40,7 +61,13 @@ pub fn run() {
             whisper: WhisperEngine::new(model_path()),
             is_recording: AtomicBool::new(false),
         })
-        .invoke_handler(tauri::generate_handler![toggle_recording_command])
+        .invoke_handler(tauri::generate_handler![
+            toggle_recording_command,
+            open_settings,
+            list_input_devices,
+            get_active_input_device,
+            set_input_device,
+        ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
