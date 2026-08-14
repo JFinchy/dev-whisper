@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { LogicalSize } from "@tauri-apps/api/dpi";
 import "./App.css";
 
 type Phase = "idle" | "recording" | "transcribing";
@@ -11,10 +13,19 @@ const STATUS_LABEL: Record<Phase, string> = {
   transcribing: "Transcribing…",
 };
 
+const WIDGET_SIZE = new LogicalSize(220, 60);
+const SETTINGS_SIZE = new LogicalSize(220, 140);
+
 function App() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    getCurrentWindow()
+      .setSize(settingsOpen ? SETTINGS_SIZE : WIDGET_SIZE)
+      .catch((err) => console.error("failed to resize window:", err));
+  }, [settingsOpen]);
 
   useEffect(() => {
     function flash(message: string) {
@@ -47,7 +58,7 @@ function App() {
   }, []);
 
   function toggleRecording() {
-    invoke("toggle_recording_command");
+    invoke("toggle_recording_command").catch((err) => console.error("toggle_recording_command failed:", err));
   }
 
   if (settingsOpen) {
