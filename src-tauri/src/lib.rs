@@ -1,27 +1,28 @@
 mod audio;
+mod config;
+mod models;
 mod paste;
 mod recording;
+mod shortcut;
 mod stt;
 
-use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
+use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
     Manager,
 };
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState as PressState};
 
 use audio::AudioHandle;
+use models::{download_model, list_models, set_active_model};
 use recording::{
     get_active_input_device, list_input_devices, set_input_device, toggle_recording,
     toggle_recording_command, RecordingState,
 };
+use shortcut::{get_shortcut, set_shortcut, PushToTalkState};
 use stt::WhisperEngine;
-
-fn model_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("models/ggml-base.en-q5_1.bin")
-}
 
 #[tauri::command]
 fn open_settings(app: tauri::AppHandle) -> tauri::Result<()> {
@@ -31,48 +32,121 @@ fn open_settings(app: tauri::AppHandle) -> tauri::Result<()> {
         return Ok(());
     }
 
-    tauri::WebviewWindowBuilder::new(&app, "settings", tauri::WebviewUrl::App("index.html".into()))
-        .title("Dev Whisper Settings")
-        .inner_size(340.0, 300.0)
-        .resizable(false)
-        .center()
-        .build()?;
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        &app,
+        "settings",
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title("Dev Whisper Settings")
+    .inner_size(360.0, 420.0)
+    .resizable(false);
 
+    // Anchor settings just below the widget instead of both windows
+    // centering on top of each other.
+    if let Some(widget) = app.get_webview_window("widget") {
+        if let (Ok(pos), Ok(size), Ok(scale)) = (
+            widget.outer_position(),
+            widget.outer_size(),
+            widget.scale_factor(),
+        ) {
+            let logical_pos = pos.to_logical::<f64>(scale);
+            let logical_size = size.to_logical::<f64>(scale);
+            let gap = 12.0;
+            builder = builder.position(logical_pos.x, logical_pos.y + logical_size.height + gap);
+        } else {
+            builder = builder.center();
+        }
+    } else {
+        builder = builder.center();
+    }
+
+    builder.build()?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn prompt_for_accessibility_permission() {
+    // Shows the system permission dialog if not already granted. Spawned so
+    // the (potentially blocking) prompt doesn't delay startup.
+    std::thread::spawn(|| {
+        macos_accessibility_client::accessibility::application_is_trusted_with_prompt();
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let push_to_talk = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Space);
-
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(move |app, shortcut, event| {
-                    if *shortcut == push_to_talk && event.state == ShortcutState::Pressed {
-                        toggle_recording(app);
+                .with_handler(|app, triggered, event| {
+                    let state = app.state::<PushToTalkState>();
+                    let cfg = state.current.lock().unwrap().clone();
+                    if let Ok(expected) = shortcut::to_shortcut(&cfg) {
+                        if *triggered == expected && event.state == PressState::Pressed {
+                            toggle_recording(app);
+                        }
                     }
                 })
                 .build(),
         )
-        .manage(RecordingState {
-            audio: AudioHandle::spawn(),
-            whisper: WhisperEngine::new(model_path()),
-            is_recording: AtomicBool::new(false),
-        })
         .invoke_handler(tauri::generate_handler![
             toggle_recording_command,
             open_settings,
             list_input_devices,
             get_active_input_device,
             set_input_device,
+            get_shortcut,
+            set_shortcut,
+            list_models,
+            download_model,
+            set_active_model,
         ])
-        .setup(move |app| {
+        .setup(|app| {
             #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            {
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                prompt_for_accessibility_permission();
+            }
 
-            app.global_shortcut().register(push_to_talk)?;
+            let saved_config = config::load(app.handle());
+
+            let shortcut_cfg = saved_config.shortcut.clone().unwrap_or_default();
+            let initial_shortcut = shortcut::to_shortcut(&shortcut_cfg)?;
+            app.global_shortcut().register(initial_shortcut)?;
+            app.manage(PushToTalkState {
+                current: Mutex::new(shortcut_cfg),
+            });
+
+            let audio = AudioHandle::spawn();
+            audio.set_device(saved_config.input_device.clone());
+
+            let model_id = saved_config
+                .active_model
+                .clone()
+                .unwrap_or_else(|| models::default_model_id().to_string());
+            let model_path = models::resolve_model_path(app.handle(), &model_id)
+                .or_else(|| models::model_path(app.handle(), &model_id).ok())
+                .unwrap_or_default();
+            let whisper = WhisperEngine::new(model_id, model_path);
+
+            app.manage(RecordingState {
+                audio,
+                whisper,
+                is_recording: AtomicBool::new(false),
+            });
+
+            // Warm up the model in the background so the first real
+            // recording doesn't pay for Metal shader compilation, which can
+            // take several seconds and otherwise happens on the user's
+            // first "transcribing…".
+            let warm_app = app.handle().clone();
+            std::thread::spawn(move || {
+                let state = warm_app.state::<RecordingState>();
+                if let Err(err) = state.whisper.ensure_loaded() {
+                    eprintln!("model warm-up skipped: {err}");
+                }
+            });
 
             let toggle_widget = MenuItem::with_id(app, "toggle_widget", "Show/Hide Widget", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;

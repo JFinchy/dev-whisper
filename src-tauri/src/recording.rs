@@ -81,6 +81,10 @@ pub fn get_active_input_device(state: tauri::State<RecordingState>) -> Option<St
 }
 
 #[tauri::command]
-pub fn set_input_device(name: Option<String>, state: tauri::State<RecordingState>) {
-    state.audio.set_device(name);
+pub fn set_input_device(app: AppHandle, name: Option<String>, state: tauri::State<RecordingState>) {
+    state.audio.set_device(name.clone());
+
+    let mut cfg = crate::config::load(&app);
+    cfg.input_device = name;
+    let _ = crate::config::save(&app, &cfg);
 }

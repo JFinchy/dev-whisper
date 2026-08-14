@@ -58,3 +58,7 @@ Inspired by advanced continuous voice architectures (like OpenAI's third-generat
 
 - **Rubber Ducking Mode**: The local LLM will be system-prompted to utilize Socratic questioning. Instead of writing code for the user, the agent will analyze the active screen state and ask guiding questions to help the developer debug their logic autonomously.
 - **Local TTS Integration**: To complete the conversational loop, the app will integrate local, low-latency Text-to-Speech engines (such as Kokoro or Piper) to provide immediate vocal feedback to the developer without relying on cloud APIs.
+
+## 6. Backlog
+
+- **Single-Speaker Voice Isolation**: Explore isolating the primary user's voice from background noise before it reaches the STT engine — music playing in the room, other people talking, kids yelling in the background, etc. Candidate approaches to research: real-time voice activity detection (VAD) tuned to reject non-speech/music energy, speaker-embedding-based isolation (enroll the user's voice once, then filter subsequent audio against that embedding — e.g. techniques from speaker diarization or personalized VAD), or a local source-separation model (e.g. Demucs-style) run on the input stream before it hits Whisper. Meaningfully larger scope than the rest of the STT pipeline (needs its own model, enrollment UX, and a latency budget), so this needs a dedicated research/design pass rather than a quick add-on.

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type Phase = "idle" | "recording" | "transcribing";
 
@@ -52,10 +53,18 @@ function WidgetView() {
     invoke("open_settings").catch((err) => console.error("open_settings failed:", err));
   }
 
+  function startDrag(e: React.MouseEvent) {
+    if (e.buttons === 1) {
+      getCurrentWindow()
+        .startDragging()
+        .catch((err) => console.error("startDragging failed:", err));
+    }
+  }
+
   return (
-    <main className="flex h-screen items-center gap-2.5 rounded-2xl border border-white/10 bg-neutral/90 px-3.5 text-neutral-content backdrop-blur-md [-webkit-app-region:drag]">
+    <main className="flex h-screen items-center gap-2 rounded-2xl border border-white/10 bg-neutral/90 px-2.5 text-neutral-content backdrop-blur-md">
       <button
-        className={`btn btn-circle btn-sm border-none [-webkit-app-region:no-drag] ${
+        className={`btn btn-circle btn-sm border-none ${
           phase === "recording" ? "bg-white/15" : "bg-white/8 hover:bg-white/15"
         }`}
         onClick={toggleRecording}
@@ -72,11 +81,16 @@ function WidgetView() {
           />
         )}
       </button>
-      <span className="flex-1 truncate text-sm opacity-75">
+      {/* Drag handle: the buttons need full-area clicks, so only this
+          middle strip initiates a window drag. */}
+      <span
+        className="flex-1 cursor-grab truncate text-sm opacity-75 active:cursor-grabbing"
+        onMouseDown={startDrag}
+      >
         {flashMessage ?? STATUS_LABEL[phase]}
       </span>
       <button
-        className="btn btn-ghost btn-xs btn-circle [-webkit-app-region:no-drag]"
+        className="btn btn-ghost btn-circle h-7 w-7 min-h-0"
         onClick={openSettings}
         aria-label="Open settings"
       >

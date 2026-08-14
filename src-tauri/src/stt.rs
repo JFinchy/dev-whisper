@@ -11,29 +11,52 @@ React, TypeScript, npm, git, Docker, API, async, useState, useEffect, Tauri, Rus
 Whisper, CLI, terminal, iTerm, Neovim, init.lua, zshrc, MCP";
 
 pub struct WhisperEngine {
-    model_path: PathBuf,
+    model_id: Mutex<String>,
+    model_path: Mutex<PathBuf>,
     context: Mutex<Option<WhisperContext>>,
 }
 
 impl WhisperEngine {
-    pub fn new(model_path: PathBuf) -> Self {
+    pub fn new(model_id: String, model_path: PathBuf) -> Self {
         Self {
-            model_path,
+            model_id: Mutex::new(model_id),
+            model_path: Mutex::new(model_path),
             context: Mutex::new(None),
         }
     }
 
-    pub fn transcribe(&self, wav_path: &Path) -> Result<String, String> {
+    pub fn active_model_id(&self) -> String {
+        self.model_id.lock().unwrap().clone()
+    }
+
+    /// Switches which model transcribe() will use. The loaded context is
+    /// dropped so the new model gets loaded lazily on the next call.
+    pub fn set_model(&self, id: String, path: PathBuf) {
+        *self.model_id.lock().unwrap() = id;
+        *self.model_path.lock().unwrap() = path;
+        *self.context.lock().unwrap() = None;
+    }
+
+    /// Loads (or reuses) the whisper context. Exposed separately from
+    /// transcribe() so the app can warm it up at startup — first load pays
+    /// for Metal shader compilation, which is otherwise a multi-second
+    /// delay on the user's first recording.
+    pub fn ensure_loaded(&self) -> Result<(), String> {
         let mut guard = self.context.lock().unwrap();
-        if guard.is_none() {
-            let path_str = self
-                .model_path
-                .to_str()
-                .ok_or("model path is not valid UTF-8")?;
-            let ctx = WhisperContext::new_with_params(path_str, WhisperContextParameters::default())
-                .map_err(|e| format!("failed to load whisper model at {path_str}: {e}"))?;
-            *guard = Some(ctx);
+        if guard.is_some() {
+            return Ok(());
         }
+        let path = self.model_path.lock().unwrap().clone();
+        let path_str = path.to_str().ok_or("model path is not valid UTF-8")?;
+        let ctx = WhisperContext::new_with_params(path_str, WhisperContextParameters::default())
+            .map_err(|e| format!("failed to load whisper model at {path_str}: {e}"))?;
+        *guard = Some(ctx);
+        Ok(())
+    }
+
+    pub fn transcribe(&self, wav_path: &Path) -> Result<String, String> {
+        self.ensure_loaded()?;
+        let guard = self.context.lock().unwrap();
         let ctx = guard.as_ref().unwrap();
 
         let samples = load_samples_16k_mono(wav_path)?;
@@ -120,7 +143,7 @@ mod tests {
         let wav_path = std::env::temp_dir().join("dev-whisper-smoke-test.wav");
         write_test_tone(&wav_path);
 
-        let engine = WhisperEngine::new(model_path);
+        let engine = WhisperEngine::new("base.en".to_string(), model_path);
         let result = engine.transcribe(&wav_path);
 
         std::fs::remove_file(&wav_path).ok();
