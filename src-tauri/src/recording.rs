@@ -172,6 +172,7 @@ pub fn set_vocabulary(app: AppHandle, terms: Vec<String>, state: tauri::State<Re
 pub struct FrontmostAppPayload {
     pub bundle_id: String,
     pub name: String,
+    pub icon_data_uri: Option<String>,
 }
 
 /// The app the most recent recording was started in — used by Settings to
@@ -186,5 +187,6 @@ pub fn get_last_frontmost_app(state: tauri::State<RecordingState>) -> Option<Fro
         .map(|info| FrontmostAppPayload {
             bundle_id: info.bundle_id.clone(),
             name: info.name.clone(),
+            icon_data_uri: info.icon_data_uri.clone(),
         })
 }

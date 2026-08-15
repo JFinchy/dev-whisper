@@ -20,7 +20,10 @@ use tauri::{
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState as PressState};
 
 use audio::AudioHandle;
-use history::{clear_history, get_history_retention_days, list_history_entries, set_history_retention_days};
+use history::{
+    clear_history, delete_history_entry, get_history_retention_days, list_history_entries,
+    set_history_retention_days,
+};
 use llm::{get_llm_model, list_ollama_models, set_llm_model};
 use models::{download_model, list_models, set_active_model};
 use modes::{get_mode_rules, list_running_apps, remove_mode_rule, set_mode_rule};
@@ -118,6 +121,7 @@ pub fn run() {
             set_vocabulary,
             list_history_entries,
             clear_history,
+            delete_history_entry,
             get_history_retention_days,
             set_history_retention_days,
             list_ollama_models,

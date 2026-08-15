@@ -103,6 +103,16 @@ pub fn clear_history(app: AppHandle) {
 }
 
 #[tauri::command]
+pub fn delete_history_entry(app: AppHandle, timestamp_ms: u64) {
+    let entries = read_all(&app);
+    let kept: Vec<HistoryEntry> = entries
+        .into_iter()
+        .filter(|e| e.timestamp_ms != timestamp_ms)
+        .collect();
+    let _ = write_all(&app, &kept);
+}
+
+#[tauri::command]
 pub fn get_history_retention_days(app: AppHandle) -> u32 {
     config::load(&app).history_retention_days
 }

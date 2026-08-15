@@ -253,29 +253,43 @@ pub fn remove_mode_rule(app: AppHandle, bundle_id: String) {
 pub struct RunningAppPayload {
     pub bundle_id: String,
     pub name: String,
+    pub icon_data_uri: Option<String>,
+    pub is_running: bool,
 }
 
-/// Lists currently-running apps for the "browse running apps" picker in
-/// Settings, so adding a mode rule doesn't require switching to the target
-/// app first. NSWorkspace requires the main thread; the command's own
-/// thread blocks on a channel waiting for that dispatch to run.
+/// Lists apps for the "add a rule" picker in Settings: currently-running
+/// apps first (so adding a rule doesn't require switching to the target
+/// app first), then common developer/everyday apps that are installed but
+/// not currently running. Icons included for both. NSWorkspace requires
+/// the main thread; the command's own thread blocks on a channel waiting
+/// for that dispatch to run.
 #[tauri::command]
 pub fn list_running_apps(app: AppHandle) -> Vec<RunningAppPayload> {
     let own_bundle_id = app.config().identifier.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     let dispatched = app.run_on_main_thread(move || {
-        let apps = crate::app_detect::list_running_apps(&own_bundle_id);
-        let _ = tx.send(apps);
+        let running = crate::app_detect::list_running_apps(&own_bundle_id);
+        let common = crate::app_detect::list_common_apps(&running);
+        let _ = tx.send((running, common));
     });
     if dispatched.is_err() {
         return Vec::new();
     }
-    rx.recv()
-        .unwrap_or_default()
+    let (running, common) = rx.recv().unwrap_or_default();
+
+    running
         .into_iter()
         .map(|info| RunningAppPayload {
             bundle_id: info.bundle_id,
             name: info.name,
+            icon_data_uri: info.icon_data_uri,
+            is_running: true,
         })
+        .chain(common.into_iter().map(|info| RunningAppPayload {
+            bundle_id: info.bundle_id,
+            name: info.name,
+            icon_data_uri: info.icon_data_uri,
+            is_running: false,
+        }))
         .collect()
 }

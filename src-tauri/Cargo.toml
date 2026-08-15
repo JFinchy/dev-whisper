@@ -29,10 +29,17 @@ rdev = "0.5"
 whisper-rs = { version = "0.14", features = ["metal"] }
 arboard = "3"
 ureq = { version = "2", features = ["json"] }
+base64 = "0.22"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 macos-accessibility-client = "0.0.1"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication"] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSWorkspace",
+    "NSRunningApplication",
+    "NSImage",
+    "NSImageRep",
+    "NSBitmapImageRep",
+] }
 objc2-foundation = "0.3"
 

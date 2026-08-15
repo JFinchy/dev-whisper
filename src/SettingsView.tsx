@@ -242,15 +242,27 @@ type AppModeRule = {
   stt_model: string | null;
   use_llm_refinement: boolean;
 };
-type FrontmostApp = { bundle_id: string; name: string };
-type RunningApp = { bundle_id: string; name: string };
+type FrontmostApp = { bundle_id: string; name: string; icon_data_uri: string | null };
+type RunningApp = { bundle_id: string; name: string; icon_data_uri: string | null; is_running: boolean };
+
+function AppIcon({ src, name }: { src: string | null; name: string }) {
+  if (src) {
+    return <img src={src} alt="" className="h-4 w-4 shrink-0 rounded-sm" />;
+  }
+  // Fallback for apps whose icon couldn't be resolved: first letter avatar.
+  return (
+    <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-sm bg-base-300 text-[9px] font-semibold opacity-60">
+      {name.charAt(0).toUpperCase()}
+    </span>
+  );
+}
 
 function AppModesSection() {
   const [rules, setRules] = useState<AppModeRule[]>([]);
   const [lastApp, setLastApp] = useState<FrontmostApp | null>(null);
   const [runningApps, setRunningApps] = useState<RunningApp[]>([]);
   const [availableModels, setAvailableModels] = useState<ModelStatus[]>([]);
-  const [pickedBundleId, setPickedBundleId] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   function refresh() {
     invoke<AppModeRule[]>("get_mode_rules")
@@ -301,7 +313,13 @@ function AppModesSection() {
   }
 
   const lastAppAlreadyRuled = lastApp && rules.some((r) => r.bundle_id === lastApp.bundle_id);
-  const pickableRunningApps = runningApps.filter((a) => !rules.some((r) => r.bundle_id === a.bundle_id));
+  const pickableApps = runningApps.filter((a) => !rules.some((r) => r.bundle_id === a.bundle_id));
+  const ruleIcon = (bundleId: string) => runningApps.find((a) => a.bundle_id === bundleId)?.icon_data_uri ?? null;
+
+  function pickApp(app: RunningApp) {
+    addRule(app.bundle_id, app.name, "cli");
+    setPickerOpen(false);
+  }
 
   return (
     <div className="mb-4 border-t border-base-content/10 pt-3">
@@ -312,7 +330,10 @@ function AppModesSection() {
           {rules.map((r) => (
             <li key={r.bundle_id} className="rounded-md bg-base-100 px-2.5 py-1.5 text-xs">
               <div className="mb-1 flex items-center justify-between">
-                <span className="truncate font-medium">{r.app_name}</span>
+                <span className="flex items-center gap-1.5 truncate font-medium">
+                  <AppIcon src={ruleIcon(r.bundle_id)} name={r.app_name} />
+                  {r.app_name}
+                </span>
                 <div className="flex items-center gap-1.5">
                   <select
                     className="select select-xs"
@@ -362,41 +383,51 @@ function AppModesSection() {
 
       {lastApp && !lastAppAlreadyRuled && (
         <div className="mb-1.5 flex items-center gap-1.5 text-xs">
-          <button className="btn btn-xs flex-1 justify-start" onClick={() => addRule(lastApp.bundle_id, lastApp.name, "cli")}>
-            + Add rule for {lastApp.name}
+          <button
+            className="btn btn-xs flex-1 justify-start gap-1.5"
+            onClick={() => addRule(lastApp.bundle_id, lastApp.name, "cli")}
+          >
+            <AppIcon src={lastApp.icon_data_uri} name={lastApp.name} />+ Add rule for {lastApp.name}
           </button>
         </div>
       )}
 
-      <div className="flex items-center gap-1.5 text-xs">
-        <select
-          className="select select-xs flex-1"
-          value={pickedBundleId}
-          onFocus={loadRunningApps}
-          onChange={(e) => setPickedBundleId(e.target.value)}
-        >
-          <option value="" disabled>
-            Browse running apps…
-          </option>
-          {pickableRunningApps.map((a) => (
-            <option key={a.bundle_id} value={a.bundle_id}>
-              {a.name}
-            </option>
-          ))}
-        </select>
+      <div className="relative">
         <button
-          className="btn btn-xs"
-          disabled={!pickedBundleId}
+          className="btn btn-xs w-full justify-start"
           onClick={() => {
-            const app = runningApps.find((a) => a.bundle_id === pickedBundleId);
-            if (app) {
-              addRule(app.bundle_id, app.name, "cli");
-              setPickedBundleId("");
-            }
+            setPickerOpen((open) => !open);
+            loadRunningApps();
           }}
         >
-          Add
+          Browse apps…
         </button>
+        {pickerOpen && (
+          <ul className="absolute z-10 mt-1 max-h-52 w-full overflow-y-auto rounded-md bg-base-100 p-1 shadow-lg">
+            {pickableApps.length === 0 && (
+              <li className="px-2 py-1 text-xs opacity-50">Loading…</li>
+            )}
+            {pickableApps.map((a, i) => {
+              const prevRunning = i > 0 ? pickableApps[i - 1].is_running : true;
+              return (
+                <li key={a.bundle_id}>
+                  {prevRunning && !a.is_running && (
+                    <div className="mt-1 border-t border-base-content/10 pt-1 text-[10px] uppercase opacity-40">
+                      Other apps
+                    </div>
+                  )}
+                  <button
+                    className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs hover:bg-base-200"
+                    onClick={() => pickApp(a)}
+                  >
+                    <AppIcon src={a.icon_data_uri} name={a.name} />
+                    <span className="truncate">{a.name}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
     </div>
   );
@@ -547,6 +578,13 @@ function HistorySection() {
       .catch((err) => console.error("clipboard write failed:", err));
   }
 
+  function deleteEntry(timestampMs: number) {
+    setEntries((current) => current.filter((e) => e.timestamp_ms !== timestampMs));
+    invoke("delete_history_entry", { timestampMs }).catch((err) =>
+      console.error("delete_history_entry failed:", err),
+    );
+  }
+
   return (
     <div className="mb-4 border-t border-base-content/10 pt-3">
       <div className="mb-1 flex items-center justify-between">
@@ -587,6 +625,14 @@ function HistorySection() {
                     title="Copy"
                   >
                     {copiedAt === entry.timestamp_ms ? "✓" : "⧉"}
+                  </button>
+                  <button
+                    className="opacity-0 hover:text-error group-hover:opacity-100"
+                    onClick={() => deleteEntry(entry.timestamp_ms)}
+                    aria-label="Delete transcript"
+                    title="Delete"
+                  >
+                    🗑
                   </button>
                 </div>
               </div>

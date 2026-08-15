@@ -4057,6 +4057,7 @@ name = "tauri-app"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "base64 0.22.1",
  "cpal",
  "hound",
  "macos-accessibility-client",
