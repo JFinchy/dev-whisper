@@ -647,19 +647,58 @@ function HistorySection() {
   );
 }
 
+type LlmModelStatus = { id: string; label: string; size_gb: number; downloaded: boolean };
+
 function LlmSection() {
-  const [models, setModels] = useState<string[]>([]);
+  const [catalog, setCatalog] = useState<LlmModelStatus[]>([]);
   const [activeModel, setActiveModel] = useState("");
   const [checked, setChecked] = useState(false);
+  const [progress, setProgress] = useState<Record<string, { status: string; percent: number | null }>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [ollamaMissing, setOllamaMissing] = useState(false);
 
-  useEffect(() => {
-    Promise.all([invoke<string[]>("list_ollama_models"), invoke<string>("get_llm_model")])
-      .then(([ollamaModels, current]) => {
-        setModels(ollamaModels);
+  function refresh() {
+    Promise.all([invoke<LlmModelStatus[]>("list_llm_catalog"), invoke<string>("get_llm_model")])
+      .then(([entries, current]) => {
+        setCatalog(entries);
         setActiveModel(current);
+        setOllamaMissing(!entries.some((m) => m.downloaded));
       })
       .catch((err) => console.error("failed to load LLM settings:", err))
       .finally(() => setChecked(true));
+  }
+
+  useEffect(() => {
+    refresh();
+
+    const unlistenProgress = listen<{ id: string; status: string; percent: number | null }>(
+      "llm-pull-progress",
+      (e) => {
+        setProgress((p) => ({ ...p, [e.payload.id]: { status: e.payload.status, percent: e.payload.percent } }));
+      },
+    );
+    const unlistenDone = listen<string>("llm-pull-complete", (e) => {
+      setProgress((p) => {
+        const next = { ...p };
+        delete next[e.payload];
+        return next;
+      });
+      refresh();
+    });
+    const unlistenError = listen<{ id: string; error: string }>("llm-pull-error", (e) => {
+      setProgress((p) => {
+        const next = { ...p };
+        delete next[e.payload.id];
+        return next;
+      });
+      setErrors((er) => ({ ...er, [e.payload.id]: e.payload.error }));
+    });
+
+    return () => {
+      unlistenProgress.then((f) => f());
+      unlistenDone.then((f) => f());
+      unlistenError.then((f) => f());
+    };
   }, []);
 
   function selectModel(model: string) {
@@ -667,30 +706,63 @@ function LlmSection() {
     invoke("set_llm_model", { model }).catch((err) => console.error("set_llm_model failed:", err));
   }
 
+  function pull(id: string) {
+    setErrors((er) => {
+      const next = { ...er };
+      delete next[id];
+      return next;
+    });
+    setProgress((p) => ({ ...p, [id]: { status: "starting…", percent: null } }));
+    invoke("pull_llm_model", { id }).catch((err) => setErrors((er) => ({ ...er, [id]: String(err) })));
+  }
+
   return (
     <div className="mb-4 border-t border-base-content/10 pt-3">
       <label className="mb-1 block text-xs font-medium opacity-70">LLM refinement</label>
       {!checked ? (
         <span className="loading loading-spinner loading-xs" />
-      ) : models.length === 0 ? (
-        <p className="text-xs opacity-60">
-          No local Ollama models found. Install{" "}
-          <a href="https://ollama.com" target="_blank" rel="noreferrer" className="link">
-            Ollama
-          </a>{" "}
-          and run <code className="rounded bg-base-100 px-1">ollama pull qwen3.5:4b</code> (or any
-          model) to enable "Refine with LLM" in App modes above.
-        </p>
       ) : (
         <>
-          <select className="select select-sm w-full" value={activeModel} onChange={(e) => selectModel(e.target.value)}>
-            {models.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
+          {ollamaMissing && (
+            <p className="mb-1.5 text-xs opacity-60">
+              No local Ollama models found. Install{" "}
+              <a href="https://ollama.com" target="_blank" rel="noreferrer" className="link">
+                Ollama
+              </a>{" "}
+              first, then download a model below.
+            </p>
+          )}
+          <ul className="flex flex-col gap-1.5">
+            {catalog.map((m) => (
+              <li key={m.id} className="flex items-center justify-between rounded-md bg-base-100 px-2.5 py-1.5 text-xs">
+                <div className="truncate">
+                  <div className="font-medium">{m.label}</div>
+                  {m.size_gb > 0 && <div className="opacity-50">{m.size_gb.toFixed(1)}GB</div>}
+                </div>
+                {m.id === activeModel ? (
+                  <span className="badge badge-success badge-sm">Active</span>
+                ) : m.id in progress ? (
+                  <span className="w-16 truncate text-right opacity-70" title={progress[m.id].status}>
+                    {progress[m.id].percent !== null ? `${progress[m.id].percent}%` : progress[m.id].status}
+                  </span>
+                ) : m.downloaded ? (
+                  <button className="btn btn-xs" onClick={() => selectModel(m.id)}>
+                    Use
+                  </button>
+                ) : (
+                  <button className="btn btn-xs" onClick={() => pull(m.id)}>
+                    Download
+                  </button>
+                )}
+              </li>
             ))}
-          </select>
-          <p className="mt-1 text-xs opacity-50">Used by any mode with "Refine with LLM" enabled above.</p>
+          </ul>
+          {Object.entries(errors).map(([id, err]) => (
+            <p key={id} className="mt-1 text-xs text-error">
+              {id}: {err}
+            </p>
+          ))}
+          <p className="mt-1.5 text-xs opacity-50">Used by any mode with "Refine with LLM" enabled above.</p>
         </>
       )}
     </div>

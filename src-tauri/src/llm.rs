@@ -1,10 +1,121 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::io::BufRead;
+use tauri::{AppHandle, Emitter};
 
 const OLLAMA_GENERATE_URL: &str = "http://localhost:11434/api/generate";
 const OLLAMA_TAGS_URL: &str = "http://localhost:11434/api/tags";
+const OLLAMA_PULL_URL: &str = "http://localhost:11434/api/pull";
 
 pub fn default_model() -> String {
     "qwen3.5:4b".to_string()
+}
+
+struct CatalogEntry {
+    id: &'static str,
+    label: &'static str,
+    size_gb: f32,
+}
+
+/// Recommended models for dictation refinement — deliberately small/fast
+/// (1-4B range), since this runs after every recording and needs to feel
+/// instant, not deliberate. Ollama's official library names, current as of
+/// writing; tags can move, so pulling gracefully surfaces a real error
+/// from Ollama if a name is ever stale rather than silently failing.
+const CATALOG: &[CatalogEntry] = &[
+    CatalogEntry { id: "gemma3:1b", label: "Gemma 3 (1B) — fastest", size_gb: 0.8 },
+    CatalogEntry { id: "gemma3:4b", label: "Gemma 3 (4B) — balanced", size_gb: 3.3 },
+    CatalogEntry { id: "llama3.2:1b", label: "Llama 3.2 (1B) — fastest", size_gb: 1.3 },
+    CatalogEntry { id: "llama3.2:3b", label: "Llama 3.2 (3B) — balanced", size_gb: 2.0 },
+    CatalogEntry { id: "phi3.5", label: "Phi-3.5 Mini (3.8B)", size_gb: 2.2 },
+    CatalogEntry { id: "qwen2.5:3b", label: "Qwen 2.5 (3B)", size_gb: 1.9 },
+    CatalogEntry { id: "mistral:7b", label: "Mistral (7B) — larger, more capable", size_gb: 4.1 },
+];
+
+#[derive(Serialize)]
+pub struct LlmModelStatus {
+    pub id: String,
+    pub label: String,
+    pub size_gb: f32,
+    pub downloaded: bool,
+}
+
+/// Catalog entries plus any already-pulled models not in the catalog
+/// (e.g. whatever the user already had via `ollama pull` before this
+/// feature existed), so nothing already installed becomes invisible.
+#[tauri::command]
+pub fn list_llm_catalog() -> Vec<LlmModelStatus> {
+    let pulled = list_ollama_models();
+    let mut result: Vec<LlmModelStatus> = CATALOG
+        .iter()
+        .map(|m| LlmModelStatus {
+            id: m.id.to_string(),
+            label: m.label.to_string(),
+            size_gb: m.size_gb,
+            downloaded: pulled.iter().any(|p| p == m.id),
+        })
+        .collect();
+
+    for p in &pulled {
+        if !result.iter().any(|r| &r.id == p) {
+            result.push(LlmModelStatus {
+                id: p.clone(),
+                label: p.clone(),
+                size_gb: 0.0,
+                downloaded: true,
+            });
+        }
+    }
+    result
+}
+
+fn pull_ollama_model(app: &AppHandle, id: &str) -> Result<(), String> {
+    let body = serde_json::json!({ "name": id, "stream": true });
+    let resp = ureq::post(OLLAMA_PULL_URL)
+        .timeout(std::time::Duration::from_secs(30 * 60))
+        .send_json(body)
+        .map_err(|e| format!("Ollama pull request failed (is `ollama serve` running?): {e}"))?;
+
+    let reader = std::io::BufReader::new(resp.into_reader());
+    for line in reader.lines() {
+        let line = line.map_err(|e| e.to_string())?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let parsed: serde_json::Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
+        if let Some(err) = parsed.get("error").and_then(|v| v.as_str()) {
+            return Err(err.to_string());
+        }
+        let status = parsed.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        let completed = parsed.get("completed").and_then(|v| v.as_u64());
+        let total = parsed.get("total").and_then(|v| v.as_u64());
+        let percent = match (completed, total) {
+            (Some(c), Some(t)) if t > 0 => Some(((c as f64 / t as f64) * 100.0) as u32),
+            _ => None,
+        };
+        let _ = app.emit(
+            "llm-pull-progress",
+            serde_json::json!({ "id": id, "status": status, "percent": percent }),
+        );
+        if status == "success" {
+            return Ok(());
+        }
+    }
+    Err("Ollama closed the connection before confirming the pull finished".to_string())
+}
+
+#[tauri::command]
+pub fn pull_llm_model(app: AppHandle, id: String) {
+    std::thread::spawn(move || match pull_ollama_model(&app, &id) {
+        Ok(()) => {
+            let _ = app.emit("llm-pull-complete", &id);
+        }
+        Err(err) => {
+            let _ = app.emit(
+                "llm-pull-error",
+                serde_json::json!({ "id": id, "error": err }),
+            );
+        }
+    });
 }
 
 #[derive(Deserialize)]
