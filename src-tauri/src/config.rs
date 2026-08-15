@@ -28,6 +28,8 @@ pub struct AppConfig {
     pub input_device: Option<String>,
     pub shortcut: Option<ShortcutConfig>,
     pub active_model: Option<String>,
+    #[serde(default)]
+    pub mode_rules: Vec<crate::modes::AppModeRule>,
 }
 
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {

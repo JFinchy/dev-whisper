@@ -1,6 +1,8 @@
+mod app_detect;
 mod audio;
 mod config;
 mod models;
+mod modes;
 mod paste;
 mod recording;
 mod shortcut;
@@ -17,6 +19,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState as PressStat
 
 use audio::AudioHandle;
 use models::{download_model, list_models, set_active_model};
+use modes::{get_last_frontmost_app, get_mode_rules, remove_mode_rule, set_mode_rule, ModesState};
 use recording::{
     get_active_input_device, list_input_devices, set_input_device, toggle_recording,
     toggle_recording_command, RecordingState,
@@ -32,13 +35,22 @@ fn open_settings(app: tauri::AppHandle) -> tauri::Result<()> {
         return Ok(());
     }
 
+    // Capture whatever app the user was in before focus shifts to Settings,
+    // so the UI can offer "add a mode rule for the app you just came from".
+    let capture_app = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let info = app_detect::frontmost_app_info();
+        let state = capture_app.state::<ModesState>();
+        *state.last_frontmost.lock().unwrap() = info;
+    });
+
     let mut builder = tauri::WebviewWindowBuilder::new(
         &app,
         "settings",
         tauri::WebviewUrl::App("index.html".into()),
     )
     .title("Dev Whisper Settings")
-    .inner_size(360.0, 420.0)
+    .inner_size(360.0, 540.0)
     .resizable(false);
 
     // Anchor settings just below the widget instead of both windows
@@ -101,6 +113,10 @@ pub fn run() {
             list_models,
             download_model,
             set_active_model,
+            get_mode_rules,
+            set_mode_rule,
+            remove_mode_rule,
+            get_last_frontmost_app,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -108,6 +124,10 @@ pub fn run() {
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
                 prompt_for_accessibility_permission();
             }
+
+            app.manage(ModesState {
+                last_frontmost: Mutex::new(None),
+            });
 
             let saved_config = config::load(app.handle());
 
@@ -134,6 +154,7 @@ pub fn run() {
                 audio,
                 whisper,
                 is_recording: AtomicBool::new(false),
+                active_app: Mutex::new(None),
             });
 
             // Warm up the model in the background so the first real

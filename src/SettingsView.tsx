@@ -230,6 +230,108 @@ function DeviceSection() {
   );
 }
 
+type Mode = "plain" | "casual" | "cli";
+const MODES: Mode[] = ["plain", "casual", "cli"];
+const MODE_LABEL: Record<Mode, string> = { plain: "Plain", casual: "Casual", cli: "CLI" };
+
+type AppModeRule = { bundle_id: string; app_name: string; mode: Mode };
+type FrontmostApp = { bundle_id: string; name: string };
+
+function AppModesSection() {
+  const [rules, setRules] = useState<AppModeRule[]>([]);
+  const [lastApp, setLastApp] = useState<FrontmostApp | null>(null);
+  const [newRuleMode, setNewRuleMode] = useState<Mode>("cli");
+
+  function refresh() {
+    invoke<AppModeRule[]>("get_mode_rules")
+      .then(setRules)
+      .catch((err) => console.error("get_mode_rules failed:", err));
+  }
+
+  useEffect(() => {
+    refresh();
+    invoke<FrontmostApp | null>("get_last_frontmost_app")
+      .then(setLastApp)
+      .catch((err) => console.error("get_last_frontmost_app failed:", err));
+  }, []);
+
+  function addRule(bundleId: string, appName: string, mode: Mode) {
+    invoke("set_mode_rule", { bundleId, appName, mode })
+      .then(refresh)
+      .catch((err) => console.error("set_mode_rule failed:", err));
+  }
+
+  function updateRule(rule: AppModeRule, mode: Mode) {
+    addRule(rule.bundle_id, rule.app_name, mode);
+  }
+
+  function removeRule(bundleId: string) {
+    invoke("remove_mode_rule", { bundleId })
+      .then(refresh)
+      .catch((err) => console.error("remove_mode_rule failed:", err));
+  }
+
+  const lastAppAlreadyRuled = lastApp && rules.some((r) => r.bundle_id === lastApp.bundle_id);
+
+  return (
+    <div className="mb-4">
+      <label className="mb-1 block text-xs font-medium opacity-70">App modes</label>
+
+      {rules.length > 0 && (
+        <ul className="mb-2 flex flex-col gap-1.5">
+          {rules.map((r) => (
+            <li key={r.bundle_id} className="flex items-center justify-between rounded-md bg-base-100 px-2.5 py-1.5 text-xs">
+              <span className="truncate">{r.app_name}</span>
+              <div className="flex items-center gap-1.5">
+                <select
+                  className="select select-xs"
+                  value={r.mode}
+                  onChange={(e) => updateRule(r, e.target.value as Mode)}
+                >
+                  {MODES.map((m) => (
+                    <option key={m} value={m}>
+                      {MODE_LABEL[m]}
+                    </option>
+                  ))}
+                </select>
+                <button className="btn btn-ghost btn-xs" onClick={() => removeRule(r.bundle_id)} aria-label={`Remove rule for ${r.app_name}`}>
+                  ✕
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {lastApp && !lastAppAlreadyRuled && (
+        <div className="flex items-center gap-1.5 text-xs">
+          <span className="flex-1 truncate opacity-70">Add rule for {lastApp.name}?</span>
+          <select
+            className="select select-xs"
+            value={newRuleMode}
+            onChange={(e) => setNewRuleMode(e.target.value as Mode)}
+          >
+            {MODES.map((m) => (
+              <option key={m} value={m}>
+                {MODE_LABEL[m]}
+              </option>
+            ))}
+          </select>
+          <button className="btn btn-xs" onClick={() => addRule(lastApp.bundle_id, lastApp.name, newRuleMode)}>
+            Add
+          </button>
+        </div>
+      )}
+
+      {rules.length === 0 && !lastApp && (
+        <p className="text-xs opacity-60">
+          Switch to another app, then reopen Settings to add a mode for it.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function SettingsView() {
   return (
     <main className="min-h-screen bg-base-300 px-5 py-4 text-base-content">
@@ -237,6 +339,7 @@ function SettingsView() {
       <DeviceSection />
       <ShortcutSection />
       <ModelsSection />
+      <AppModesSection />
     </main>
   );
 }

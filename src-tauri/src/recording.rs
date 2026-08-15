@@ -1,7 +1,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::audio::AudioHandle;
+use crate::modes;
 use crate::paste::paste_text;
 use crate::stt::WhisperEngine;
 
@@ -9,6 +11,9 @@ pub struct RecordingState {
     pub audio: AudioHandle,
     pub whisper: WhisperEngine,
     pub is_recording: AtomicBool,
+    /// Bundle ID of whatever app was frontmost when the current/last
+    /// recording started, used to pick a formatting mode once it's done.
+    pub active_app: Mutex<Option<String>>,
 }
 
 /// Shared by the tray/UI toggle command and the global hotkey listener so
@@ -36,6 +41,17 @@ pub fn toggle_recording(app: &AppHandle) {
             let _ = window.show();
             let _ = window.set_focus();
         }
+
+        // NSWorkspace requires the main thread; capture which app the user
+        // was in fire-and-forget style — there's easily enough time before
+        // transcribe_and_paste() reads it back after the recording finishes.
+        let capture_app = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let bundle_id = crate::app_detect::frontmost_app_info().map(|info| info.bundle_id);
+            let state = capture_app.state::<RecordingState>();
+            *state.active_app.lock().unwrap() = bundle_id;
+        });
+
         let _ = app.emit("recording-started", ());
     }
 }
@@ -43,14 +59,21 @@ pub fn toggle_recording(app: &AppHandle) {
 fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
     let state = app.state::<RecordingState>();
     match state.whisper.transcribe(wav_path) {
-        Ok(text) if !text.is_empty() => match paste_text(&text) {
-            Ok(()) => {
-                let _ = app.emit("transcript-ready", text);
+        Ok(text) if !text.is_empty() => {
+            let bundle_id = state.active_app.lock().unwrap().clone();
+            let rules = crate::config::load(app).mode_rules;
+            let mode = modes::resolve_mode(bundle_id.as_deref(), &rules);
+            let formatted = modes::apply_mode(mode, &text);
+
+            match paste_text(&formatted) {
+                Ok(()) => {
+                    let _ = app.emit("transcript-ready", formatted);
+                }
+                Err(err) => {
+                    let _ = app.emit("transcript-error", err);
+                }
             }
-            Err(err) => {
-                let _ = app.emit("transcript-error", err);
-            }
-        },
+        }
         Ok(_) => {
             let _ = app.emit("transcript-error", "no speech detected".to_string());
         }

@@ -21,25 +21,17 @@ build phases.
 
 ## Feature Requests
 
-- **App-aware modes** — detect the frontmost application and adjust
-  dictation behavior per app. This is already in `PRODUCT_SPEC.md`'s core
-  feature list as "App-Aware Formatting" but not yet built. E.g.
-  CLI-command formatting in terminals, casual tone in Slack/Messages,
-  structured text in docs/notes apps.
-  - Detecting the frontmost app is easy — macOS's `NSWorkspace` API gives
-    the frontmost app's bundle ID with no extra permission needed. Rough
-    estimate: half a day.
-  - A per-app mode mapping + Settings UI to manage it (which app maps to
-    which mode) is another day or so — similar shape to the
-    device/shortcut/model settings already built this session.
-  - The actual mode-specific *transformation* is the real work, and
-    depends on the LLM refinement item below — rule-based formatting
-    alone (regex heuristics per app) would be fast to build but brittle
-    and wouldn't generalize past a few hardcoded patterns like CLI
-    commands.
-  - **Overall: medium effort split into two stages.** Ship app-detection
-    + simple rule-based formatting first as a quick, real win; layer in
-    LLM-based refinement after.
+- **App-aware modes, stage 2 (LLM-backed transformation)** — stage 1
+  shipped: frontmost-app detection (`app_detect.rs`, `NSWorkspace`, no
+  extra permission needed), a mode framework with built-in defaults for
+  common apps (`modes.rs`), a Settings UI to add/edit per-app rules, and
+  rule-based formatting for CLI mode (a couple of illustrative
+  natural-language -> shell-command patterns, e.g. "git commit X" ->
+  `git commit -m "X"`). Casual mode is currently a no-op — rule-based
+  formatting can't meaningfully do "make this sound casual," it needs
+  the LLM refinement item below. Once that exists, wire it in as
+  Casual/Cli mode's actual transformation instead of (or alongside) the
+  regex patterns.
 
 - **LLM-based transcript refinement** — run the raw Whisper transcript
   through a local LLM before pasting, with a prompt that varies by
