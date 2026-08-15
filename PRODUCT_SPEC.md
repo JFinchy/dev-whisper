@@ -61,4 +61,5 @@ Inspired by advanced continuous voice architectures (like OpenAI's third-generat
 
 ## 6. Backlog
 
-- **Single-Speaker Voice Isolation**: Explore isolating the primary user's voice from background noise before it reaches the STT engine — music playing in the room, other people talking, kids yelling in the background, etc. Candidate approaches to research: real-time voice activity detection (VAD) tuned to reject non-speech/music energy, speaker-embedding-based isolation (enroll the user's voice once, then filter subsequent audio against that embedding — e.g. techniques from speaker diarization or personalized VAD), or a local source-separation model (e.g. Demucs-style) run on the input stream before it hits Whisper. Meaningfully larger scope than the rest of the STT pipeline (needs its own model, enrollment UX, and a latency budget), so this needs a dedicated research/design pass rather than a quick add-on.
+Tracked in `BACKLOG.md` — known issues, feature requests, and research
+items that fall outside the phases above.
