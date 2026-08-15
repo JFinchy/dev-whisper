@@ -5,7 +5,7 @@ use tauri::{AppHandle, State};
 use crate::app_detect::AppInfo;
 use crate::config;
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
     /// No transformation — pastes the raw Whisper transcript.
@@ -99,6 +99,7 @@ pub fn get_mode_rules(app: AppHandle) -> Vec<AppModeRule> {
 
 #[tauri::command]
 pub fn set_mode_rule(app: AppHandle, bundle_id: String, app_name: String, mode: Mode) {
+    eprintln!("modes: set_mode_rule bundle_id={bundle_id} app_name={app_name} mode={mode:?}");
     let mut cfg = config::load(&app);
     cfg.mode_rules.retain(|r| r.bundle_id != bundle_id);
     cfg.mode_rules.push(AppModeRule {

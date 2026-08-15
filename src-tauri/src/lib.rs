@@ -40,6 +40,7 @@ fn open_settings(app: tauri::AppHandle) -> tauri::Result<()> {
     let capture_app = app.clone();
     let _ = app.run_on_main_thread(move || {
         let info = app_detect::frontmost_app_info();
+        eprintln!("modes: frontmost app before opening settings = {:?}", info.as_ref().map(|i| (&i.bundle_id, &i.name)));
         let state = capture_app.state::<ModesState>();
         *state.last_frontmost.lock().unwrap() = info;
     });

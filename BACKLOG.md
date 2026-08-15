@@ -53,8 +53,46 @@ build phases.
     inference round-trip) — needs a "Refining…" UI state and probably an
     easy on/off toggle for when raw dictation is good enough.
 
+- **Redesign Modes UI to match SuperWhisper** — SuperWhisper's mode system
+  (see screenshots shared 2026-08-15) is meaningfully more complete than
+  our stage-1 "each app maps to one of 3 fixed built-in modes" model:
+  - Modes are **named, user-created presets** ("Voice to text", "Default"),
+    not fixed built-ins. Each preset has: Language, Voice Model, its own
+    keyboard shortcut to start a recording directly in that mode, an
+    "Activate for apps" assignment, and an "Advanced settings" section
+    (presumably per-mode prompt/formatting overrides).
+  - "Activate for apps" uses a proper categorized picker (Mail,
+    Messaging, AI chat, Text editing, Coding, Terminal, Browsers, Social
+    media, Design) with app icons, rather than our bare bundle-ID list.
+  - A left sidebar nav (Home, Modes, Vocabulary, Configuration, Sound,
+    Models library, History) — **Vocabulary** is its own section too:
+    user-editable dictionary/jargon list, vs. our hardcoded
+    `DEV_VOCAB_PROMPT` constant in `stt.rs`.
+  - This effectively supersedes the current Settings UI for modes (the
+    Rust-side groundwork — `app_detect.rs` frontmost detection,
+    `modes.rs` resolution logic — is still the right foundation; this is
+    mainly a data-model and UI expansion: named presets instead of a
+    fixed enum, per-mode shortcuts, multi-app assignment per mode instead
+    of one-mode-per-app).
+
+- **Transcript history** — SuperWhisper's "History" section: store past
+  transcripts locally, browsable/scrollable in-app (a new view, not
+  server logs). Needs:
+  - A local store (SQLite via `rusqlite`, or a simple append-only
+    JSONL file) recording timestamp, transcript text, which app/mode it
+    was captured for.
+  - A scrollable history view — likely its own settings-window tab
+    alongside Device/Shortcut/Models/App modes.
+  - **User-configurable retention** (number of days to keep), with
+    automatic purge of anything older, run on startup or on a timer.
+  - Worth flagging: dictated text can contain sensitive content
+    (passwords read aloud, private messages, etc.), so this needs a
+    visible "Clear history" action and should probably default to a
+    conservative retention window rather than "forever," even though
+    storage is local-only and matches the app's privacy-first framing.
+
 - **Review SuperWhisper's feature set** — go through what SuperWhisper
-  offers end-to-end and decide what's worth adopting beyond the two items
+  offers end-to-end and decide what's worth adopting beyond the items
   above. Open research item, no defined scope yet.
 
 ## Research / Exploration

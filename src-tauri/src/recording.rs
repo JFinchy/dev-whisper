@@ -47,9 +47,10 @@ pub fn toggle_recording(app: &AppHandle) {
         // transcribe_and_paste() reads it back after the recording finishes.
         let capture_app = app.clone();
         let _ = app.run_on_main_thread(move || {
-            let bundle_id = crate::app_detect::frontmost_app_info().map(|info| info.bundle_id);
+            let info = crate::app_detect::frontmost_app_info();
+            eprintln!("modes: frontmost app at recording start = {:?}", info.as_ref().map(|i| (&i.bundle_id, &i.name)));
             let state = capture_app.state::<RecordingState>();
-            *state.active_app.lock().unwrap() = bundle_id;
+            *state.active_app.lock().unwrap() = info.map(|i| i.bundle_id);
         });
 
         let _ = app.emit("recording-started", ());
@@ -64,6 +65,11 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
             let rules = crate::config::load(app).mode_rules;
             let mode = modes::resolve_mode(bundle_id.as_deref(), &rules);
             let formatted = modes::apply_mode(mode, &text);
+            eprintln!(
+                "modes: bundle_id={bundle_id:?} rules={} resolved_mode={:?} transcript={text:?} formatted={formatted:?}",
+                rules.len(),
+                mode,
+            );
 
             match paste_text(&formatted) {
                 Ok(()) => {
