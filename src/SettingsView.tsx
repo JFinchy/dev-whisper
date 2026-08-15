@@ -149,7 +149,7 @@ function ModelsSection() {
   }
 
   return (
-    <div className="mb-4">
+    <div className="mb-4 border-t border-base-content/10 pt-3">
       <label className="mb-1 block text-xs font-medium opacity-70">Whisper model</label>
       <ul className="flex flex-col gap-1.5">
         {models.map((m) => (
@@ -207,7 +207,7 @@ function DeviceSection() {
   }
 
   return (
-    <div className="mb-4">
+    <div className="mb-4 border-t border-base-content/10 pt-3">
       <label className="mb-1 block text-xs font-medium opacity-70">Microphone</label>
       {loading ? (
         <span className="loading loading-spinner loading-xs" />
@@ -304,7 +304,7 @@ function AppModesSection() {
   const pickableRunningApps = runningApps.filter((a) => !rules.some((r) => r.bundle_id === a.bundle_id));
 
   return (
-    <div className="mb-4">
+    <div className="mb-4 border-t border-base-content/10 pt-3">
       <label className="mb-1 block text-xs font-medium opacity-70">App modes</label>
 
       {rules.length > 0 && (
@@ -434,7 +434,7 @@ function VocabularySection() {
   }
 
   return (
-    <div className="mb-4">
+    <div className="mb-4 border-t border-base-content/10 pt-3">
       <label className="mb-1 block text-xs font-medium opacity-70">Vocabulary</label>
       {loading ? (
         <span className="loading loading-spinner loading-xs" />
@@ -530,7 +530,7 @@ function HistorySection() {
   }
 
   return (
-    <div className="mb-4">
+    <div className="mb-4 border-t border-base-content/10 pt-3">
       <div className="mb-1 flex items-center justify-between">
         <label className="text-xs font-medium opacity-70">History</label>
         <div className="flex items-center gap-1.5">
@@ -594,7 +594,7 @@ function LlmSection() {
   }
 
   return (
-    <div className="mb-4">
+    <div className="mb-4 border-t border-base-content/10 pt-3">
       <label className="mb-1 block text-xs font-medium opacity-70">LLM refinement</label>
       {!checked ? (
         <span className="loading loading-spinner loading-xs" />
