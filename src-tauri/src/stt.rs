@@ -4,15 +4,25 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 const WHISPER_SAMPLE_RATE: u32 = 16_000;
 
-/// Seeds the model with developer jargon so it's biased toward recognizing
-/// these terms instead of mishearing them as similar-sounding words.
-const DEV_VOCAB_PROMPT: &str = "kubectl, JSON, macOS, Hammerspoon, camelCase, snake_case, \
-React, TypeScript, npm, git, Docker, API, async, useState, useEffect, Tauri, Rust, \
-Whisper, CLI, terminal, iTerm, Neovim, init.lua, zshrc, MCP";
+/// Default developer-jargon vocabulary, used to seed a fresh config (and as
+/// a fallback if the persisted list is ever empty). Biases Whisper toward
+/// recognizing these terms instead of mishearing them as similar-sounding
+/// words. User-editable via Settings — see `config::AppConfig::vocabulary`.
+pub fn default_vocabulary() -> Vec<String> {
+    [
+        "kubectl", "JSON", "macOS", "Hammerspoon", "camelCase", "snake_case", "React",
+        "TypeScript", "npm", "git", "Docker", "API", "async", "useState", "useEffect", "Tauri",
+        "Rust", "Whisper", "CLI", "terminal", "iTerm", "Neovim", "init.lua", "zshrc", "MCP",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
+}
 
 pub struct WhisperEngine {
     model_id: Mutex<String>,
     model_path: Mutex<PathBuf>,
+    vocabulary: Mutex<Vec<String>>,
     context: Mutex<Option<WhisperContext>>,
 }
 
@@ -21,12 +31,17 @@ impl WhisperEngine {
         Self {
             model_id: Mutex::new(model_id),
             model_path: Mutex::new(model_path),
+            vocabulary: Mutex::new(default_vocabulary()),
             context: Mutex::new(None),
         }
     }
 
     pub fn active_model_id(&self) -> String {
         self.model_id.lock().unwrap().clone()
+    }
+
+    pub fn set_vocabulary(&self, terms: Vec<String>) {
+        *self.vocabulary.lock().unwrap() = terms;
     }
 
     /// Switches which model transcribe() will use. The loaded context is
@@ -64,6 +79,8 @@ impl WhisperEngine {
             return Err("no audio samples to transcribe".to_string());
         }
 
+        let vocab_prompt = self.vocabulary.lock().unwrap().join(", ");
+
         let mut state = ctx.create_state().map_err(|e| e.to_string())?;
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         params.set_language(Some("en"));
@@ -72,7 +89,9 @@ impl WhisperEngine {
         params.set_print_special(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
-        params.set_initial_prompt(DEV_VOCAB_PROMPT);
+        if !vocab_prompt.is_empty() {
+            params.set_initial_prompt(&vocab_prompt);
+        }
         params.set_n_threads(num_cpus());
 
         state

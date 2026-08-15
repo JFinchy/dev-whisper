@@ -233,14 +233,24 @@ function DeviceSection() {
 type Mode = "plain" | "casual" | "cli";
 const MODES: Mode[] = ["plain", "casual", "cli"];
 const MODE_LABEL: Record<Mode, string> = { plain: "Plain", casual: "Casual", cli: "CLI" };
+const GLOBAL_MODEL = "__global__";
 
-type AppModeRule = { bundle_id: string; app_name: string; mode: Mode };
+type AppModeRule = {
+  bundle_id: string;
+  app_name: string;
+  mode: Mode;
+  stt_model: string | null;
+  use_llm_refinement: boolean;
+};
 type FrontmostApp = { bundle_id: string; name: string };
+type RunningApp = { bundle_id: string; name: string };
 
 function AppModesSection() {
   const [rules, setRules] = useState<AppModeRule[]>([]);
   const [lastApp, setLastApp] = useState<FrontmostApp | null>(null);
-  const [newRuleMode, setNewRuleMode] = useState<Mode>("cli");
+  const [runningApps, setRunningApps] = useState<RunningApp[]>([]);
+  const [availableModels, setAvailableModels] = useState<ModelStatus[]>([]);
+  const [pickedBundleId, setPickedBundleId] = useState("");
 
   function refresh() {
     invoke<AppModeRule[]>("get_mode_rules")
@@ -248,21 +258,40 @@ function AppModesSection() {
       .catch((err) => console.error("get_mode_rules failed:", err));
   }
 
+  function loadRunningApps() {
+    invoke<RunningApp[]>("list_running_apps")
+      .then(setRunningApps)
+      .catch((err) => console.error("list_running_apps failed:", err));
+  }
+
   useEffect(() => {
     refresh();
+    loadRunningApps();
     invoke<FrontmostApp | null>("get_last_frontmost_app")
       .then(setLastApp)
       .catch((err) => console.error("get_last_frontmost_app failed:", err));
+    invoke<ModelStatus[]>("list_models")
+      .then(setAvailableModels)
+      .catch((err) => console.error("list_models failed:", err));
   }, []);
 
   function addRule(bundleId: string, appName: string, mode: Mode) {
-    invoke("set_mode_rule", { bundleId, appName, mode })
+    invoke("set_mode_rule", { bundleId, appName, mode, sttModel: null, useLlmRefinement: false })
       .then(refresh)
       .catch((err) => console.error("set_mode_rule failed:", err));
   }
 
-  function updateRule(rule: AppModeRule, mode: Mode) {
-    addRule(rule.bundle_id, rule.app_name, mode);
+  function updateRule(rule: AppModeRule, patch: Partial<AppModeRule>) {
+    const next = { ...rule, ...patch };
+    invoke("set_mode_rule", {
+      bundleId: next.bundle_id,
+      appName: next.app_name,
+      mode: next.mode,
+      sttModel: next.stt_model,
+      useLlmRefinement: next.use_llm_refinement,
+    })
+      .then(refresh)
+      .catch((err) => console.error("set_mode_rule failed:", err));
   }
 
   function removeRule(bundleId: string) {
@@ -272,6 +301,7 @@ function AppModesSection() {
   }
 
   const lastAppAlreadyRuled = lastApp && rules.some((r) => r.bundle_id === lastApp.bundle_id);
+  const pickableRunningApps = runningApps.filter((a) => !rules.some((r) => r.bundle_id === a.bundle_id));
 
   return (
     <div className="mb-4">
@@ -280,23 +310,50 @@ function AppModesSection() {
       {rules.length > 0 && (
         <ul className="mb-2 flex flex-col gap-1.5">
           {rules.map((r) => (
-            <li key={r.bundle_id} className="flex items-center justify-between rounded-md bg-base-100 px-2.5 py-1.5 text-xs">
-              <span className="truncate">{r.app_name}</span>
-              <div className="flex items-center gap-1.5">
+            <li key={r.bundle_id} className="rounded-md bg-base-100 px-2.5 py-1.5 text-xs">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="truncate font-medium">{r.app_name}</span>
+                <div className="flex items-center gap-1.5">
+                  <select
+                    className="select select-xs"
+                    value={r.mode}
+                    onChange={(e) => updateRule(r, { mode: e.target.value as Mode })}
+                  >
+                    {MODES.map((m) => (
+                      <option key={m} value={m}>
+                        {MODE_LABEL[m]}
+                      </option>
+                    ))}
+                  </select>
+                  <button className="btn btn-ghost btn-xs" onClick={() => removeRule(r.bundle_id)} aria-label={`Remove rule for ${r.app_name}`}>
+                    ✕
+                  </button>
+                </div>
+              </div>
+              <div className="flex items-center justify-between opacity-70">
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    className="checkbox checkbox-xs"
+                    checked={r.use_llm_refinement}
+                    onChange={(e) => updateRule(r, { use_llm_refinement: e.target.checked })}
+                  />
+                  Refine with LLM
+                </label>
                 <select
                   className="select select-xs"
-                  value={r.mode}
-                  onChange={(e) => updateRule(r, e.target.value as Mode)}
+                  value={r.stt_model ?? GLOBAL_MODEL}
+                  onChange={(e) =>
+                    updateRule(r, { stt_model: e.target.value === GLOBAL_MODEL ? null : e.target.value })
+                  }
                 >
-                  {MODES.map((m) => (
-                    <option key={m} value={m}>
-                      {MODE_LABEL[m]}
+                  <option value={GLOBAL_MODEL}>Global model</option>
+                  {availableModels.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
                     </option>
                   ))}
                 </select>
-                <button className="btn btn-ghost btn-xs" onClick={() => removeRule(r.bundle_id)} aria-label={`Remove rule for ${r.app_name}`}>
-                  ✕
-                </button>
               </div>
             </li>
           ))}
@@ -304,29 +361,263 @@ function AppModesSection() {
       )}
 
       {lastApp && !lastAppAlreadyRuled && (
-        <div className="flex items-center gap-1.5 text-xs">
-          <span className="flex-1 truncate opacity-70">Add rule for {lastApp.name}?</span>
-          <select
-            className="select select-xs"
-            value={newRuleMode}
-            onChange={(e) => setNewRuleMode(e.target.value as Mode)}
-          >
-            {MODES.map((m) => (
-              <option key={m} value={m}>
-                {MODE_LABEL[m]}
-              </option>
-            ))}
-          </select>
-          <button className="btn btn-xs" onClick={() => addRule(lastApp.bundle_id, lastApp.name, newRuleMode)}>
-            Add
+        <div className="mb-1.5 flex items-center gap-1.5 text-xs">
+          <button className="btn btn-xs flex-1 justify-start" onClick={() => addRule(lastApp.bundle_id, lastApp.name, "cli")}>
+            + Add rule for {lastApp.name}
           </button>
         </div>
       )}
 
-      {rules.length === 0 && !lastApp && (
+      <div className="flex items-center gap-1.5 text-xs">
+        <select
+          className="select select-xs flex-1"
+          value={pickedBundleId}
+          onFocus={loadRunningApps}
+          onChange={(e) => setPickedBundleId(e.target.value)}
+        >
+          <option value="" disabled>
+            Browse running apps…
+          </option>
+          {pickableRunningApps.map((a) => (
+            <option key={a.bundle_id} value={a.bundle_id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+        <button
+          className="btn btn-xs"
+          disabled={!pickedBundleId}
+          onClick={() => {
+            const app = runningApps.find((a) => a.bundle_id === pickedBundleId);
+            if (app) {
+              addRule(app.bundle_id, app.name, "cli");
+              setPickedBundleId("");
+            }
+          }}
+        >
+          Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function VocabularySection() {
+  const [terms, setTerms] = useState<string[]>([]);
+  const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    invoke<string[]>("get_vocabulary")
+      .then(setTerms)
+      .catch((err) => console.error("get_vocabulary failed:", err))
+      .finally(() => setLoading(false));
+  }, []);
+
+  function save(next: string[]) {
+    setTerms(next);
+    invoke("set_vocabulary", { terms: next }).catch((err) => console.error("set_vocabulary failed:", err));
+  }
+
+  function addTerm() {
+    const term = draft.trim();
+    if (!term || terms.includes(term)) {
+      setDraft("");
+      return;
+    }
+    save([...terms, term]);
+    setDraft("");
+  }
+
+  function removeTerm(term: string) {
+    save(terms.filter((t) => t !== term));
+  }
+
+  return (
+    <div className="mb-4">
+      <label className="mb-1 block text-xs font-medium opacity-70">Vocabulary</label>
+      {loading ? (
+        <span className="loading loading-spinner loading-xs" />
+      ) : (
+        <>
+          <div className="mb-1.5 flex flex-wrap gap-1">
+            {terms.map((term) => (
+              <span key={term} className="badge badge-sm gap-1">
+                {term}
+                <button
+                  className="opacity-60 hover:opacity-100"
+                  onClick={() => removeTerm(term)}
+                  aria-label={`Remove ${term}`}
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+            {terms.length === 0 && <p className="text-xs opacity-60">No terms yet.</p>}
+          </div>
+          <div className="flex gap-1.5">
+            <input
+              className="input input-sm flex-1"
+              placeholder="Add a term (e.g. kubectl)"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addTerm();
+              }}
+            />
+            <button className="btn btn-sm" onClick={addTerm}>
+              Add
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+type HistoryEntry = {
+  timestamp_ms: number;
+  text: string;
+  app_name: string | null;
+  mode: string | null;
+};
+
+const RETENTION_OPTIONS = [7, 30, 90, 365];
+
+function formatTimestamp(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function HistorySection() {
+  const [entries, setEntries] = useState<HistoryEntry[]>([]);
+  const [retentionDays, setRetentionDays] = useState<number>(30);
+  const [loading, setLoading] = useState(true);
+
+  function refresh() {
+    invoke<HistoryEntry[]>("list_history_entries")
+      .then(setEntries)
+      .catch((err) => console.error("list_history_entries failed:", err));
+  }
+
+  useEffect(() => {
+    Promise.all([
+      invoke<HistoryEntry[]>("list_history_entries"),
+      invoke<number>("get_history_retention_days"),
+    ])
+      .then(([historyEntries, days]) => {
+        setEntries(historyEntries);
+        setRetentionDays(days);
+      })
+      .catch((err) => console.error("failed to load history:", err))
+      .finally(() => setLoading(false));
+  }, []);
+
+  function changeRetention(days: number) {
+    setRetentionDays(days);
+    invoke("set_history_retention_days", { days })
+      .then(refresh) // purging may have removed entries outside the new window
+      .catch((err) => console.error("set_history_retention_days failed:", err));
+  }
+
+  function clear() {
+    setEntries([]);
+    invoke("clear_history").catch((err) => console.error("clear_history failed:", err));
+  }
+
+  return (
+    <div className="mb-4">
+      <div className="mb-1 flex items-center justify-between">
+        <label className="text-xs font-medium opacity-70">History</label>
+        <div className="flex items-center gap-1.5">
+          <select
+            className="select select-xs"
+            value={retentionDays}
+            onChange={(e) => changeRetention(Number(e.target.value))}
+          >
+            {RETENTION_OPTIONS.map((days) => (
+              <option key={days} value={days}>
+                Keep {days}d
+              </option>
+            ))}
+          </select>
+          <button className="btn btn-ghost btn-xs" onClick={clear} disabled={entries.length === 0}>
+            Clear
+          </button>
+        </div>
+      </div>
+      {loading ? (
+        <span className="loading loading-spinner loading-xs" />
+      ) : entries.length === 0 ? (
+        <p className="text-xs opacity-60">No transcripts yet.</p>
+      ) : (
+        <ul className="flex max-h-48 flex-col gap-1 overflow-y-auto rounded-md bg-base-100 p-1.5">
+          {entries.map((entry) => (
+            <li key={entry.timestamp_ms} className="rounded px-1.5 py-1 text-xs hover:bg-base-200">
+              <div className="flex justify-between opacity-50">
+                <span>{formatTimestamp(entry.timestamp_ms)}</span>
+                {entry.app_name && <span className="truncate pl-2">{entry.app_name}</span>}
+              </div>
+              <p className="truncate" title={entry.text}>
+                {entry.text}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function LlmSection() {
+  const [models, setModels] = useState<string[]>([]);
+  const [activeModel, setActiveModel] = useState("");
+  const [checked, setChecked] = useState(false);
+
+  useEffect(() => {
+    Promise.all([invoke<string[]>("list_ollama_models"), invoke<string>("get_llm_model")])
+      .then(([ollamaModels, current]) => {
+        setModels(ollamaModels);
+        setActiveModel(current);
+      })
+      .catch((err) => console.error("failed to load LLM settings:", err))
+      .finally(() => setChecked(true));
+  }, []);
+
+  function selectModel(model: string) {
+    setActiveModel(model);
+    invoke("set_llm_model", { model }).catch((err) => console.error("set_llm_model failed:", err));
+  }
+
+  return (
+    <div className="mb-4">
+      <label className="mb-1 block text-xs font-medium opacity-70">LLM refinement</label>
+      {!checked ? (
+        <span className="loading loading-spinner loading-xs" />
+      ) : models.length === 0 ? (
         <p className="text-xs opacity-60">
-          Switch to another app, then reopen Settings to add a mode for it.
+          No local Ollama models found. Install{" "}
+          <a href="https://ollama.com" target="_blank" rel="noreferrer" className="link">
+            Ollama
+          </a>{" "}
+          and run <code className="rounded bg-base-100 px-1">ollama pull qwen3.5:4b</code> (or any
+          model) to enable "Refine with LLM" in App modes above.
         </p>
+      ) : (
+        <>
+          <select className="select select-sm w-full" value={activeModel} onChange={(e) => selectModel(e.target.value)}>
+            {models.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs opacity-50">Used by any mode with "Refine with LLM" enabled above.</p>
+        </>
       )}
     </div>
   );
@@ -334,12 +625,15 @@ function AppModesSection() {
 
 function SettingsView() {
   return (
-    <main className="min-h-screen bg-base-300 px-5 py-4 text-base-content">
+    <main className="h-screen overflow-y-auto bg-base-300 px-5 py-4 text-base-content">
       <h1 className="mb-4 text-base font-semibold">Settings</h1>
       <DeviceSection />
       <ShortcutSection />
       <ModelsSection />
       <AppModesSection />
+      <LlmSection />
+      <VocabularySection />
+      <HistorySection />
     </main>
   );
 }

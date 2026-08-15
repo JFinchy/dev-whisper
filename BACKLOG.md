@@ -18,78 +18,75 @@ build phases.
   after every rebuild during development. Only affects the local dev
   workflow, not signed release builds. Worth a stable local codesigning
   identity if this gets annoying enough.
+- **"Thinking" LLM models are too slow for refinement by default** — the
+  default Ollama model picked up on this machine (`qwen3.5:4b`) is a
+  reasoning/"thinking" model that burns many seconds on internal
+  chain-of-thought before answering even a trivial prompt (a plain
+  `ollama run` "say hi" took minutes). Fixed by passing `"think": false`
+  in the `/api/generate` request (`llm.rs`), which Ollama respects for
+  models that support toggling it — with that, refinement is ~1-2s. If
+  a user's chosen Ollama model doesn't support the `think` flag at all,
+  this has no effect and slow models will still be slow; worth surfacing
+  actual latency in the Settings LLM picker at some point so users can
+  judge which local models are fast enough for this use case.
 
 ## Feature Requests
 
-- **App-aware modes, stage 2 (LLM-backed transformation)** — stage 1
-  shipped: frontmost-app detection (`app_detect.rs`, `NSWorkspace`, no
-  extra permission needed), a mode framework with built-in defaults for
-  common apps (`modes.rs`), a Settings UI to add/edit per-app rules, and
-  rule-based formatting for CLI mode (a couple of illustrative
-  natural-language -> shell-command patterns, e.g. "git commit X" ->
-  `git commit -m "X"`). Casual mode is currently a no-op — rule-based
-  formatting can't meaningfully do "make this sound casual," it needs
-  the LLM refinement item below. Once that exists, wire it in as
-  Casual/Cli mode's actual transformation instead of (or alongside) the
-  regex patterns.
-
-- **LLM-based transcript refinement** — run the raw Whisper transcript
-  through a local LLM before pasting, with a prompt that varies by
-  mode/app (e.g. "reformat as a git commit command" vs. "clean up filler
-  words but keep it casual"). This is the core of what makes SuperWhisper
-  feel smarter than raw dictation, and it's also what
-  `PRODUCT_SPEC.md`'s architecture already calls for ("LLM Refinement
-  Layer: Ollama API / Llama.cpp") — not yet built; today we paste the raw
-  Whisper output untouched.
-  - Simplest path: call a locally-running Ollama instance's HTTP API
-    (`localhost:11434`) with a mode-specific system prompt. Small lift —
-    we already depend on `ureq` for HTTP; needs a graceful fallback to
-    the raw transcript if Ollama isn't installed/running.
-  - Heavier path: embed a small local LLM directly, same pattern as the
-    `whisper-rs` integration (download a GGUF model, run local
-    inference). Zero external dependencies, but comparable effort to
-    redoing that Phase 3 work.
-  - Either way, this adds real latency after transcription (an extra
-    inference round-trip) — needs a "Refining…" UI state and probably an
-    easy on/off toggle for when raw dictation is good enough.
+- **App-aware modes + LLM refinement** (shipped 2026-08-15) —
+  frontmost-app detection (`app_detect.rs`, `NSWorkspace`), a mode
+  framework with built-in defaults for common apps (`modes.rs`), a
+  Settings UI to add/edit per-app rules including a live running-apps
+  picker (no need to switch to the target app first), rule-based CLI
+  formatting (a few illustrative natural-language -> shell-command
+  patterns), and real LLM refinement via a locally-running Ollama
+  instance (`llm.rs`) with a per-mode "Refine with LLM" toggle and a
+  "Refining…" UI state. Verified end-to-end against a live Ollama
+  instance, not just built blind — see the Known Issues note below on
+  "thinking" models for a real gotcha this surfaced.
+  - **Not yet wired**: `AppModeRule.stt_model` (per-mode Whisper model
+    override) is in the data model and Settings UI, but doesn't
+    actually switch `WhisperEngine`'s active model yet. Naively calling
+    `set_model()` on every recording that hits a different-model rule
+    would reload the whisper context and repay the multi-second Metal
+    shader compile each time (see the "pre-warm" work from earlier in
+    this project) — needs a small pool of warm contexts (e.g. an LRU of
+    2-3 loaded models) rather than a blind wire-up.
+  - Casual mode's rule-based path is still a no-op (regex can't
+    meaningfully do "sound casual") — now that LLM refinement exists,
+    Casual mode should default `use_llm_refinement` to true instead of
+    leaving it manual.
 
 - **Redesign Modes UI to match SuperWhisper** — SuperWhisper's mode system
-  (see screenshots shared 2026-08-15) is meaningfully more complete than
-  our stage-1 "each app maps to one of 3 fixed built-in modes" model:
+  (see screenshots shared 2026-08-15) is still meaningfully more complete
+  than what we have, even after the 2026-08-15 additions above:
   - Modes are **named, user-created presets** ("Voice to text", "Default"),
-    not fixed built-ins. Each preset has: Language, Voice Model, its own
-    keyboard shortcut to start a recording directly in that mode, an
-    "Activate for apps" assignment, and an "Advanced settings" section
-    (presumably per-mode prompt/formatting overrides).
+    not fixed built-ins — ours is still "each app maps to one Mode enum
+    value" (Plain/Casual/Cli), not arbitrary named presets with their own
+    Language/Voice Model/keyboard shortcut/"Advanced settings".
   - "Activate for apps" uses a proper categorized picker (Mail,
     Messaging, AI chat, Text editing, Coding, Terminal, Browsers, Social
-    media, Design) with app icons, rather than our bare bundle-ID list.
+    media, Design) with app icons — we now have a running-apps picker
+    (shipped 2026-08-15) but it's a flat list, not categorized/iconed.
   - A left sidebar nav (Home, Modes, Vocabulary, Configuration, Sound,
-    Models library, History) — **Vocabulary** is its own section too:
-    user-editable dictionary/jargon list, vs. our hardcoded
-    `DEV_VOCAB_PROMPT` constant in `stt.rs`.
-  - This effectively supersedes the current Settings UI for modes (the
-    Rust-side groundwork — `app_detect.rs` frontmost detection,
-    `modes.rs` resolution logic — is still the right foundation; this is
-    mainly a data-model and UI expansion: named presets instead of a
-    fixed enum, per-mode shortcuts, multi-app assignment per mode instead
-    of one-mode-per-app).
+    Models library, History) — we now have Vocabulary and History as
+    their own Settings sections (shipped 2026-08-15), just not as a
+    proper sidebar-navigated app, everything's stacked in one scrolling
+    Settings window.
+  - Still the right call to defer the full redesign: the underlying
+    pieces (`app_detect.rs`, `modes.rs`, `llm.rs`, `history.rs`) are
+    solid groundwork; this is now purely a UI/IA redesign, not new
+    backend work.
 
-- **Transcript history** — SuperWhisper's "History" section: store past
-  transcripts locally, browsable/scrollable in-app (a new view, not
-  server logs). Needs:
-  - A local store (SQLite via `rusqlite`, or a simple append-only
-    JSONL file) recording timestamp, transcript text, which app/mode it
-    was captured for.
-  - A scrollable history view — likely its own settings-window tab
-    alongside Device/Shortcut/Models/App modes.
-  - **User-configurable retention** (number of days to keep), with
-    automatic purge of anything older, run on startup or on a timer.
-  - Worth flagging: dictated text can contain sensitive content
-    (passwords read aloud, private messages, etc.), so this needs a
-    visible "Clear history" action and should probably default to a
-    conservative retention window rather than "forever," even though
-    storage is local-only and matches the app's privacy-first framing.
+- **Transcript history** (shipped 2026-08-15) — local JSONL store
+  (`history.rs`), a scrollable History section in Settings, and
+  user-configurable retention (7/30/90/365 days) with auto-purge on
+  startup. Only logs transcripts that actually got pasted (a failed
+  paste doesn't show up as a history entry). Defaults to 30 days, not
+  "forever," since dictated text can contain sensitive content.
+
+- **Vocabulary editor** (shipped 2026-08-15) — replaced the hardcoded
+  `DEV_VOCAB_PROMPT` constant with a user-editable term list, persisted
+  in config and fed into Whisper's `initial_prompt` at transcribe time.
 
 - **Review SuperWhisper's feature set** — go through what SuperWhisper
   offers end-to-end and decide what's worth adopting beyond the items

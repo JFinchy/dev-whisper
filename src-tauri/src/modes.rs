@@ -23,6 +23,15 @@ pub struct AppModeRule {
     pub bundle_id: String,
     pub app_name: String,
     pub mode: Mode,
+    /// Whisper model id (matching `models::CATALOG`) to use for this app,
+    /// overriding the globally-active model. `None` = use whatever's
+    /// globally active.
+    #[serde(default)]
+    pub stt_model: Option<String>,
+    /// Forward-looking toggle for the LLM refinement pipeline (see
+    /// BACKLOG.md) — not yet wired to an actual LLM call.
+    #[serde(default)]
+    pub use_llm_refinement: bool,
 }
 
 /// Bundle IDs this app knows a sensible default mode for out of the box.
@@ -38,18 +47,54 @@ const BUILTIN_DEFAULTS: &[(&str, Mode)] = &[
     ("com.hnc.Discord", Mode::Casual),
 ];
 
-pub fn resolve_mode(bundle_id: Option<&str>, rules: &[AppModeRule]) -> Mode {
+pub struct ResolvedSettings {
+    pub mode: Mode,
+    /// Per-mode Whisper model override, settable in Settings — not yet
+    /// wired to actually switch WhisperEngine's active model. Doing that
+    /// naively would reload the whisper context (and repay the multi-
+    /// second Metal shader compile) on every recording that hits a
+    /// different-model rule, so it needs a real design pass (e.g. a small
+    /// LRU of warm contexts) rather than a blind wire-up. See BACKLOG.md.
+    #[allow(dead_code)]
+    pub stt_model: Option<String>,
+    pub use_llm_refinement: bool,
+}
+
+/// Full resolution (mode + per-mode overrides), used by the recording
+/// pipeline. `resolve_mode` below is a thin wrapper kept for callers (and
+/// tests) that only care about the mode.
+pub fn resolve_settings(bundle_id: Option<&str>, rules: &[AppModeRule]) -> ResolvedSettings {
     let Some(bundle_id) = bundle_id else {
-        return Mode::Plain;
+        return ResolvedSettings {
+            mode: Mode::Plain,
+            stt_model: None,
+            use_llm_refinement: false,
+        };
     };
     if let Some(rule) = rules.iter().find(|r| r.bundle_id == bundle_id) {
-        return rule.mode;
+        return ResolvedSettings {
+            mode: rule.mode,
+            stt_model: rule.stt_model.clone(),
+            use_llm_refinement: rule.use_llm_refinement,
+        };
     }
-    BUILTIN_DEFAULTS
+    let mode = BUILTIN_DEFAULTS
         .iter()
         .find(|(id, _)| *id == bundle_id)
         .map(|(_, mode)| *mode)
-        .unwrap_or(Mode::Plain)
+        .unwrap_or(Mode::Plain);
+    ResolvedSettings {
+        mode,
+        stt_model: None,
+        use_llm_refinement: false,
+    }
+}
+
+/// Thin convenience wrapper around `resolve_settings` for callers (mainly
+/// tests) that only care about the mode.
+#[allow(dead_code)]
+pub fn resolve_mode(bundle_id: Option<&str>, rules: &[AppModeRule]) -> Mode {
+    resolve_settings(bundle_id, rules).mode
 }
 
 pub fn apply_mode(mode: Mode, transcript: &str) -> String {
@@ -92,6 +137,8 @@ mod tests {
             bundle_id: bundle_id.to_string(),
             app_name: bundle_id.to_string(),
             mode,
+            stt_model: None,
+            use_llm_refinement: false,
         }
     }
 
@@ -174,14 +221,23 @@ pub fn get_mode_rules(app: AppHandle) -> Vec<AppModeRule> {
 }
 
 #[tauri::command]
-pub fn set_mode_rule(app: AppHandle, bundle_id: String, app_name: String, mode: Mode) {
-    eprintln!("modes: set_mode_rule bundle_id={bundle_id} app_name={app_name} mode={mode:?}");
+pub fn set_mode_rule(
+    app: AppHandle,
+    bundle_id: String,
+    app_name: String,
+    mode: Mode,
+    stt_model: Option<String>,
+    use_llm_refinement: bool,
+) {
+    eprintln!("modes: set_mode_rule bundle_id={bundle_id} app_name={app_name} mode={mode:?} stt_model={stt_model:?} use_llm_refinement={use_llm_refinement}");
     let mut cfg = config::load(&app);
     cfg.mode_rules.retain(|r| r.bundle_id != bundle_id);
     cfg.mode_rules.push(AppModeRule {
         bundle_id,
         app_name,
         mode,
+        stt_model,
+        use_llm_refinement,
     });
     let _ = config::save(&app, &cfg);
 }
@@ -191,4 +247,35 @@ pub fn remove_mode_rule(app: AppHandle, bundle_id: String) {
     let mut cfg = config::load(&app);
     cfg.mode_rules.retain(|r| r.bundle_id != bundle_id);
     let _ = config::save(&app, &cfg);
+}
+
+#[derive(Serialize)]
+pub struct RunningAppPayload {
+    pub bundle_id: String,
+    pub name: String,
+}
+
+/// Lists currently-running apps for the "browse running apps" picker in
+/// Settings, so adding a mode rule doesn't require switching to the target
+/// app first. NSWorkspace requires the main thread; the command's own
+/// thread blocks on a channel waiting for that dispatch to run.
+#[tauri::command]
+pub fn list_running_apps(app: AppHandle) -> Vec<RunningAppPayload> {
+    let own_bundle_id = app.config().identifier.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let dispatched = app.run_on_main_thread(move || {
+        let apps = crate::app_detect::list_running_apps(&own_bundle_id);
+        let _ = tx.send(apps);
+    });
+    if dispatched.is_err() {
+        return Vec::new();
+    }
+    rx.recv()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|info| RunningAppPayload {
+            bundle_id: info.bundle_id,
+            name: info.name,
+        })
+        .collect()
 }

@@ -3,12 +3,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-type Phase = "idle" | "recording" | "transcribing";
+type Phase = "idle" | "recording" | "transcribing" | "refining";
 
 const STATUS_LABEL: Record<Phase, string> = {
   idle: "Ready",
   recording: "Listening…",
   transcribing: "Transcribing…",
+  refining: "Refining…",
 };
 
 function WidgetView() {
@@ -23,6 +24,7 @@ function WidgetView() {
 
     const unlistenStart = listen("recording-started", () => setPhase("recording"));
     const unlistenStop = listen("recording-stopped", () => setPhase("transcribing"));
+    const unlistenRefining = listen("refining-started", () => setPhase("refining"));
     const unlistenRecordingError = listen<string>("recording-error", (event) => {
       setPhase("idle");
       flash(event.payload);
@@ -39,6 +41,7 @@ function WidgetView() {
     return () => {
       unlistenStart.then((f) => f());
       unlistenStop.then((f) => f());
+      unlistenRefining.then((f) => f());
       unlistenRecordingError.then((f) => f());
       unlistenTranscriptReady.then((f) => f());
       unlistenTranscriptError.then((f) => f());
@@ -68,10 +71,10 @@ function WidgetView() {
           phase === "recording" ? "bg-white/15" : "bg-white/8 hover:bg-white/15"
         }`}
         onClick={toggleRecording}
-        disabled={phase === "transcribing"}
+        disabled={phase === "transcribing" || phase === "refining"}
         aria-label={phase === "idle" ? "Start recording" : "Stop recording"}
       >
-        {phase === "transcribing" ? (
+        {phase === "transcribing" || phase === "refining" ? (
           <span className="loading loading-spinner loading-xs" />
         ) : (
           <span

@@ -1,6 +1,8 @@
 mod app_detect;
 mod audio;
 mod config;
+mod history;
+mod llm;
 mod models;
 mod modes;
 mod paste;
@@ -18,11 +20,13 @@ use tauri::{
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState as PressState};
 
 use audio::AudioHandle;
+use history::{clear_history, get_history_retention_days, list_history_entries, set_history_retention_days};
+use llm::{get_llm_model, list_ollama_models, set_llm_model};
 use models::{download_model, list_models, set_active_model};
-use modes::{get_mode_rules, remove_mode_rule, set_mode_rule};
+use modes::{get_mode_rules, list_running_apps, remove_mode_rule, set_mode_rule};
 use recording::{
-    get_active_input_device, get_last_frontmost_app, list_input_devices, set_input_device,
-    toggle_recording, toggle_recording_command, RecordingState,
+    get_active_input_device, get_last_frontmost_app, get_vocabulary, list_input_devices,
+    set_input_device, set_vocabulary, toggle_recording, toggle_recording_command, RecordingState,
 };
 use shortcut::{get_shortcut, set_shortcut, PushToTalkState};
 use stt::WhisperEngine;
@@ -41,8 +45,9 @@ fn open_settings(app: tauri::AppHandle) -> tauri::Result<()> {
         tauri::WebviewUrl::App("index.html".into()),
     )
     .title("Dev Whisper Settings")
-    .inner_size(360.0, 540.0)
-    .resizable(false);
+    .inner_size(380.0, 640.0)
+    .min_inner_size(380.0, 400.0)
+    .resizable(true);
 
     // Anchor settings just below the widget instead of both windows
     // centering on top of each other.
@@ -107,7 +112,17 @@ pub fn run() {
             get_mode_rules,
             set_mode_rule,
             remove_mode_rule,
+            list_running_apps,
             get_last_frontmost_app,
+            get_vocabulary,
+            set_vocabulary,
+            list_history_entries,
+            clear_history,
+            get_history_retention_days,
+            set_history_retention_days,
+            list_ollama_models,
+            get_llm_model,
+            set_llm_model,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -136,6 +151,7 @@ pub fn run() {
                 .or_else(|| models::model_path(app.handle(), &model_id).ok())
                 .unwrap_or_default();
             let whisper = WhisperEngine::new(model_id, model_path);
+            whisper.set_vocabulary(saved_config.vocabulary.clone());
 
             app.manage(RecordingState {
                 audio,
@@ -154,6 +170,14 @@ pub fn run() {
                 if let Err(err) = state.whisper.ensure_loaded() {
                     eprintln!("model warm-up skipped: {err}");
                 }
+            });
+
+            // Purge transcript history older than the configured retention
+            // window on every launch.
+            let purge_app = app.handle().clone();
+            let retention_days = saved_config.history_retention_days;
+            std::thread::spawn(move || {
+                history::purge_old_entries(&purge_app, retention_days);
             });
 
             let toggle_recording_item = MenuItem::with_id(app, "toggle_recording", "Start/Stop Recording", true, None::<&str>)?;

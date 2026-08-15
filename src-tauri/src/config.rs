@@ -23,13 +23,46 @@ impl Default for ShortcutConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct AppConfig {
     pub input_device: Option<String>,
     pub shortcut: Option<ShortcutConfig>,
     pub active_model: Option<String>,
     #[serde(default)]
     pub mode_rules: Vec<crate::modes::AppModeRule>,
+    /// Developer-jargon terms biasing Whisper's recognition. Defaults to
+    /// `stt::default_vocabulary()` both for fresh installs (via `impl
+    /// Default`) and for configs saved before this field existed (via
+    /// the serde default below) — never silently empty.
+    #[serde(default = "crate::stt::default_vocabulary")]
+    pub vocabulary: Vec<String>,
+    /// How many days of transcript history to keep before auto-purging.
+    /// Conservative default (not "forever") since dictated text can
+    /// contain sensitive content.
+    #[serde(default = "default_history_retention_days")]
+    pub history_retention_days: u32,
+    /// Which locally-pulled Ollama model to use for LLM refinement (see
+    /// `llm.rs`). Only used for modes with `use_llm_refinement: true`.
+    #[serde(default = "crate::llm::default_model")]
+    pub llm_model: String,
+}
+
+fn default_history_retention_days() -> u32 {
+    30
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            input_device: None,
+            shortcut: None,
+            active_model: None,
+            mode_rules: Vec::new(),
+            vocabulary: crate::stt::default_vocabulary(),
+            history_retention_days: default_history_retention_days(),
+            llm_model: crate::llm::default_model(),
+        }
+    }
 }
 
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -74,7 +107,10 @@ mod tests {
                 bundle_id: "com.apple.Terminal".to_string(),
                 app_name: "Terminal".to_string(),
                 mode: crate::modes::Mode::Cli,
+                stt_model: None,
+                use_llm_refinement: false,
             }],
+            ..AppConfig::default()
         };
         let json = serde_json::to_string(&original).unwrap();
         let restored: AppConfig = serde_json::from_str(&json).unwrap();
@@ -107,5 +143,7 @@ mod tests {
         assert!(restored.shortcut.is_none());
         assert!(restored.active_model.is_none());
         assert!(restored.mode_rules.is_empty());
+        assert_eq!(restored.vocabulary, crate::stt::default_vocabulary());
+        assert_eq!(restored.history_retention_days, 30);
     }
 }

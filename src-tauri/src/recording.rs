@@ -74,23 +74,41 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
     let state = app.state::<RecordingState>();
     match state.whisper.transcribe(wav_path) {
         Ok(text) if !text.is_empty() => {
-            let bundle_id = state
-                .active_app
-                .lock()
-                .unwrap()
-                .as_ref()
-                .map(|info| info.bundle_id.clone());
-            let rules = crate::config::load(app).mode_rules;
-            let mode = modes::resolve_mode(bundle_id.as_deref(), &rules);
-            let formatted = modes::apply_mode(mode, &text);
+            let active_app = state.active_app.lock().unwrap().clone();
+            let bundle_id = active_app.as_ref().map(|info| info.bundle_id.clone());
+            let app_name = active_app.map(|info| info.name);
+            let cfg = crate::config::load(app);
+            let settings = modes::resolve_settings(bundle_id.as_deref(), &cfg.mode_rules);
+            let formatted = modes::apply_mode(settings.mode, &text);
             eprintln!(
                 "modes: bundle_id={bundle_id:?} rules={} resolved_mode={:?} transcript={text:?} formatted={formatted:?}",
-                rules.len(),
-                mode,
+                cfg.mode_rules.len(),
+                settings.mode,
             );
+
+            let formatted = if settings.use_llm_refinement {
+                let _ = app.emit("refining-started", ());
+                match crate::llm::refine(settings.mode, &formatted, &cfg.llm_model) {
+                    Ok(refined) => refined,
+                    Err(err) => {
+                        eprintln!("llm: refinement failed, pasting unrefined text: {err}");
+                        formatted
+                    }
+                }
+            } else {
+                formatted
+            };
 
             match paste_text(&formatted) {
                 Ok(()) => {
+                    // Only log to history what actually reached the user —
+                    // a failed paste shouldn't silently show up as history.
+                    crate::history::append_entry(
+                        app,
+                        &formatted,
+                        app_name,
+                        Some(format!("{:?}", settings.mode)),
+                    );
                     let _ = app.emit("transcript-ready", formatted);
                 }
                 Err(err) => {
@@ -133,6 +151,20 @@ pub fn set_input_device(app: AppHandle, name: Option<String>, state: tauri::Stat
 
     let mut cfg = crate::config::load(&app);
     cfg.input_device = name;
+    let _ = crate::config::save(&app, &cfg);
+}
+
+#[tauri::command]
+pub fn get_vocabulary(app: AppHandle) -> Vec<String> {
+    crate::config::load(&app).vocabulary
+}
+
+#[tauri::command]
+pub fn set_vocabulary(app: AppHandle, terms: Vec<String>, state: tauri::State<RecordingState>) {
+    state.whisper.set_vocabulary(terms.clone());
+
+    let mut cfg = crate::config::load(&app);
+    cfg.vocabulary = terms;
     let _ = crate::config::save(&app, &cfg);
 }
 
