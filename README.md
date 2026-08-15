@@ -28,6 +28,23 @@ this problem.
 The push-to-talk shortcut and Whisper model are configurable from the
 Settings window (gear icon on the widget) and persist across restarts.
 
+**Known limitation — iPhone Microphone (Continuity)**: selecting your
+iPhone as the input device is unreliable. In testing, the stream would
+sometimes open and play but deliver zero audio frames to the capture
+callback for the entire recording (confirmed via `audio: first callback
+received` logging — sometimes it never printed at all), while other
+attempts with the identical device worked fine. This looks like a race in
+Continuity's connection handshake interacting with `cpal`'s low-level
+CoreAudio `AudioUnit` input path, which is a different code path than the
+one Apple's own apps use (`AVAudioEngine`) — not a bug in this app's
+start/stop lifecycle, which was verified clean (open → play → pause →
+drop) in every case. `audio.rs` retries opening the device a few times
+and falls back to the system default if it still won't open, which fixes
+the "stale device handle right after selecting it" failure mode, but not
+this "opens fine, delivers no data" one. If you want to use your iPhone
+as the mic, expect to retry the recording a time or two; for anything
+important, use a built-in/USB/Bluetooth mic instead.
+
 ## Recommended IDE Setup
 
 - [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
