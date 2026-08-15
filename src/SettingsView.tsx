@@ -497,6 +497,7 @@ function HistorySection() {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [retentionDays, setRetentionDays] = useState<number>(30);
   const [loading, setLoading] = useState(true);
+  const [copiedAt, setCopiedAt] = useState<number | null>(null);
 
   function refresh() {
     invoke<HistoryEntry[]>("list_history_entries")
@@ -515,6 +516,13 @@ function HistorySection() {
       })
       .catch((err) => console.error("failed to load history:", err))
       .finally(() => setLoading(false));
+
+    // New transcripts land while Settings may already be open — without
+    // this, the list only ever reflected whatever existed at mount time.
+    const unlisten = listen("history-updated", refresh);
+    return () => {
+      unlisten.then((f) => f());
+    };
   }, []);
 
   function changeRetention(days: number) {
@@ -527,6 +535,16 @@ function HistorySection() {
   function clear() {
     setEntries([]);
     invoke("clear_history").catch((err) => console.error("clear_history failed:", err));
+  }
+
+  function copyEntry(entry: HistoryEntry) {
+    navigator.clipboard
+      .writeText(entry.text)
+      .then(() => {
+        setCopiedAt(entry.timestamp_ms);
+        setTimeout(() => setCopiedAt((current) => (current === entry.timestamp_ms ? null : current)), 1500);
+      })
+      .catch((err) => console.error("clipboard write failed:", err));
   }
 
   return (
@@ -557,10 +575,20 @@ function HistorySection() {
       ) : (
         <ul className="flex max-h-48 flex-col gap-1 overflow-y-auto rounded-md bg-base-100 p-1.5">
           {entries.map((entry) => (
-            <li key={entry.timestamp_ms} className="rounded px-1.5 py-1 text-xs hover:bg-base-200">
-              <div className="flex justify-between opacity-50">
+            <li key={entry.timestamp_ms} className="group rounded px-1.5 py-1 text-xs hover:bg-base-200">
+              <div className="flex items-center justify-between opacity-50">
                 <span>{formatTimestamp(entry.timestamp_ms)}</span>
-                {entry.app_name && <span className="truncate pl-2">{entry.app_name}</span>}
+                <div className="flex items-center gap-1.5">
+                  {entry.app_name && <span className="truncate">{entry.app_name}</span>}
+                  <button
+                    className="opacity-0 group-hover:opacity-100"
+                    onClick={() => copyEntry(entry)}
+                    aria-label="Copy transcript"
+                    title="Copy"
+                  >
+                    {copiedAt === entry.timestamp_ms ? "✓" : "⧉"}
+                  </button>
+                </div>
               </div>
               <p className="truncate" title={entry.text}>
                 {entry.text}

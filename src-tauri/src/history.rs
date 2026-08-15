@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::config;
 
@@ -71,6 +71,9 @@ pub fn append_entry(app: &AppHandle, text: &str, app_name: Option<String>, mode:
     };
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = writeln!(file, "{line}");
+        // The Settings window (if open) has no other way to know a new
+        // entry landed — it only fetches on mount / explicit refresh.
+        let _ = app.emit("history-updated", ());
     }
 }
 
