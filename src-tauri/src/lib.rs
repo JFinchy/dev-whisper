@@ -156,14 +156,20 @@ pub fn run() {
                 }
             });
 
+            let toggle_recording_item = MenuItem::with_id(app, "toggle_recording", "Start/Stop Recording", true, None::<&str>)?;
             let toggle_widget = MenuItem::with_id(app, "toggle_widget", "Show/Hide Widget", true, None::<&str>)?;
+            let open_settings_item = MenuItem::with_id(app, "open_settings", "Open Settings…", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&toggle_widget, &quit])?;
+            let menu = Menu::with_items(
+                app,
+                &[&toggle_recording_item, &toggle_widget, &open_settings_item, &quit],
+            )?;
 
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    "toggle_recording" => toggle_recording(app),
                     "toggle_widget" => {
                         if let Some(window) = app.get_webview_window("widget") {
                             let visible = window.is_visible().unwrap_or(false);
@@ -174,6 +180,9 @@ pub fn run() {
                                 let _ = window.set_focus();
                             }
                         }
+                    }
+                    "open_settings" => {
+                        let _ = open_settings(app.clone());
                     }
                     "quit" => app.exit(0),
                     _ => {}

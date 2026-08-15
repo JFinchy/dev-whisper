@@ -95,6 +95,44 @@ build phases.
   offers end-to-end and decide what's worth adopting beyond the items
   above. Open research item, no defined scope yet.
 
+- **Parakeet as an alternative STT model** (researched 2026-08-15) —
+  NVIDIA's Parakeet ASR as a second model option alongside Whisper.
+  Findings from a dedicated research pass:
+  - NVIDIA only ships Parakeet in NeMo/PyTorch format — no official ONNX
+    export. But the community has already done the hard part:
+    [`istupakov/parakeet-tdt-0.6b-v3-onnx`](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx)
+    on Hugging Face has working ONNX exports (incl. int8-quantized), and
+    [`parakeet-rs`](https://github.com/altunenes/parakeet-rs) (crates.io,
+    383 GitHub stars, 63k+ downloads, actively maintained) is a real Rust
+    crate wrapping `ort` (ONNX Runtime bindings) that already implements
+    Parakeet's feature extraction and RNNT/TDT decoding — the parts that
+    would otherwise be the expensive part of a second backend.
+  - Apple Silicon acceleration is the open question: the `parakeet-rs`
+    maintainer's own README flags CoreML as *unstable* for this model
+    graph and recommends the WebGPU execution provider (Metal-backed,
+    but newer/less proven than whisper.cpp's direct Metal path) or CPU.
+    One anecdotal claim that CPU alone beats whisper.cpp's Metal path on
+    an M3 — plausible given Parakeet's architecture, but needs our own
+    benchmark before it's a decision input, not a data point from one
+    person's machine.
+  - Effort verdict: this is a real second inference backend (different
+    feature extraction, tokenizer, decoding — not just "download another
+    GGUF"), plus a second native runtime dependency (ONNX Runtime dylibs
+    need bundling/signing/notarizing in the `.app`, unlike whisper.cpp's
+    static lib) and multi-file model management (encoder + decoder_joint
+    + vocab, hundreds of MB–2GB). But it's *not* build-from-scratch —
+    `parakeet-rs` carries the hard parts, meaningfully lowering the
+    bar versus rolling our own NeMo/ONNX integration.
+  - Risks: single-maintainer crate (supply-chain/longevity), CoreML
+    instability means the "accelerated" story needs reframing to
+    WebGPU/CPU, and third-party ONNX conversions have to track NVIDIA's
+    upstream churn (a v2→v3 model revision already happened).
+  - **Recommendation: not implemented, no code written.** Tractable as a
+    validate-first spike against `parakeet-rs` directly (confirm
+    real-world speed/accuracy on our hardware) before committing to
+    maintaining it as a shipped option — premature to build the full
+    Settings/download UI plumbing before that spike says it's worth it.
+
 ## Research / Exploration
 
 - **Single-speaker voice isolation** — reject background noise (music,

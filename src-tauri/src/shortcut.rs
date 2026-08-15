@@ -148,3 +148,63 @@ fn parse_code(code: &str) -> Option<Code> {
         _ => return None,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(meta: bool, ctrl: bool, alt: bool, shift: bool, code: &str) -> ShortcutConfig {
+        ShortcutConfig {
+            meta,
+            ctrl,
+            alt,
+            shift,
+            code: code.to_string(),
+        }
+    }
+
+    #[test]
+    fn default_shortcut_is_valid() {
+        assert!(to_shortcut(&ShortcutConfig::default()).is_ok());
+    }
+
+    #[test]
+    fn rejects_no_modifiers() {
+        let err = to_shortcut(&cfg(false, false, false, false, "Space")).unwrap_err();
+        assert!(err.contains("modifier"));
+    }
+
+    #[test]
+    fn rejects_unknown_code() {
+        let err = to_shortcut(&cfg(true, false, false, false, "NotAKey")).unwrap_err();
+        assert!(err.contains("NotAKey"));
+    }
+
+    #[test]
+    fn different_configs_produce_different_shortcuts() {
+        let a = to_shortcut(&cfg(true, false, false, true, "Space")).unwrap();
+        let b = to_shortcut(&cfg(true, false, false, false, "Space")).unwrap();
+        let c = to_shortcut(&cfg(true, false, false, true, "KeyV")).unwrap();
+        assert_ne!(a, b, "differing shift flag should produce a different shortcut");
+        assert_ne!(a, c, "differing key code should produce a different shortcut");
+    }
+
+    #[test]
+    fn same_config_produces_equal_shortcuts() {
+        let a = to_shortcut(&cfg(true, true, false, true, "KeyA")).unwrap();
+        let b = to_shortcut(&cfg(true, true, false, true, "KeyA")).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn covers_letters_digits_and_function_keys() {
+        for code in [
+            "KeyA", "KeyZ", "Digit0", "Digit9", "F1", "F12", "ArrowUp", "Tab", "Escape",
+        ] {
+            assert!(
+                parse_code(code).is_some(),
+                "expected {code} to be a recognized key"
+            );
+        }
+    }
+}

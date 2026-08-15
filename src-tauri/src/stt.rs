@@ -150,6 +150,64 @@ mod tests {
         assert!(result.is_ok(), "transcription failed: {:?}", result.err());
     }
 
+    #[test]
+    fn resample_same_rate_is_a_noop() {
+        let input = vec![0.1, 0.2, 0.3, 0.4];
+        assert_eq!(resample_linear(&input, 16000, 16000), input);
+    }
+
+    #[test]
+    fn resample_empty_input_stays_empty() {
+        assert!(resample_linear(&[], 44100, 16000).is_empty());
+    }
+
+    #[test]
+    fn resample_downsamples_to_expected_length() {
+        // 1 second at 48kHz -> 1 second at 16kHz (3:1 ratio).
+        let input = vec![0.0f32; 48000];
+        let output = resample_linear(&input, 48000, 16000);
+        assert_eq!(output.len(), 16000);
+    }
+
+    #[test]
+    fn resample_upsamples_to_expected_length() {
+        let input = vec![0.0f32; 16000];
+        let output = resample_linear(&input, 16000, 48000);
+        assert_eq!(output.len(), 48000);
+    }
+
+    #[test]
+    fn resample_interpolates_between_samples() {
+        // 2 samples at 2x the target rate -> roughly 1 sample, interpolated.
+        let input = vec![0.0, 1.0];
+        let output = resample_linear(&input, 2, 1);
+        assert_eq!(output.len(), 1);
+        assert!(output[0] >= 0.0 && output[0] <= 1.0);
+    }
+
+    #[test]
+    fn downmix_mono_is_a_noop() {
+        let input = vec![0.1, 0.2, 0.3];
+        assert_eq!(downmix(&input, 1), input);
+    }
+
+    #[test]
+    fn downmix_stereo_averages_channels() {
+        // L, R, L, R
+        let input = vec![1.0, 0.0, 0.5, 0.5];
+        let output = downmix(&input, 2);
+        assert_eq!(output, vec![0.5, 0.5]);
+    }
+
+    #[test]
+    fn downmix_handles_odd_trailing_frame() {
+        // A trailing partial frame (shouldn't happen with real wav data,
+        // but shouldn't panic either).
+        let input = vec![1.0, 0.0, 0.5];
+        let output = downmix(&input, 2);
+        assert_eq!(output.len(), 2);
+    }
+
     fn write_test_tone(path: &Path) {
         let spec = hound::WavSpec {
             channels: 1,

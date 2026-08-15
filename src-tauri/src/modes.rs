@@ -83,6 +83,91 @@ fn format_as_cli(text: &str) -> String {
     trimmed.to_string()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rule(bundle_id: &str, mode: Mode) -> AppModeRule {
+        AppModeRule {
+            bundle_id: bundle_id.to_string(),
+            app_name: bundle_id.to_string(),
+            mode,
+        }
+    }
+
+    #[test]
+    fn no_bundle_id_resolves_to_plain() {
+        assert_eq!(resolve_mode(None, &[]), Mode::Plain);
+    }
+
+    #[test]
+    fn unknown_app_with_no_rules_resolves_to_plain() {
+        assert_eq!(resolve_mode(Some("com.example.unknown"), &[]), Mode::Plain);
+    }
+
+    #[test]
+    fn builtin_default_applies_when_no_user_rule() {
+        assert_eq!(resolve_mode(Some("com.apple.Terminal"), &[]), Mode::Cli);
+        assert_eq!(resolve_mode(Some("com.tinyspeck.slackmacgap"), &[]), Mode::Casual);
+    }
+
+    #[test]
+    fn user_rule_overrides_builtin_default() {
+        let rules = vec![rule("com.apple.Terminal", Mode::Casual)];
+        assert_eq!(resolve_mode(Some("com.apple.Terminal"), &rules), Mode::Casual);
+    }
+
+    #[test]
+    fn user_rule_applies_to_apps_without_a_builtin_default() {
+        let rules = vec![rule("com.example.myapp", Mode::Cli)];
+        assert_eq!(resolve_mode(Some("com.example.myapp"), &rules), Mode::Cli);
+    }
+
+    #[test]
+    fn plain_and_casual_pass_transcript_through_unchanged() {
+        let text = "  Hello,  world.  ";
+        assert_eq!(apply_mode(Mode::Plain, text), text);
+        assert_eq!(apply_mode(Mode::Casual, text), text);
+    }
+
+    #[test]
+    fn cli_mode_formats_git_commit() {
+        assert_eq!(
+            apply_mode(Mode::Cli, "git commit update readme"),
+            "git commit -m \"update readme\""
+        );
+        // Case-insensitive prefix match.
+        assert_eq!(
+            apply_mode(Mode::Cli, "Git Commit fix the bug."),
+            "git commit -m \"fix the bug\""
+        );
+    }
+
+    #[test]
+    fn cli_mode_formats_mkdir_and_cd() {
+        assert_eq!(apply_mode(Mode::Cli, "make directory src"), "mkdir src");
+        assert_eq!(
+            apply_mode(Mode::Cli, "change directory to src"),
+            "cd src"
+        );
+    }
+
+    #[test]
+    fn cli_mode_passes_through_unmatched_text() {
+        assert_eq!(
+            apply_mode(Mode::Cli, "this doesn't match any pattern"),
+            "this doesn't match any pattern"
+        );
+    }
+
+    #[test]
+    fn mode_serializes_as_snake_case() {
+        assert_eq!(serde_json::to_string(&Mode::Cli).unwrap(), "\"cli\"");
+        assert_eq!(serde_json::to_string(&Mode::Casual).unwrap(), "\"casual\"");
+        assert_eq!(serde_json::to_string(&Mode::Plain).unwrap(), "\"plain\"");
+    }
+}
+
 #[tauri::command]
 pub fn get_mode_rules(app: AppHandle) -> Vec<AppModeRule> {
     config::load(&app).mode_rules
