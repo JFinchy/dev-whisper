@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::app_detect::AppInfo;
 use crate::audio::AudioHandle;
 use crate::modes;
 use crate::paste::paste_text;
@@ -11,9 +12,13 @@ pub struct RecordingState {
     pub audio: AudioHandle,
     pub whisper: WhisperEngine,
     pub is_recording: AtomicBool,
-    /// Bundle ID of whatever app was frontmost when the current/last
-    /// recording started, used to pick a formatting mode once it's done.
-    pub active_app: Mutex<Option<String>>,
+    /// Whatever app was frontmost when the current/last recording started —
+    /// used to pick a formatting mode, and doubles as "last app you were
+    /// in" for the Settings quick-add UI (capturing frontmost app right
+    /// before Settings opens doesn't work: opening Settings requires
+    /// clicking a button in the widget, so the widget is always already
+    /// frontmost by that point).
+    pub active_app: Mutex<Option<AppInfo>>,
 }
 
 /// Shared by the tray/UI toggle command and the global hotkey listener so
@@ -35,22 +40,30 @@ pub fn toggle_recording(app: &AppHandle) {
         }
     } else {
         state.audio.start();
-        // The widget starts hidden; without this, triggering a recording via
-        // the global hotkey gives no visual feedback that it's running.
-        if let Some(window) = app.get_webview_window("widget") {
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
 
-        // NSWorkspace requires the main thread; capture which app the user
-        // was in fire-and-forget style — there's easily enough time before
-        // transcribe_and_paste() reads it back after the recording finishes.
-        let capture_app = app.clone();
+        // Capture which app the user was in *before* showing/focusing our
+        // own widget below — otherwise NSWorkspace reports Dev Whisper
+        // itself as frontmost. Both steps run in one main-thread closure
+        // (NSWorkspace requires the main thread) so the ordering is
+        // guaranteed rather than a race between two separately-queued
+        // main-thread dispatches.
+        let main_thread_app = app.clone();
         let _ = app.run_on_main_thread(move || {
             let info = crate::app_detect::frontmost_app_info();
-            eprintln!("modes: frontmost app at recording start = {:?}", info.as_ref().map(|i| (&i.bundle_id, &i.name)));
-            let state = capture_app.state::<RecordingState>();
-            *state.active_app.lock().unwrap() = info.map(|i| i.bundle_id);
+            eprintln!(
+                "modes: frontmost app at recording start = {:?}",
+                info.as_ref().map(|i| (&i.bundle_id, &i.name))
+            );
+            let state = main_thread_app.state::<RecordingState>();
+            *state.active_app.lock().unwrap() = info;
+
+            // The widget starts hidden; without this, triggering a
+            // recording via the global hotkey gives no visual feedback
+            // that it's running.
+            if let Some(window) = main_thread_app.get_webview_window("widget") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
         });
 
         let _ = app.emit("recording-started", ());
@@ -61,7 +74,12 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
     let state = app.state::<RecordingState>();
     match state.whisper.transcribe(wav_path) {
         Ok(text) if !text.is_empty() => {
-            let bundle_id = state.active_app.lock().unwrap().clone();
+            let bundle_id = state
+                .active_app
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|info| info.bundle_id.clone());
             let rules = crate::config::load(app).mode_rules;
             let mode = modes::resolve_mode(bundle_id.as_deref(), &rules);
             let formatted = modes::apply_mode(mode, &text);
@@ -116,4 +134,25 @@ pub fn set_input_device(app: AppHandle, name: Option<String>, state: tauri::Stat
     let mut cfg = crate::config::load(&app);
     cfg.input_device = name;
     let _ = crate::config::save(&app, &cfg);
+}
+
+#[derive(serde::Serialize)]
+pub struct FrontmostAppPayload {
+    pub bundle_id: String,
+    pub name: String,
+}
+
+/// The app the most recent recording was started in — used by Settings to
+/// offer "add a mode rule for the app you just came from".
+#[tauri::command]
+pub fn get_last_frontmost_app(state: tauri::State<RecordingState>) -> Option<FrontmostAppPayload> {
+    state
+        .active_app
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|info| FrontmostAppPayload {
+            bundle_id: info.bundle_id.clone(),
+            name: info.name.clone(),
+        })
 }

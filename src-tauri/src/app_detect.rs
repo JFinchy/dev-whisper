@@ -1,5 +1,6 @@
 use objc2_app_kit::NSWorkspace;
 
+#[derive(Clone)]
 pub struct AppInfo {
     pub bundle_id: String,
     pub name: String,

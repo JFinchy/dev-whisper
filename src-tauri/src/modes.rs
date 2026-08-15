@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
-use tauri::{AppHandle, State};
+use tauri::AppHandle;
 
-use crate::app_detect::AppInfo;
 use crate::config;
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -39,13 +37,6 @@ const BUILTIN_DEFAULTS: &[(&str, Mode)] = &[
     ("com.tinyspeck.slackmacgap", Mode::Casual),
     ("com.hnc.Discord", Mode::Casual),
 ];
-
-pub struct ModesState {
-    /// Snapshot of the frontmost app taken right before the settings
-    /// window opens (by then focus has already moved to Dev Whisper),
-    /// so the UI can offer "add a rule for the app you just came from".
-    pub last_frontmost: Mutex<Option<AppInfo>>,
-}
 
 pub fn resolve_mode(bundle_id: Option<&str>, rules: &[AppModeRule]) -> Mode {
     let Some(bundle_id) = bundle_id else {
@@ -115,23 +106,4 @@ pub fn remove_mode_rule(app: AppHandle, bundle_id: String) {
     let mut cfg = config::load(&app);
     cfg.mode_rules.retain(|r| r.bundle_id != bundle_id);
     let _ = config::save(&app, &cfg);
-}
-
-#[derive(Serialize)]
-pub struct FrontmostAppPayload {
-    pub bundle_id: String,
-    pub name: String,
-}
-
-#[tauri::command]
-pub fn get_last_frontmost_app(state: State<ModesState>) -> Option<FrontmostAppPayload> {
-    state
-        .last_frontmost
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|info| FrontmostAppPayload {
-            bundle_id: info.bundle_id.clone(),
-            name: info.name.clone(),
-        })
 }

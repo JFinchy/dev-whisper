@@ -19,10 +19,10 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState as PressStat
 
 use audio::AudioHandle;
 use models::{download_model, list_models, set_active_model};
-use modes::{get_last_frontmost_app, get_mode_rules, remove_mode_rule, set_mode_rule, ModesState};
+use modes::{get_mode_rules, remove_mode_rule, set_mode_rule};
 use recording::{
-    get_active_input_device, list_input_devices, set_input_device, toggle_recording,
-    toggle_recording_command, RecordingState,
+    get_active_input_device, get_last_frontmost_app, list_input_devices, set_input_device,
+    toggle_recording, toggle_recording_command, RecordingState,
 };
 use shortcut::{get_shortcut, set_shortcut, PushToTalkState};
 use stt::WhisperEngine;
@@ -34,16 +34,6 @@ fn open_settings(app: tauri::AppHandle) -> tauri::Result<()> {
         window.set_focus()?;
         return Ok(());
     }
-
-    // Capture whatever app the user was in before focus shifts to Settings,
-    // so the UI can offer "add a mode rule for the app you just came from".
-    let capture_app = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        let info = app_detect::frontmost_app_info();
-        eprintln!("modes: frontmost app before opening settings = {:?}", info.as_ref().map(|i| (&i.bundle_id, &i.name)));
-        let state = capture_app.state::<ModesState>();
-        *state.last_frontmost.lock().unwrap() = info;
-    });
 
     let mut builder = tauri::WebviewWindowBuilder::new(
         &app,
@@ -125,10 +115,6 @@ pub fn run() {
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
                 prompt_for_accessibility_permission();
             }
-
-            app.manage(ModesState {
-                last_frontmost: Mutex::new(None),
-            });
 
             let saved_config = config::load(app.handle());
 
