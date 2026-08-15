@@ -180,6 +180,32 @@ pub fn run() {
                 history::purge_old_entries(&purge_app, retention_days);
             });
 
+            // Reopen the widget wherever the user last dragged it, instead
+            // of always re-centering (tauri.conf.json's "center": true is
+            // just the first-ever-launch fallback, before any position has
+            // been saved).
+            if let Some(widget) = app.get_webview_window("widget") {
+                if let Some((x, y)) = saved_config.widget_position {
+                    let _ = widget.set_position(tauri::LogicalPosition::new(x, y));
+                }
+
+                let position_app = app.handle().clone();
+                widget.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Moved(physical_pos) = event {
+                        let Some(window) = position_app.get_webview_window("widget") else {
+                            return;
+                        };
+                        let Ok(scale) = window.scale_factor() else {
+                            return;
+                        };
+                        let logical = physical_pos.to_logical::<f64>(scale);
+                        let mut cfg = config::load(&position_app);
+                        cfg.widget_position = Some((logical.x, logical.y));
+                        let _ = config::save(&position_app, &cfg);
+                    }
+                });
+            }
+
             let toggle_recording_item = MenuItem::with_id(app, "toggle_recording", "Start/Stop Recording", true, None::<&str>)?;
             let toggle_widget = MenuItem::with_id(app, "toggle_widget", "Show/Hide Widget", true, None::<&str>)?;
             let open_settings_item = MenuItem::with_id(app, "open_settings", "Open Settings…", true, None::<&str>)?;

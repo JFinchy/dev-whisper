@@ -45,6 +45,11 @@ pub struct AppConfig {
     /// `llm.rs`). Only used for modes with `use_llm_refinement: true`.
     #[serde(default = "crate::llm::default_model")]
     pub llm_model: String,
+    /// Last dragged position of the widget window (logical coordinates),
+    /// so it reopens where the user left it instead of always
+    /// re-centering. `None` until the user drags it at least once.
+    #[serde(default)]
+    pub widget_position: Option<(f64, f64)>,
 }
 
 fn default_history_retention_days() -> u32 {
@@ -61,6 +66,7 @@ impl Default for AppConfig {
             vocabulary: crate::stt::default_vocabulary(),
             history_retention_days: default_history_retention_days(),
             llm_model: crate::llm::default_model(),
+            widget_position: None,
         }
     }
 }
