@@ -4,7 +4,10 @@
 
 This document outlines the product strategy, technical architecture, and phased rollout for a privacy-first, macOS-exclusive dictation and assistant application tailored specifically for software developers. Unlike general-purpose dictation tools (e.g., Apple Dictation or standard SuperWhisper), this application runs entirely locally on Apple Silicon, ensuring zero telemetry and absolute data privacy. It leverages localized LLMs and Speech-to-Text (STT) models to understand developer vocabulary, syntax, and system context natively.
 
-## 2. Core Features (The Backlog)
+## 2. Core Features (Original Pitch)
+
+*This section is the original vision as pitched, kept as-is for history.
+See `FEATURES.md` for what's actually built and shipped today.*
 
 - **App-Aware Formatting**: The application detects the currently active window via macOS accessibility APIs. If the active application is a terminal (e.g., iTerm2, Kitty), it automatically formats dictation as CLI commands (e.g., "git commit update readme" becomes `git commit -m "update readme"`). In Slack, it defaults to conversational casing and punctuation.
 - **The Local Config Agent**: Utilizing local file system access, the app can read and modify developer configurations natively. Using a specific wake word, the user can command the agent to update `~/.zshrc`, Neovim `init.lua`, or Claude desktop MCP settings securely without manual file navigation.
@@ -59,8 +62,8 @@ Inspired by advanced continuous voice architectures (like OpenAI's third-generat
 - **Rubber Ducking Mode**: The local LLM will be system-prompted to utilize Socratic questioning. Instead of writing code for the user, the agent will analyze the active screen state and ask guiding questions to help the developer debug their logic autonomously.
 - **Local TTS Integration**: To complete the conversational loop, the app will integrate local, low-latency Text-to-Speech engines (such as Kokoro or Piper) to provide immediate vocal feedback to the developer without relying on cloud APIs.
 
-## 6. Backlog & Roadmap
+## 6. Features, Backlog & Roadmap
 
-See `ROADMAP.md` for what's next, in priority order, and `BACKLOG.md` for
-the full detail behind every item (known issues, research findings,
-effort estimates).
+See `FEATURES.md` for everything currently built and shipped, `ROADMAP.md`
+for what's next in priority order, and `BACKLOG.md` for the full detail
+behind every item (known issues, research findings, effort estimates).
