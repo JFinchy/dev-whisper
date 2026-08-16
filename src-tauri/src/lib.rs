@@ -9,6 +9,7 @@ mod paste;
 mod recording;
 mod shortcut;
 mod stt;
+mod syntax;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;

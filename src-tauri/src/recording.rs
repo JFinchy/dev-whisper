@@ -77,38 +77,48 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
             let active_app = state.active_app.lock().unwrap().clone();
             let bundle_id = active_app.as_ref().map(|info| info.bundle_id.clone());
             let app_name = active_app.map(|info| info.name);
-            let cfg = crate::config::load(app);
-            let settings = modes::resolve_settings(bundle_id.as_deref(), &cfg.mode_rules);
-            let formatted = modes::apply_mode(settings.mode, &text);
-            eprintln!(
-                "modes: bundle_id={bundle_id:?} rules={} resolved_mode={:?} transcript={text:?} formatted={formatted:?}",
-                cfg.mode_rules.len(),
-                settings.mode,
-            );
 
-            let formatted = if settings.use_llm_refinement {
-                let _ = app.emit("refining-started", ());
-                match crate::llm::refine(settings.mode, &formatted, &cfg.llm_model) {
-                    Ok(refined) => refined,
-                    Err(err) => {
-                        eprintln!("llm: refinement failed, pasting unrefined text: {err}");
-                        formatted
-                    }
+            // Casing directives ("snake case error response handler") are a
+            // cross-cutting syntax command, not gated behind a Mode — they
+            // apply no matter which app/mode is active, and skip both
+            // rule-based formatting and LLM refinement entirely since the
+            // mechanical transform already fully resolves the output.
+            let (formatted, mode_label) = match crate::syntax::try_apply_casing_command(&text) {
+                Some(cased) => {
+                    eprintln!("syntax: casing command matched, transcript={text:?} output={cased:?}");
+                    (cased, "casing".to_string())
                 }
-            } else {
-                formatted
+                None => {
+                    let cfg = crate::config::load(app);
+                    let settings = modes::resolve_settings(bundle_id.as_deref(), &cfg.mode_rules);
+                    let formatted = modes::apply_mode(settings.mode, &text);
+                    eprintln!(
+                        "modes: bundle_id={bundle_id:?} rules={} resolved_mode={:?} transcript={text:?} formatted={formatted:?}",
+                        cfg.mode_rules.len(),
+                        settings.mode,
+                    );
+
+                    let formatted = if settings.use_llm_refinement {
+                        let _ = app.emit("refining-started", ());
+                        match crate::llm::refine(settings.mode, &formatted, &cfg.llm_model) {
+                            Ok(refined) => refined,
+                            Err(err) => {
+                                eprintln!("llm: refinement failed, pasting unrefined text: {err}");
+                                formatted
+                            }
+                        }
+                    } else {
+                        formatted
+                    };
+                    (formatted, format!("{:?}", settings.mode))
+                }
             };
 
             match paste_text(&formatted) {
                 Ok(()) => {
                     // Only log to history what actually reached the user —
                     // a failed paste shouldn't silently show up as history.
-                    crate::history::append_entry(
-                        app,
-                        &formatted,
-                        app_name,
-                        Some(format!("{:?}", settings.mode)),
-                    );
+                    crate::history::append_entry(app, &formatted, app_name, Some(mode_label));
                     let _ = app.emit("transcript-ready", formatted);
                 }
                 Err(err) => {
