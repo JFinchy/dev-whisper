@@ -21,7 +21,19 @@ LLM needed); and Boilerplate Generation (`boilerplate.rs` +
 component called UserCard with name and avatar props" sends the request to
 the local LLM and pastes the generated code, with a longer (60s) timeout
 than cleanup refinement and markdown-fence stripping since small models
-often wrap code in fences despite being told not to.
+often wrap code in fences despite being told not to. Also shipped:
+auto-launch at login (off by default), a tray icon that reflects recording
+state, a "copy only" toggle that skips the simulated paste, and an in-app
+log viewer.
+
+Also shipped (2026-08-16): three widget display modes (minimal/compact/
+detailed, `widget.rs` + WidgetView.tsx) with a Settings picker, and a fix
+for error messages getting silently truncated in the old fixed-size
+widget (compact now auto-grows and holds errors on screen for 6s); a
+wider Settings window (520px, was 380px); and a real app icon + menu-bar
+tray glyph (mic-themed, `icons/icon.png` + `icons/tray-icon-template.png`)
+replacing the default Tauri icon, with the tray glyph rendered as a
+macOS template image so it auto-adapts to light/dark menu bars.
 
 ## Next — developer-centric features LLM refinement now unlocks
 
@@ -48,6 +60,8 @@ often wrap code in fences despite being told not to.
 - **Single-speaker voice isolation** — reject background music/other
   talkers so only the primary user's voice reaches Whisper. Needs its own
   research/design pass (VAD vs. speaker-embedding vs. source separation).
+  Still nothing implemented as of 2026-08-16 — recommended as its own
+  focused session rather than folded into unrelated UI work.
 
 ## Future state (from `PRODUCT_SPEC.md` §5, unchanged)
 

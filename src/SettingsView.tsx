@@ -843,16 +843,30 @@ function LlmSection() {
   );
 }
 
+type WidgetMode = "minimal" | "compact" | "detailed";
+
+const WIDGET_MODE_LABEL: Record<WidgetMode, string> = {
+  minimal: "Minimal — icon only",
+  compact: "Compact — status pill",
+  detailed: "Detailed — full status panel",
+};
+
 function GeneralSection() {
   const [autostart, setAutostart] = useState(false);
   const [copyOnly, setCopyOnly] = useState(false);
+  const [widgetMode, setWidgetModeState] = useState<WidgetMode>("compact");
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
-    Promise.all([invoke<boolean>("get_autostart_enabled"), invoke<boolean>("get_copy_only")])
-      .then(([autostartValue, copyOnlyValue]) => {
+    Promise.all([
+      invoke<boolean>("get_autostart_enabled"),
+      invoke<boolean>("get_copy_only"),
+      invoke<WidgetMode>("get_widget_mode"),
+    ])
+      .then(([autostartValue, copyOnlyValue, widgetModeValue]) => {
         setAutostart(autostartValue);
         setCopyOnly(copyOnlyValue);
+        setWidgetModeState(widgetModeValue);
       })
       .catch((err) => console.error("failed to load general settings:", err))
       .finally(() => setChecked(true));
@@ -874,13 +888,22 @@ function GeneralSection() {
     });
   }
 
+  function changeWidgetMode(newMode: WidgetMode) {
+    const previous = widgetMode;
+    setWidgetModeState(newMode);
+    invoke("set_widget_mode", { mode: newMode }).catch((err) => {
+      console.error("set_widget_mode failed:", err);
+      setWidgetModeState(previous);
+    });
+  }
+
   return (
     <div className="mb-4 border-b border-base-content/10 pb-3">
       <label className="mb-1 block text-xs font-medium opacity-70">General</label>
       {!checked ? (
         <span className="loading loading-spinner loading-xs" />
       ) : (
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-2">
           <label className="flex items-center gap-1.5 text-xs">
             <input
               type="checkbox"
@@ -898,6 +921,20 @@ function GeneralSection() {
               onChange={(e) => toggleCopyOnly(e.target.checked)}
             />
             Copy only — don't auto-paste into the active app
+          </label>
+          <label className="flex items-center gap-1.5 text-xs">
+            Widget:
+            <select
+              className="select select-xs flex-1"
+              value={widgetMode}
+              onChange={(e) => changeWidgetMode(e.target.value as WidgetMode)}
+            >
+              {(Object.keys(WIDGET_MODE_LABEL) as WidgetMode[]).map((m) => (
+                <option key={m} value={m}>
+                  {WIDGET_MODE_LABEL[m]}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
       )}

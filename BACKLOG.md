@@ -16,8 +16,15 @@ build phases.
   build` produces a differently-signed binary, so macOS treats it as a new
   app and the Accessibility grant (needed for paste) has to be re-granted
   after every rebuild during development. Only affects the local dev
-  workflow, not signed release builds. Worth a stable local codesigning
-  identity if this gets annoying enough.
+  workflow, not signed release builds. Actually bit a real session
+  (2026-08-16): after ~8 rebuilds in one night, paste silently stopped
+  working — the error was real (`transcribe_and_paste` correctly emitted
+  it) but the widget was too small and truncated to show it, so it looked
+  like a silent failure instead of an obvious permission prompt. Fixed the
+  *symptom* — the widget now auto-grows and holds error text on screen for
+  6s instead of truncating it (see `widget.rs`, WidgetView.tsx) — but the
+  root cause (re-signing churn) is still open. Worth a stable local
+  codesigning identity now that it's demonstrably annoying enough.
 - **"Thinking" LLM models are too slow for refinement by default** — the
   default Ollama model picked up on this machine (`qwen3.5:4b`) is a
   reasoning/"thinking" model that burns many seconds on internal

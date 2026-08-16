@@ -12,6 +12,7 @@ mod recording;
 mod shortcut;
 mod stt;
 mod syntax;
+mod widget;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
@@ -38,6 +39,7 @@ use recording::{
     toggle_recording_command, RecordingState,
 };
 use shortcut::{get_shortcut, set_shortcut, PushToTalkState};
+use widget::{get_widget_mode, set_widget_mode, set_widget_size};
 use stt::WhisperEngine;
 
 /// Shared between the tray builder in `run()` and `recording::toggle_recording`
@@ -45,6 +47,19 @@ use stt::WhisperEngine;
 /// so both sides agree on which tray they mean without threading a handle
 /// through `RecordingState`.
 pub const TRAY_ICON_ID: &str = "main";
+
+/// The tray glyph is deliberately a separate, simpler asset from the Dock
+/// icon (icons/icon.png) — mic silhouette only, no waveform, no
+/// background — since the waveform accent turns to mush at 16-22px menu
+/// bar sizes. Rendered as a macOS "template" image by default so the
+/// system tints it to match light/dark menu bars, like every other
+/// well-behaved menu-bar app; recording.rs switches off template mode
+/// and overlays a red dot on top of it while actively recording, since
+/// template images can't show color.
+pub fn tray_base_icon() -> tauri::image::Image<'static> {
+    tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon-template.png"))
+        .expect("bundled tray-icon-template.png must decode")
+}
 
 /// Draws a small red dot over the bottom-right corner of `base` — gives the
 /// tray icon a distinct "recording" state without needing a separate icon
@@ -90,8 +105,8 @@ fn open_settings(app: tauri::AppHandle) -> tauri::Result<()> {
         tauri::WebviewUrl::App("index.html".into()),
     )
     .title("Dev Whisper Settings")
-    .inner_size(380.0, 640.0)
-    .min_inner_size(380.0, 400.0)
+    .inner_size(520.0, 680.0)
+    .min_inner_size(460.0, 400.0)
     .resizable(true);
 
     // Anchor settings just below the widget instead of both windows
@@ -202,6 +217,9 @@ pub fn run() {
             set_llm_model,
             get_logs,
             clear_logs,
+            get_widget_mode,
+            set_widget_mode,
+            set_widget_size,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -267,6 +285,11 @@ pub fn run() {
                 if let Some((x, y)) = saved_config.widget_position {
                     let _ = widget.set_position(tauri::LogicalPosition::new(x, y));
                 }
+                // tauri.conf.json's fixed 220x60 is only the Compact-mode
+                // size; apply whatever mode was last saved before the
+                // window is shown.
+                let (width, height) = saved_config.widget_mode.base_size();
+                let _ = widget.set_size(tauri::LogicalSize::new(width, height));
 
                 let position_app = app.handle().clone();
                 widget.on_window_event(move |event| {
@@ -295,7 +318,8 @@ pub fn run() {
             )?;
 
             TrayIconBuilder::with_id(TRAY_ICON_ID)
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(tray_base_icon())
+                .icon_as_template(true)
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "toggle_recording" => toggle_recording(app),

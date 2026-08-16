@@ -56,6 +56,10 @@ pub struct AppConfig {
     /// unreliable. Also means Accessibility permission isn't needed.
     #[serde(default)]
     pub copy_only: bool,
+    /// Which of the widget's display modes (minimal/compact/detailed) is
+    /// active — see widget.rs.
+    #[serde(default)]
+    pub widget_mode: crate::widget::WidgetMode,
 }
 
 fn default_history_retention_days() -> u32 {
@@ -74,6 +78,7 @@ impl Default for AppConfig {
             llm_model: crate::llm::default_model(),
             widget_position: None,
             copy_only: false,
+            widget_mode: crate::widget::WidgetMode::default(),
         }
     }
 }
@@ -159,5 +164,6 @@ mod tests {
         assert_eq!(restored.vocabulary, crate::stt::default_vocabulary());
         assert_eq!(restored.history_retention_days, 30);
         assert!(!restored.copy_only);
+        assert_eq!(restored.widget_mode, crate::widget::WidgetMode::default());
     }
 }

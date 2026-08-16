@@ -21,23 +21,24 @@ pub struct RecordingState {
     pub active_app: Mutex<Option<AppInfo>>,
 }
 
-/// Swaps the tray icon between its default look and a red-dot "recording"
-/// variant so the recording state is visible even when the widget window
-/// is hidden or off-screen. Best-effort: a missing tray/icon is silently
-/// skipped rather than failing the recording toggle over a cosmetic issue.
+/// Swaps the tray icon between its default template look and a red-dot
+/// "recording" variant so the recording state is visible even when the
+/// widget window is hidden or off-screen. Template mode is turned off
+/// while recording since template images can't show color, and back on
+/// when idle so the glyph keeps auto-adapting to light/dark menu bars.
+/// Best-effort: a missing tray is silently skipped rather than failing
+/// the recording toggle over a cosmetic issue.
 fn set_tray_recording_indicator(app: &AppHandle, recording: bool) {
     let Some(tray) = app.tray_by_id(crate::TRAY_ICON_ID) else {
         return;
     };
-    let Some(base) = app.default_window_icon() else {
-        return;
-    };
+    let base = crate::tray_base_icon();
     let icon = if recording {
-        crate::recording_tray_icon(base)
+        crate::recording_tray_icon(&base)
     } else {
-        base.clone()
+        base
     };
-    let _ = tray.set_icon(Some(icon));
+    let _ = tray.set_icon_with_as_template(Some(icon), !recording);
 }
 
 /// Shared by the tray/UI toggle command and the global hotkey listener so
