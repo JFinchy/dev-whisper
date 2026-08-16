@@ -70,6 +70,12 @@ built yet.
   (7/30/90/365 days) and automatic purge of anything older on launch.
   Only logs transcripts that actually reached you — a failed paste or
   copy doesn't show up as a history entry.
+- **Work journal** (opt-in, off by default) — each history entry can get a
+  one-line LLM-generated summary in git-commit-subject style ("Refactor
+  audio module to drop devices safely during recording"), generated in
+  the background after the paste already happened so it never adds
+  latency. Skips dictations under 6 words (not worth summarizing) and
+  falls back to just the raw transcript if Ollama is unreachable.
 - **Per-entry copy/delete** in the History settings section.
 
 ## Widget & Settings UI

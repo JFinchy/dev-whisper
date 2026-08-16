@@ -222,6 +222,53 @@ pub fn refine(mode: crate::modes::Mode, text: &str, model: &str) -> Result<Strin
     }
 }
 
+/// Below this word count, a dictation is already about as short as a
+/// one-line summary would be — skip the LLM call entirely rather than
+/// paying for a round-trip to produce "Said hello" for a two-word message.
+const JOURNAL_MIN_WORDS: usize = 6;
+
+/// Returns `None` (not an error) when the text is too short to be worth
+/// summarizing — distinct from `Some(Err(_))`, an actual failed attempt.
+pub fn summarize_for_journal(text: &str, model: &str) -> Option<Result<String, String>> {
+    if text.split_whitespace().count() < JOURNAL_MIN_WORDS {
+        return None;
+    }
+
+    let instruction = "Summarize the following dictated text as a single short line for a work \
+                        journal, in the style of a git commit subject: imperative mood, no \
+                        trailing period, under 10 words. Output ONLY the summary line, nothing \
+                        else.";
+    let body = serde_json::json!({
+        "model": model,
+        "prompt": format!("{instruction}\n\nDictated text: {text}"),
+        "stream": false,
+        "think": false,
+    });
+
+    let started = Instant::now();
+    let resp = match ureq::post(OLLAMA_GENERATE_URL)
+        .timeout(std::time::Duration::from_secs(30))
+        .send_json(body)
+    {
+        Ok(resp) => resp,
+        Err(e) => return Some(Err(format!("Ollama request failed (is `ollama serve` running?): {e}"))),
+    };
+
+    let parsed: GenerateResponse = match resp.into_json() {
+        Ok(parsed) => parsed,
+        Err(e) => return Some(Err(format!("failed to parse Ollama response: {e}"))),
+    };
+
+    record_latency(model, started.elapsed().as_millis() as u64);
+
+    let summary = parsed.response.trim().trim_matches('"').to_string();
+    if summary.is_empty() {
+        Some(Err("Ollama returned an empty response".to_string()))
+    } else {
+        Some(Ok(summary))
+    }
+}
+
 /// Small models often ignore "no markdown fences" instructions and wrap
 /// the response in a fenced code block anyway — strip one leading/trailing
 /// fence if present so the output pastes as raw code, not fenced markdown.
@@ -379,6 +426,40 @@ mod tests {
                 eprintln!("Ollama ({model}) generated boilerplate: {code:?}");
             }
             Err(err) => panic!("boilerplate generation failed: {err}"),
+        }
+    }
+
+    #[test]
+    fn summarize_for_journal_skips_short_dictations() {
+        assert!(summarize_for_journal("fix the bug", "any-model").is_none());
+        assert!(summarize_for_journal("git commit", "any-model").is_none());
+    }
+
+    /// Smoke test against a real, locally-running Ollama instance — skips
+    /// if Ollama isn't reachable, matching the other live tests in this
+    /// file.
+    #[test]
+    fn summarizes_a_real_dictation_via_real_ollama() {
+        let models = list_ollama_models();
+        if models.is_empty() {
+            eprintln!("skipping: no Ollama models found (is `ollama serve` running?)");
+            return;
+        }
+        let model = &models[0];
+
+        let result = summarize_for_journal(
+            "okay so I need to go back and fix the transcribe and paste function because it's \
+             not handling the case where the model override is set but the path doesn't resolve",
+            model,
+        );
+
+        match result {
+            Some(Ok(summary)) => {
+                assert!(!summary.is_empty(), "summary should not be empty");
+                eprintln!("Ollama ({model}) journal summary: {summary:?}");
+            }
+            Some(Err(err)) => panic!("journal summarization failed: {err}"),
+            None => panic!("dictation was long enough that it should not have been skipped"),
         }
     }
 }

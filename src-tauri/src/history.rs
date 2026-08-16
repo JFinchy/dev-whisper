@@ -16,6 +16,13 @@ pub struct HistoryEntry {
     pub text: String,
     pub app_name: Option<String>,
     pub mode: Option<String>,
+    /// One-line "what this was about" summary for the work journal (see
+    /// `llm::summarize_for_journal`), filled in by a background LLM call
+    /// after the entry is written — never blocks the paste. `None` until
+    /// that call finishes (or if journaling is off / the call failed /
+    /// the entry predates this field).
+    #[serde(default)]
+    pub summary: Option<String>,
 }
 
 fn history_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -56,23 +63,45 @@ fn write_all(app: &AppHandle, entries: &[HistoryEntry]) -> Result<(), String> {
 
 /// Appends one entry — only called after a transcript actually got pasted,
 /// so history reflects what really reached the user, not failed attempts.
-pub fn append_entry(app: &AppHandle, text: &str, app_name: Option<String>, mode: Option<String>) {
+/// Returns the timestamp it stored the entry under, so a caller that wants
+/// to fill in `summary` afterward (see `set_entry_summary`) has a key to
+/// find it again without re-reading the whole file first.
+pub fn append_entry(app: &AppHandle, text: &str, app_name: Option<String>, mode: Option<String>) -> u64 {
+    let timestamp_ms = now_ms();
     let Ok(path) = history_path(app) else {
-        return;
+        return timestamp_ms;
     };
     let entry = HistoryEntry {
-        timestamp_ms: now_ms(),
+        timestamp_ms,
         text: text.to_string(),
         app_name,
         mode,
+        summary: None,
     };
     let Ok(line) = serde_json::to_string(&entry) else {
-        return;
+        return timestamp_ms;
     };
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = writeln!(file, "{line}");
         // The Settings window (if open) has no other way to know a new
         // entry landed — it only fetches on mount / explicit refresh.
+        let _ = app.emit("history-updated", ());
+    }
+    timestamp_ms
+}
+
+/// Fills in a journal summary generated after the fact (see
+/// `llm::summarize_for_journal`) for the entry stored under
+/// `timestamp_ms`. A no-op if that entry has since been deleted/purged —
+/// the background summarization call can finish after the user cleared
+/// their history, and that shouldn't resurrect it.
+pub fn set_entry_summary(app: &AppHandle, timestamp_ms: u64, summary: String) {
+    let mut entries = read_all(app);
+    let Some(entry) = entries.iter_mut().find(|e| e.timestamp_ms == timestamp_ms) else {
+        return;
+    };
+    entry.summary = Some(summary);
+    if write_all(app, &entries).is_ok() {
         let _ = app.emit("history-updated", ());
     }
 }
@@ -110,6 +139,18 @@ pub fn delete_history_entry(app: AppHandle, timestamp_ms: u64) {
         .filter(|e| e.timestamp_ms != timestamp_ms)
         .collect();
     let _ = write_all(&app, &kept);
+}
+
+#[tauri::command]
+pub fn get_journal_enabled(app: AppHandle) -> bool {
+    config::load(&app).journal_enabled
+}
+
+#[tauri::command]
+pub fn set_journal_enabled(app: AppHandle, enabled: bool) {
+    let mut cfg = config::load(&app);
+    cfg.journal_enabled = enabled;
+    let _ = config::save(&app, &cfg);
 }
 
 #[tauri::command]

@@ -60,6 +60,14 @@ pub struct AppConfig {
     /// active — see widget.rs.
     #[serde(default)]
     pub widget_mode: crate::widget::WidgetMode,
+    /// When true, each pasted dictation gets a one-line LLM-generated
+    /// summary attached in History (see `llm::summarize_for_journal`),
+    /// turning the raw transcript log into a scannable work journal. Off
+    /// by default — it's an extra background LLM call per dictation, and
+    /// this app defaults background LLM/system activity to opt-in (see
+    /// `copy_only`, autostart).
+    #[serde(default)]
+    pub journal_enabled: bool,
 }
 
 fn default_history_retention_days() -> u32 {
@@ -79,6 +87,7 @@ impl Default for AppConfig {
             widget_position: None,
             copy_only: false,
             widget_mode: crate::widget::WidgetMode::default(),
+            journal_enabled: false,
         }
     }
 }
@@ -165,5 +174,6 @@ mod tests {
         assert_eq!(restored.history_retention_days, 30);
         assert!(!restored.copy_only);
         assert_eq!(restored.widget_mode, crate::widget::WidgetMode::default());
+        assert!(!restored.journal_enabled);
     }
 }

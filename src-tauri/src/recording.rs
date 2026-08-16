@@ -172,7 +172,30 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
                     // Only log to history what actually reached the user —
                     // a failed paste/copy shouldn't silently show up as
                     // history.
-                    crate::history::append_entry(app, &formatted, app_name, Some(mode_label));
+                    let timestamp_ms =
+                        crate::history::append_entry(app, &formatted, app_name, Some(mode_label));
+
+                    // Journal summarization happens after the entry is
+                    // already saved and the transcript already delivered —
+                    // a slow/unreachable Ollama call here should never add
+                    // latency to the thing the user is actually waiting on.
+                    if cfg.journal_enabled {
+                        let journal_app = app.clone();
+                        let journal_text = formatted.clone();
+                        let journal_model = cfg.llm_model.clone();
+                        std::thread::spawn(move || {
+                            match crate::llm::summarize_for_journal(&journal_text, &journal_model) {
+                                Some(Ok(summary)) => {
+                                    crate::history::set_entry_summary(&journal_app, timestamp_ms, summary);
+                                }
+                                Some(Err(err)) => {
+                                    crate::applog!("journal: summarization failed: {err}");
+                                }
+                                None => {}
+                            }
+                        });
+                    }
+
                     let _ = app.emit("transcript-ready", formatted);
                 }
                 Err(err) => {

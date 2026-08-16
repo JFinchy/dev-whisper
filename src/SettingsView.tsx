@@ -511,6 +511,7 @@ type HistoryEntry = {
   text: string;
   app_name: string | null;
   mode: string | null;
+  summary: string | null;
 };
 
 const RETENTION_OPTIONS = [7, 30, 90, 365];
@@ -527,6 +528,7 @@ function formatTimestamp(ms: number): string {
 function HistorySection() {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [retentionDays, setRetentionDays] = useState<number>(30);
+  const [journalEnabled, setJournalEnabledState] = useState(false);
   const [loading, setLoading] = useState(true);
   const [copiedAt, setCopiedAt] = useState<number | null>(null);
 
@@ -540,16 +542,21 @@ function HistorySection() {
     Promise.all([
       invoke<HistoryEntry[]>("list_history_entries"),
       invoke<number>("get_history_retention_days"),
+      invoke<boolean>("get_journal_enabled"),
     ])
-      .then(([historyEntries, days]) => {
+      .then(([historyEntries, days, journal]) => {
         setEntries(historyEntries);
         setRetentionDays(days);
+        setJournalEnabledState(journal);
       })
       .catch((err) => console.error("failed to load history:", err))
       .finally(() => setLoading(false));
 
     // New transcripts land while Settings may already be open — without
     // this, the list only ever reflected whatever existed at mount time.
+    // Also fires when a background journal summary finishes (see
+    // history::set_entry_summary), so summaries pop in a few seconds
+    // after the entry itself appears.
     const unlisten = listen("history-updated", refresh);
     return () => {
       unlisten.then((f) => f());
@@ -561,6 +568,14 @@ function HistorySection() {
     invoke("set_history_retention_days", { days })
       .then(refresh) // purging may have removed entries outside the new window
       .catch((err) => console.error("set_history_retention_days failed:", err));
+  }
+
+  function toggleJournal(enabled: boolean) {
+    setJournalEnabledState(enabled);
+    invoke("set_journal_enabled", { enabled }).catch((err) => {
+      console.error("set_journal_enabled failed:", err);
+      setJournalEnabledState(!enabled);
+    });
   }
 
   function clear() {
@@ -606,6 +621,15 @@ function HistorySection() {
           </button>
         </div>
       </div>
+      <label className="mb-1.5 flex items-center gap-1.5 text-xs opacity-80">
+        <input
+          type="checkbox"
+          className="checkbox checkbox-xs"
+          checked={journalEnabled}
+          onChange={(e) => toggleJournal(e.target.checked)}
+        />
+        Summarize into a work journal (adds an LLM call per dictation)
+      </label>
       {loading ? (
         <span className="loading loading-spinner loading-xs" />
       ) : entries.length === 0 ? (
@@ -636,9 +660,20 @@ function HistorySection() {
                   </button>
                 </div>
               </div>
-              <p className="truncate" title={entry.text}>
-                {entry.text}
-              </p>
+              {entry.summary ? (
+                <>
+                  <p className="truncate font-medium" title={entry.summary}>
+                    {entry.summary}
+                  </p>
+                  <p className="truncate opacity-50" title={entry.text}>
+                    {entry.text}
+                  </p>
+                </>
+              ) : (
+                <p className="truncate" title={entry.text}>
+                  {entry.text}
+                </p>
+              )}
             </li>
           ))}
         </ul>
