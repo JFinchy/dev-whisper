@@ -26,9 +26,20 @@ build phases.
   in the `/api/generate` request (`llm.rs`), which Ollama respects for
   models that support toggling it — with that, refinement is ~1-2s. If
   a user's chosen Ollama model doesn't support the `think` flag at all,
-  this has no effect and slow models will still be slow; worth surfacing
-  actual latency in the Settings LLM picker at some point so users can
-  judge which local models are fast enough for this use case.
+  this has no effect and slow models will still be slow. Last-observed
+  latency per model is now surfaced in the Settings LLM picker (shipped
+  2026-08-15) so users can judge which local models are fast enough.
+- **Occasional flaky test: `cargo test --lib` concurrent whisper-context
+  loading** — `stt::tests::transcribes_without_panicking` and
+  `stt::tests::transcribe_with_model_override_switches_contexts` both load
+  a real ggml model onto Metal; running the full suite while a separately
+  *launched* debug build of the app is also warming up its own
+  `WhisperEngine` on the same GPU produced one observed failure, not
+  reproduced across several immediately-following clean runs with the app
+  quit. Likely transient Metal/GPU contention between two independent
+  processes rather than a code bug. If it recurs reliably (not just when
+  another instance of the app happens to be running), worth serializing
+  the two whisper-loading tests with a shared `Mutex`.
 
 ## Feature Requests
 

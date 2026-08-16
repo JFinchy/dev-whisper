@@ -19,6 +19,7 @@ use tauri::{
     tray::TrayIconBuilder,
     Manager,
 };
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState as PressState};
 
 use audio::AudioHandle;
@@ -77,6 +78,27 @@ fn open_settings(app: tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Whether Dev Whisper is currently registered as a macOS login item.
+/// Off by default (see `run()` — the autostart plugin is registered but
+/// never auto-enabled) since silently adding a login item without an
+/// explicit user action would be a surprising thing for a privacy-first
+/// app to do; this only reflects whatever the user has toggled in Settings.
+#[tauri::command]
+fn get_autostart_enabled(app: tauri::AppHandle) -> bool {
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+#[tauri::command]
+fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    let autostart = app.autolaunch();
+    if enabled {
+        autostart.enable()
+    } else {
+        autostart.disable()
+    }
+    .map_err(|e| e.to_string())
+}
+
 #[cfg(target_os = "macos")]
 fn prompt_for_accessibility_permission() {
     // Shows the system permission dialog if not already granted. Spawned so
@@ -90,6 +112,10 @@ fn prompt_for_accessibility_permission() {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, triggered, event| {
@@ -106,6 +132,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             toggle_recording_command,
             open_settings,
+            get_autostart_enabled,
+            set_autostart_enabled,
             list_input_devices,
             get_active_input_device,
             set_input_device,

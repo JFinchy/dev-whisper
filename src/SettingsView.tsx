@@ -782,10 +782,50 @@ function LlmSection() {
   );
 }
 
+function GeneralSection() {
+  const [autostart, setAutostart] = useState(false);
+  const [checked, setChecked] = useState(false);
+
+  useEffect(() => {
+    invoke<boolean>("get_autostart_enabled")
+      .then(setAutostart)
+      .catch((err) => console.error("failed to load autostart setting:", err))
+      .finally(() => setChecked(true));
+  }, []);
+
+  function toggle(enabled: boolean) {
+    setAutostart(enabled);
+    invoke("set_autostart_enabled", { enabled }).catch((err) => {
+      console.error("set_autostart_enabled failed:", err);
+      setAutostart(!enabled);
+    });
+  }
+
+  return (
+    <div className="mb-4 border-b border-base-content/10 pb-3">
+      <label className="mb-1 block text-xs font-medium opacity-70">General</label>
+      {!checked ? (
+        <span className="loading loading-spinner loading-xs" />
+      ) : (
+        <label className="flex items-center gap-1.5 text-xs">
+          <input
+            type="checkbox"
+            className="checkbox checkbox-xs"
+            checked={autostart}
+            onChange={(e) => toggle(e.target.checked)}
+          />
+          Launch Dev Whisper at login
+        </label>
+      )}
+    </div>
+  );
+}
+
 function SettingsView() {
   return (
     <main className="h-screen overflow-y-auto bg-base-300 px-5 py-4 text-base-content">
       <h1 className="mb-4 text-base font-semibold">Settings</h1>
+      <GeneralSection />
       <DeviceSection />
       <ShortcutSection />
       <ModelsSection />

@@ -30,6 +30,7 @@ whisper-rs = { version = "0.14", features = ["metal"] }
 arboard = "3"
 ureq = { version = "2", features = ["json"] }
 base64 = "0.22"
+tauri-plugin-autostart = "2.5.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 macos-accessibility-client = "0.0.1"
