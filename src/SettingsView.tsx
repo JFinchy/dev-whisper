@@ -647,7 +647,13 @@ function HistorySection() {
   );
 }
 
-type LlmModelStatus = { id: string; label: string; size_gb: number; downloaded: boolean };
+type LlmModelStatus = {
+  id: string;
+  label: string;
+  size_gb: number;
+  downloaded: boolean;
+  last_latency_ms: number | null;
+};
 
 function LlmSection() {
   const [catalog, setCatalog] = useState<LlmModelStatus[]>([]);
@@ -737,7 +743,14 @@ function LlmSection() {
               <li key={m.id} className="flex items-center justify-between rounded-md bg-base-100 px-2.5 py-1.5 text-xs">
                 <div className="truncate">
                   <div className="font-medium">{m.label}</div>
-                  {m.size_gb > 0 && <div className="opacity-50">{m.size_gb.toFixed(1)}GB</div>}
+                  <div className="flex gap-1.5 opacity-50">
+                    {m.size_gb > 0 && <span>{m.size_gb.toFixed(1)}GB</span>}
+                    {m.last_latency_ms !== null && (
+                      <span title="Last observed refinement round-trip time">
+                        ~{(m.last_latency_ms / 1000).toFixed(1)}s
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {m.id === activeModel ? (
                   <span className="badge badge-success badge-sm">Active</span>

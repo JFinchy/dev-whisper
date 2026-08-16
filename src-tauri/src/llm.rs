@@ -1,10 +1,36 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::BufRead;
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 use tauri::{AppHandle, Emitter};
 
 const OLLAMA_GENERATE_URL: &str = "http://localhost:11434/api/generate";
 const OLLAMA_TAGS_URL: &str = "http://localhost:11434/api/tags";
 const OLLAMA_PULL_URL: &str = "http://localhost:11434/api/pull";
+
+/// Last observed `refine()` round-trip time per model, in milliseconds —
+/// surfaced in Settings so a user picking between e.g. gemma3:1b and
+/// mistral:7b can see the real speed difference on their own hardware
+/// rather than guessing from parameter count. Process-lifetime only
+/// (resets on restart); persisting it wasn't worth the complexity since
+/// this is a menu bar app that's typically left running.
+static LAST_LATENCY_MS: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+
+fn latency_store() -> &'static Mutex<HashMap<String, u64>> {
+    LAST_LATENCY_MS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn record_latency(model: &str, ms: u64) {
+    latency_store()
+        .lock()
+        .unwrap()
+        .insert(model.to_string(), ms);
+}
+
+fn last_latency_ms(model: &str) -> Option<u64> {
+    latency_store().lock().unwrap().get(model).copied()
+}
 
 pub fn default_model() -> String {
     "qwen3.5:4b".to_string()
@@ -37,6 +63,7 @@ pub struct LlmModelStatus {
     pub label: String,
     pub size_gb: f32,
     pub downloaded: bool,
+    pub last_latency_ms: Option<u64>,
 }
 
 /// Catalog entries plus any already-pulled models not in the catalog
@@ -52,6 +79,7 @@ pub fn list_llm_catalog() -> Vec<LlmModelStatus> {
             label: m.label.to_string(),
             size_gb: m.size_gb,
             downloaded: pulled.iter().any(|p| p == m.id),
+            last_latency_ms: last_latency_ms(m.id),
         })
         .collect();
 
@@ -62,6 +90,7 @@ pub fn list_llm_catalog() -> Vec<LlmModelStatus> {
                 label: p.clone(),
                 size_gb: 0.0,
                 downloaded: true,
+                last_latency_ms: last_latency_ms(p),
             });
         }
     }
@@ -171,6 +200,7 @@ pub fn refine(mode: crate::modes::Mode, text: &str, model: &str) -> Result<Strin
         "think": false,
     });
 
+    let started = Instant::now();
     let resp = ureq::post(OLLAMA_GENERATE_URL)
         .timeout(std::time::Duration::from_secs(30))
         .send_json(body)
@@ -179,6 +209,10 @@ pub fn refine(mode: crate::modes::Mode, text: &str, model: &str) -> Result<Strin
     let parsed: GenerateResponse = resp
         .into_json()
         .map_err(|e| format!("failed to parse Ollama response: {e}"))?;
+
+    // Only recorded on a successful round-trip — a failed/timed-out request
+    // isn't a meaningful "how fast is this model" data point.
+    record_latency(model, started.elapsed().as_millis() as u64);
 
     let cleaned = parsed.response.trim().to_string();
     if cleaned.is_empty() {
@@ -244,5 +278,9 @@ mod tests {
             }
             Err(err) => panic!("Ollama refinement failed: {err}"),
         }
+
+        let latency = last_latency_ms(model);
+        assert!(latency.is_some(), "successful refine() should record a latency");
+        eprintln!("Ollama ({model}) refine() latency: {}ms", latency.unwrap());
     }
 }
