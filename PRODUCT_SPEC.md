@@ -59,7 +59,8 @@ Inspired by advanced continuous voice architectures (like OpenAI's third-generat
 - **Rubber Ducking Mode**: The local LLM will be system-prompted to utilize Socratic questioning. Instead of writing code for the user, the agent will analyze the active screen state and ask guiding questions to help the developer debug their logic autonomously.
 - **Local TTS Integration**: To complete the conversational loop, the app will integrate local, low-latency Text-to-Speech engines (such as Kokoro or Piper) to provide immediate vocal feedback to the developer without relying on cloud APIs.
 
-## 6. Backlog
+## 6. Backlog & Roadmap
 
-Tracked in `BACKLOG.md` — known issues, feature requests, and research
-items that fall outside the phases above.
+See `ROADMAP.md` for what's next, in priority order, and `BACKLOG.md` for
+the full detail behind every item (known issues, research findings,
+effort estimates).
