@@ -104,9 +104,40 @@ build phases.
   `DEV_VOCAB_PROMPT` constant with a user-editable term list, persisted
   in config and fed into Whisper's `initial_prompt` at transcribe time.
 
-- **Review SuperWhisper's feature set** — go through what SuperWhisper
-  offers end-to-end and decide what's worth adopting beyond the items
-  above. Open research item, no defined scope yet.
+- **Review SuperWhisper's feature set** (researched 2026-08-16) — full
+  gap analysis against superwhisper.com's homepage + changelog. Headline
+  finding: SuperWhisper is *hybrid local+cloud* (GPT-5/Claude/Gemini/Grok
+  as optional refinement backends, Cohere/ElevenLabs as optional cloud
+  STT) — it is not local-only, which validates rather than undercuts Dev
+  Whisper's privacy-first positioning; cloud-model parity is explicitly
+  not a goal here.
+  - **Worth adopting, ranked:**
+    1. Direct coding-agent integration (Claude Code/Cursor/etc. plugins,
+       a coding-agent panel, hook support) — SuperWhisper is leaning into
+       exactly Dev Whisper's developer-specific angle; we're better
+       positioned to do it locally.
+    2. Realtime streaming transcript display (partial results while still
+       speaking, not just after release) — real UX upgrade to the
+       shipped push-to-talk loop.
+    3. ~~Deep-link/CLI hooks to start/stop recording~~ (shipped
+       2026-08-16) — `open devwhisper://start-recording` /
+       `stop-recording` / `toggle-recording`, idempotent start/stop, see
+       ROADMAP.md.
+    4. Selected-text/on-screen context feeding LLM refinement — extends
+       the shipped app-aware refinement and boilerplate generation with
+       real code context, not just app identity.
+    5. History reprocessing + full-text search — history is currently
+       append-only with no way to re-run a past recording through a
+       different mode or search it.
+  - **Explicitly skipped as out of scope**: cloud/BYOK AI models
+    (contradicts local-only premise), cross-platform support (macOS-only
+    by design), enterprise/SOC2/billing features, speaker diarization +
+    meeting-notes mode (meeting-assistant territory, not core dictation),
+    stats-sharing/growth gimmicks, bulk file/video transcription,
+    100+-language translation, theme/cosmetic polish.
+  - Filler-word removal, vocabulary CSV import, and mouse-button
+    push-to-talk triggers are noted as small, low-priority QoL items if
+    ever picked up.
 
 - **Parakeet as an alternative STT model** (researched 2026-08-15) —
   NVIDIA's Parakeet ASR as a second model option alongside Whisper.

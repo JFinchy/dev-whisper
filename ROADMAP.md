@@ -30,10 +30,17 @@ Also shipped (2026-08-16): three widget display modes (minimal/compact/
 detailed, `widget.rs` + WidgetView.tsx) with a Settings picker, and a fix
 for error messages getting silently truncated in the old fixed-size
 widget (compact now auto-grows and holds errors on screen for 6s); a
-wider Settings window (520px, was 380px); and a real app icon + menu-bar
+wider Settings window (520px, was 380px); a real app icon + menu-bar
 tray glyph (mic-themed, `icons/icon.png` + `icons/tray-icon-template.png`)
 replacing the default Tauri icon, with the tray glyph rendered as a
-macOS template image so it auto-adapts to light/dark menu bars.
+macOS template image so it auto-adapts to light/dark menu bars; and
+deep-link hooks for external automation — `open devwhisper://
+start-recording`, `stop-recording`, or `toggle-recording` from a shell
+script, Raycast, Hammerspoon, or Alfred (`tauri-plugin-deep-link`,
+handler in `lib.rs`). start/stop are idempotent (calling start-recording
+while already recording is a no-op, not a toggle-off), so a script
+doesn't need to track state itself. Verified live end-to-end: real mic
+capture through to whisper transcription, not just "it compiles."
 
 ## Next — developer-centric features LLM refinement now unlocks
 
@@ -43,6 +50,21 @@ macOS template image so it auto-adapts to light/dark menu bars.
   own safety design (confirmation step, diff preview before applying)
   rather than just a new prompt template. Not started — deliberately
   deferred, see BACKLOG.md.
+
+From the SuperWhisper gap analysis (2026-08-16, see BACKLOG.md for full
+findings) — ranked by leverage:
+
+1. **Direct coding-agent integration** (Claude Code/Cursor/etc.) — the
+   developer-specific angle SuperWhisper itself is now leaning into;
+   local/private is our edge over their approach. Not started.
+2. **Realtime streaming transcript display** — partial results while
+   still speaking, not just after release. Not started.
+3. ~~**Deep-link/CLI hooks to start/stop recording**~~ (shipped
+   2026-08-16, see above).
+4. **Selected-text/on-screen context feeding LLM refinement** — extends
+   shipped app-aware refinement with real code context. Not started.
+5. **History reprocessing + full-text search** — history is currently
+   append-only, no re-run or search. Not started.
 
 ## Later — redesign & research-gated
 

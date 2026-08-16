@@ -31,6 +31,13 @@
       "csp": null
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["devwhisper"]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["app"],

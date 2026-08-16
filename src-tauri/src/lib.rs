@@ -22,6 +22,7 @@ use tauri::{
     Manager,
 };
 use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState as PressState};
 
 use audio::AudioHandle;
@@ -170,6 +171,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, triggered, event| {
@@ -255,6 +257,29 @@ pub fn run() {
                 whisper,
                 is_recording: AtomicBool::new(false),
                 active_app: Mutex::new(None),
+            });
+
+            // Deep-link hooks for external automation (Raycast, Hammerspoon,
+            // Alfred, shell scripts): `open devwhisper://toggle-recording`
+            // and friends. start/stop are idempotent — calling
+            // start-recording while already recording is a no-op rather
+            // than toggling it off, so a script doesn't need to track state
+            // itself.
+            let deep_link_app = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    let action = url.host_str().unwrap_or("");
+                    crate::applog!("deep-link: received action={action:?} url={url}");
+                    let state = deep_link_app.state::<RecordingState>();
+                    let is_recording = state.is_recording.load(std::sync::atomic::Ordering::SeqCst);
+                    match action {
+                        "toggle-recording" => recording::toggle_recording(&deep_link_app),
+                        "start-recording" if !is_recording => recording::toggle_recording(&deep_link_app),
+                        "stop-recording" if is_recording => recording::toggle_recording(&deep_link_app),
+                        "start-recording" | "stop-recording" => {}
+                        other => crate::applog!("deep-link: unrecognized action {other:?}"),
+                    }
+                }
             });
 
             // Warm up the model in the background so the first real
