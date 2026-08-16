@@ -216,6 +216,16 @@ fn downmix(samples: &[f32], channels: u16) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// `transcribes_without_panicking` and
+    /// `transcribe_with_model_override_switches_contexts` both load a real
+    /// ggml model onto Metal; cargo test runs tests in parallel by
+    /// default, and running both at once produced an observed
+    /// "Failed to create a new whisper context" failure (transient
+    /// Metal/GPU contention between the two independent loads, not a code
+    /// bug — see BACKLOG.md). Serializing them via this lock fixes it.
+    static WHISPER_CONTEXT_LOAD_LOCK: Mutex<()> = Mutex::new(());
 
     /// Smoke test: loads the real ggml model and runs inference on a
     /// synthetic tone, just to confirm whisper-rs is wired up correctly
@@ -230,6 +240,8 @@ mod tests {
             eprintln!("skipping: model not downloaded, run scripts/download-model.sh");
             return;
         }
+
+        let _guard = WHISPER_CONTEXT_LOAD_LOCK.lock().unwrap();
 
         let wav_path = std::env::temp_dir().join("dev-whisper-smoke-test.wav");
         write_test_tone(&wav_path);
@@ -257,6 +269,8 @@ mod tests {
             eprintln!("skipping: model not downloaded, run scripts/download-model.sh");
             return;
         }
+
+        let _guard = WHISPER_CONTEXT_LOAD_LOCK.lock().unwrap();
 
         let wav_path = std::env::temp_dir().join("dev-whisper-smoke-test-override.wav");
         write_test_tone(&wav_path);

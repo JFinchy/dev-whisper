@@ -4,6 +4,7 @@ mod boilerplate;
 mod config;
 mod history;
 mod llm;
+mod logging;
 mod models;
 mod modes;
 mod paste;
@@ -28,6 +29,7 @@ use history::{
     set_history_retention_days,
 };
 use llm::{get_llm_model, list_llm_catalog, list_ollama_models, pull_llm_model, set_llm_model};
+use logging::{clear_logs, get_logs};
 use models::{download_model, list_models, set_active_model};
 use modes::{get_mode_rules, list_running_apps, remove_mode_rule, set_mode_rule};
 use recording::{
@@ -198,6 +200,8 @@ pub fn run() {
             pull_llm_model,
             get_llm_model,
             set_llm_model,
+            get_logs,
+            clear_logs,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -243,7 +247,7 @@ pub fn run() {
             std::thread::spawn(move || {
                 let state = warm_app.state::<RecordingState>();
                 if let Err(err) = state.whisper.ensure_loaded() {
-                    eprintln!("model warm-up skipped: {err}");
+                    crate::applog!("model warm-up skipped: {err}");
                 }
             });
 

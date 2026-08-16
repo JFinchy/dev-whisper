@@ -71,7 +71,7 @@ pub fn toggle_recording(app: &AppHandle) {
         let main_thread_app = app.clone();
         let _ = app.run_on_main_thread(move || {
             let info = crate::app_detect::frontmost_app_info();
-            eprintln!(
+            crate::applog!(
                 "modes: frontmost app at recording start = {:?}",
                 info.as_ref().map(|i| (&i.bundle_id, &i.name))
             );
@@ -107,7 +107,7 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
     let model_override = settings.stt_model.as_ref().and_then(|id| {
         crate::models::resolve_model_path(app, id).map(|path| (id.clone(), path))
     });
-    eprintln!(
+    crate::applog!(
         "modes: bundle_id={bundle_id:?} rules={} resolved_mode={:?} stt_model_override={:?} (resolved={})",
         cfg.mode_rules.len(),
         settings.mode,
@@ -125,10 +125,10 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
             let (formatted, mode_label) = if let Some(cased) =
                 crate::syntax::try_apply_casing_command(&text)
             {
-                eprintln!("syntax: casing command matched, transcript={text:?} output={cased:?}");
+                crate::applog!("syntax: casing command matched, transcript={text:?} output={cased:?}");
                 (cased, "casing".to_string())
             } else if let Some(request) = crate::boilerplate::try_extract_request(&text) {
-                eprintln!("boilerplate: request matched, transcript={text:?} request={request:?}");
+                crate::applog!("boilerplate: request matched, transcript={text:?} request={request:?}");
                 let _ = app.emit("refining-started", ());
                 match crate::llm::generate_boilerplate(&request, &cfg.llm_model) {
                     Ok(code) => (code, "boilerplate".to_string()),
@@ -136,21 +136,21 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
                         // Falls back to normal mode formatting rather than
                         // pasting nothing — a down/missing Ollama shouldn't
                         // eat the user's dictation.
-                        eprintln!("boilerplate: generation failed, falling back to plain formatting: {err}");
+                        crate::applog!("boilerplate: generation failed, falling back to plain formatting: {err}");
                         let formatted = modes::apply_mode(settings.mode, &text);
                         (formatted, format!("{:?}", settings.mode))
                     }
                 }
             } else {
                 let formatted = modes::apply_mode(settings.mode, &text);
-                eprintln!("modes: transcript={text:?} formatted={formatted:?}");
+                crate::applog!("modes: transcript={text:?} formatted={formatted:?}");
 
                 let formatted = if settings.use_llm_refinement {
                     let _ = app.emit("refining-started", ());
                     match crate::llm::refine(settings.mode, &formatted, &cfg.llm_model) {
                         Ok(refined) => refined,
                         Err(err) => {
-                            eprintln!("llm: refinement failed, pasting unrefined text: {err}");
+                            crate::applog!("llm: refinement failed, pasting unrefined text: {err}");
                             formatted
                         }
                     }

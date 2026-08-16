@@ -37,12 +37,12 @@ impl AudioHandle {
                 match command {
                     AudioCommand::Start => {
                         if active_stream.is_some() {
-                            eprintln!("audio: start requested but a stream is already active, ignoring");
+                            crate::applog!("audio: start requested but a stream is already active, ignoring");
                             continue;
                         }
                         samples.lock().unwrap().clear();
                         let device_name = selected_device_thread.lock().unwrap().clone();
-                        eprintln!(
+                        crate::applog!(
                             "audio: starting capture, requested device = {}",
                             device_name.as_deref().unwrap_or("<system default>")
                         );
@@ -50,37 +50,37 @@ impl AudioHandle {
                             Ok((stream, rate, chans, resolved_name)) => {
                                 sample_rate = rate;
                                 channels = chans;
-                                eprintln!(
+                                crate::applog!(
                                     "audio: opened device '{resolved_name}' at {rate}Hz, {chans}ch"
                                 );
                                 match stream.play() {
                                     Ok(()) => {
-                                        eprintln!("audio: stream playing");
+                                        crate::applog!("audio: stream playing");
                                         active_stream = Some(stream);
                                     }
                                     Err(err) => {
-                                        eprintln!("audio: stream.play() failed: {err}");
+                                        crate::applog!("audio: stream.play() failed: {err}");
                                     }
                                 }
                             }
                             Err(err) => {
-                                eprintln!("audio: failed to start capture: {err}");
+                                crate::applog!("audio: failed to start capture: {err}");
                             }
                         }
                     }
                     AudioCommand::Stop(reply) => {
-                        eprintln!("audio: stop requested");
+                        crate::applog!("audio: stop requested");
                         if let Some(stream) = active_stream.take() {
                             if let Err(err) = stream.pause() {
-                                eprintln!("audio: stream.pause() before drop failed: {err}");
+                                crate::applog!("audio: stream.pause() before drop failed: {err}");
                             }
                             drop(stream);
-                            eprintln!("audio: stream paused and dropped");
+                            crate::applog!("audio: stream paused and dropped");
                         } else {
-                            eprintln!("audio: stop requested but no stream was active");
+                            crate::applog!("audio: stop requested but no stream was active");
                         }
                         let captured = std::mem::take(&mut *samples.lock().unwrap());
-                        eprintln!("audio: captured {} samples", captured.len());
+                        crate::applog!("audio: captured {} samples", captured.len());
                         let result = if captured.is_empty() {
                             Err("no audio captured".to_string())
                         } else {
@@ -154,20 +154,20 @@ fn open_with_retry_and_fallback(
     for attempt in 0..RETRIES {
         if attempt > 0 {
             let delay = std::time::Duration::from_millis(300 * attempt as u64);
-            eprintln!("audio: retrying '{}' in {delay:?} (attempt {})", device_name.unwrap_or("<default>"), attempt + 1);
+            crate::applog!("audio: retrying '{}' in {delay:?} (attempt {})", device_name.unwrap_or("<default>"), attempt + 1);
             std::thread::sleep(delay);
         }
         match build_input_stream(samples.clone(), device_name) {
             Ok(ok) => return Ok(ok),
             Err(err) => {
-                eprintln!("audio: attempt {} to open '{}' failed: {err}", attempt + 1, device_name.unwrap_or("<default>"));
+                crate::applog!("audio: attempt {} to open '{}' failed: {err}", attempt + 1, device_name.unwrap_or("<default>"));
                 last_err = err;
             }
         }
     }
 
     if device_name.is_some() {
-        eprintln!("audio: '{}' unavailable after {RETRIES} attempts ({last_err}), falling back to system default", device_name.unwrap());
+        crate::applog!("audio: '{}' unavailable after {RETRIES} attempts ({last_err}), falling back to system default", device_name.unwrap());
         return build_input_stream(samples, None);
     }
 
@@ -199,7 +199,7 @@ fn build_input_stream(
     let sample_format = config.sample_format();
     let stream_config: StreamConfig = config.into();
 
-    let err_fn = |err| eprintln!("audio stream error: {err}");
+    let err_fn = |err| crate::applog!("audio stream error: {err}");
 
     // Logs once per stream, on whichever thread's callback happens to
     // deliver the first buffer — used to measure the gap between
@@ -214,7 +214,7 @@ fn build_input_stream(
                 &stream_config,
                 move |data: &[f32], _| {
                     if !first_callback.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                        eprintln!("audio: first callback received, {} frames", data.len());
+                        crate::applog!("audio: first callback received, {} frames", data.len());
                     }
                     samples.lock().unwrap().extend_from_slice(data);
                 },
@@ -228,7 +228,7 @@ fn build_input_stream(
                 &stream_config,
                 move |data: &[i16], _| {
                     if !first_callback.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                        eprintln!("audio: first callback received, {} frames", data.len());
+                        crate::applog!("audio: first callback received, {} frames", data.len());
                     }
                     let mut buf = samples.lock().unwrap();
                     buf.extend(data.iter().map(|s| *s as f32 / i16::MAX as f32));
@@ -243,7 +243,7 @@ fn build_input_stream(
                 &stream_config,
                 move |data: &[u16], _| {
                     if !first_callback.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                        eprintln!("audio: first callback received, {} frames", data.len());
+                        crate::applog!("audio: first callback received, {} frames", data.len());
                     }
                     let mut buf = samples.lock().unwrap();
                     buf.extend(

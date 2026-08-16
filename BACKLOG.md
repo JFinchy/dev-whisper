@@ -29,17 +29,15 @@ build phases.
   this has no effect and slow models will still be slow. Last-observed
   latency per model is now surfaced in the Settings LLM picker (shipped
   2026-08-15) so users can judge which local models are fast enough.
-- **Occasional flaky test: `cargo test --lib` concurrent whisper-context
-  loading** — `stt::tests::transcribes_without_panicking` and
-  `stt::tests::transcribe_with_model_override_switches_contexts` both load
-  a real ggml model onto Metal; running the full suite while a separately
-  *launched* debug build of the app is also warming up its own
-  `WhisperEngine` on the same GPU produced one observed failure, not
-  reproduced across several immediately-following clean runs with the app
-  quit. Likely transient Metal/GPU contention between two independent
-  processes rather than a code bug. If it recurs reliably (not just when
-  another instance of the app happens to be running), worth serializing
-  the two whisper-loading tests with a shared `Mutex`.
+- ~~**Flaky test: `cargo test --lib` concurrent whisper-context
+  loading**~~ (fixed 2026-08-15) — `stt::tests::transcribes_without_panicking`
+  and `stt::tests::transcribe_with_model_override_switches_contexts` both
+  load a real ggml model onto Metal; cargo test runs tests in parallel by
+  default, and running both at once reproduced a real (not just
+  app-contention-related) `"Failed to create a new whisper context"`
+  failure. Fixed by serializing the two tests with a shared
+  `WHISPER_CONTEXT_LOAD_LOCK` mutex in `stt.rs`'s test module — 5/5 clean
+  runs after the fix, 1 failure in 2 runs before it.
 
 ## Feature Requests
 

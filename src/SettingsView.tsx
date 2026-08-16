@@ -647,6 +647,67 @@ function HistorySection() {
   );
 }
 
+type LogEntry = { timestamp_ms: number; message: string };
+
+/// Collapsed by default — this is a diagnostic tool ("why didn't it
+/// paste?", "which mode did it pick?"), not something most users need
+/// open, and polling only while expanded avoids invoke() calls for a
+/// panel nobody's looking at.
+function LogsSection() {
+  const [open, setOpen] = useState(false);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+
+  function refresh() {
+    invoke<LogEntry[]>("get_logs")
+      .then(setLogs)
+      .catch((err) => console.error("get_logs failed:", err));
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    refresh();
+    const interval = setInterval(refresh, 2000);
+    return () => clearInterval(interval);
+  }, [open]);
+
+  function clear() {
+    setLogs([]);
+    invoke("clear_logs").catch((err) => console.error("clear_logs failed:", err));
+  }
+
+  return (
+    <div className="mb-4 border-t border-base-content/10 pt-3">
+      <div className="mb-1 flex items-center justify-between">
+        <button
+          className="text-xs font-medium opacity-70"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+        >
+          {open ? "▾" : "▸"} Logs
+        </button>
+        {open && (
+          <div className="flex items-center gap-1.5">
+            <button className="btn btn-ghost btn-xs" onClick={refresh}>
+              Refresh
+            </button>
+            <button className="btn btn-ghost btn-xs" onClick={clear} disabled={logs.length === 0}>
+              Clear
+            </button>
+          </div>
+        )}
+      </div>
+      {open &&
+        (logs.length === 0 ? (
+          <p className="text-xs opacity-60">No log entries yet.</p>
+        ) : (
+          <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-md bg-base-100 p-1.5 font-mono text-[10px] leading-tight">
+            {logs.map((l) => `[${formatTimestamp(l.timestamp_ms)}] ${l.message}`).join("\n")}
+          </pre>
+        ))}
+    </div>
+  );
+}
+
 type LlmModelStatus = {
   id: string;
   label: string;
@@ -856,6 +917,7 @@ function SettingsView() {
       <LlmSection />
       <VocabularySection />
       <HistorySection />
+      <LogsSection />
     </main>
   );
 }
