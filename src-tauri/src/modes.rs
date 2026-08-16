@@ -49,13 +49,12 @@ const BUILTIN_DEFAULTS: &[(&str, Mode)] = &[
 
 pub struct ResolvedSettings {
     pub mode: Mode,
-    /// Per-mode Whisper model override, settable in Settings — not yet
-    /// wired to actually switch WhisperEngine's active model. Doing that
-    /// naively would reload the whisper context (and repay the multi-
-    /// second Metal shader compile) on every recording that hits a
-    /// different-model rule, so it needs a real design pass (e.g. a small
-    /// LRU of warm contexts) rather than a blind wire-up. See BACKLOG.md.
-    #[allow(dead_code)]
+    /// Per-mode Whisper model override, settable in Settings. Consumed by
+    /// `recording::transcribe_and_paste`, which resolves it to a path and
+    /// passes it to `WhisperEngine::transcribe_with_model` — the engine
+    /// keeps a small LRU of warm contexts (see stt.rs) so switching models
+    /// across recordings doesn't repay the multi-second Metal shader
+    /// compile every time.
     pub stt_model: Option<String>,
     pub use_llm_refinement: bool,
 }

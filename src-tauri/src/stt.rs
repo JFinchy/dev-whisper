@@ -1,6 +1,17 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Instant;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+
+/// How many models can stay loaded (Metal-compiled, ready to transcribe)
+/// at once. Per-mode model overrides (`AppModeRule.stt_model`) would
+/// otherwise repay the multi-second Metal shader compile on every
+/// recording that hits a different-model rule; keeping a small pool warm
+/// means switching between a handful of models in rotation stays fast.
+/// Bounded rather than unbounded since each loaded context holds real
+/// memory (tens to hundreds of MB depending on model size).
+const MAX_WARM_CONTEXTS: usize = 3;
 
 const WHISPER_SAMPLE_RATE: u32 = 16_000;
 
@@ -19,60 +30,118 @@ pub fn default_vocabulary() -> Vec<String> {
     .collect()
 }
 
+struct LoadedModel {
+    context: WhisperContext,
+    last_used: Instant,
+}
+
 pub struct WhisperEngine {
-    model_id: Mutex<String>,
-    model_path: Mutex<PathBuf>,
+    default_model_id: Mutex<String>,
+    /// Every model id we've ever been told a path for — the default at
+    /// construction/`set_default_model`, plus any per-mode override passed
+    /// to `transcribe_with_model`. Lets later calls that only pass an id
+    /// (e.g. re-warming) resolve a path without the caller re-supplying it.
+    model_paths: Mutex<HashMap<String, PathBuf>>,
     vocabulary: Mutex<Vec<String>>,
-    context: Mutex<Option<WhisperContext>>,
+    contexts: Mutex<HashMap<String, LoadedModel>>,
 }
 
 impl WhisperEngine {
-    pub fn new(model_id: String, model_path: PathBuf) -> Self {
+    pub fn new(default_model_id: String, default_model_path: PathBuf) -> Self {
+        let mut model_paths = HashMap::new();
+        model_paths.insert(default_model_id.clone(), default_model_path);
         Self {
-            model_id: Mutex::new(model_id),
-            model_path: Mutex::new(model_path),
+            default_model_id: Mutex::new(default_model_id),
+            model_paths: Mutex::new(model_paths),
             vocabulary: Mutex::new(default_vocabulary()),
-            context: Mutex::new(None),
+            contexts: Mutex::new(HashMap::new()),
         }
     }
 
     pub fn active_model_id(&self) -> String {
-        self.model_id.lock().unwrap().clone()
+        self.default_model_id.lock().unwrap().clone()
     }
 
     pub fn set_vocabulary(&self, terms: Vec<String>) {
         *self.vocabulary.lock().unwrap() = terms;
     }
 
-    /// Switches which model transcribe() will use. The loaded context is
-    /// dropped so the new model gets loaded lazily on the next call.
-    pub fn set_model(&self, id: String, path: PathBuf) {
-        *self.model_id.lock().unwrap() = id;
-        *self.model_path.lock().unwrap() = path;
-        *self.context.lock().unwrap() = None;
+    /// Switches the global default model (used whenever a recording has no
+    /// per-mode `stt_model` override). Does *not* evict it from the warm
+    /// pool if already loaded, unlike the old single-context design —
+    /// switching back and forth between a couple of models (e.g. global
+    /// default vs. one mode's override) stays fast.
+    pub fn set_default_model(&self, id: String, path: PathBuf) {
+        *self.default_model_id.lock().unwrap() = id.clone();
+        self.model_paths.lock().unwrap().insert(id, path);
     }
 
-    /// Loads (or reuses) the whisper context. Exposed separately from
-    /// transcribe() so the app can warm it up at startup — first load pays
-    /// for Metal shader compilation, which is otherwise a multi-second
+    /// Loads (or reuses) the default model's context. Exposed separately
+    /// from transcribe() so the app can warm it up at startup — first load
+    /// pays for Metal shader compilation, which is otherwise a multi-second
     /// delay on the user's first recording.
     pub fn ensure_loaded(&self) -> Result<(), String> {
-        let mut guard = self.context.lock().unwrap();
-        if guard.is_some() {
-            return Ok(());
+        let id = self.default_model_id.lock().unwrap().clone();
+        self.ensure_context_for(&id)
+    }
+
+    fn ensure_context_for(&self, id: &str) -> Result<(), String> {
+        {
+            let mut contexts = self.contexts.lock().unwrap();
+            if let Some(loaded) = contexts.get_mut(id) {
+                loaded.last_used = Instant::now();
+                return Ok(());
+            }
         }
-        let path = self.model_path.lock().unwrap().clone();
+
+        let path = self
+            .model_paths
+            .lock()
+            .unwrap()
+            .get(id)
+            .cloned()
+            .ok_or_else(|| format!("no known path for model '{id}'"))?;
         let path_str = path.to_str().ok_or("model path is not valid UTF-8")?;
         let ctx = WhisperContext::new_with_params(path_str, WhisperContextParameters::default())
             .map_err(|e| format!("failed to load whisper model at {path_str}: {e}"))?;
-        *guard = Some(ctx);
+
+        let mut contexts = self.contexts.lock().unwrap();
+        if contexts.len() >= MAX_WARM_CONTEXTS {
+            if let Some(lru_id) = contexts
+                .iter()
+                .min_by_key(|(_, m)| m.last_used)
+                .map(|(k, _)| k.clone())
+            {
+                contexts.remove(&lru_id);
+            }
+        }
+        contexts.insert(
+            id.to_string(),
+            LoadedModel {
+                context: ctx,
+                last_used: Instant::now(),
+            },
+        );
         Ok(())
     }
 
-    pub fn transcribe(&self, wav_path: &Path) -> Result<String, String> {
-        self.ensure_loaded()?;
-        let guard = self.context.lock().unwrap();
-        let ctx = guard.as_ref().unwrap();
+    /// Transcribes with `model_override` (id + path) if given, else the
+    /// global default. An override's path is remembered so the model stays
+    /// resolvable by id alone afterward (e.g. if it gets pre-warmed later).
+    pub fn transcribe_with_model(
+        &self,
+        wav_path: &Path,
+        model_override: Option<(String, PathBuf)>,
+    ) -> Result<String, String> {
+        let model_id = match model_override {
+            Some((id, path)) => {
+                self.model_paths.lock().unwrap().insert(id.clone(), path);
+                id
+            }
+            None => self.default_model_id.lock().unwrap().clone(),
+        };
+
+        self.ensure_context_for(&model_id)?;
 
         let samples = load_samples_16k_mono(wav_path)?;
         if samples.is_empty() {
@@ -80,6 +149,9 @@ impl WhisperEngine {
         }
 
         let vocab_prompt = self.vocabulary.lock().unwrap().join(", ");
+
+        let contexts = self.contexts.lock().unwrap();
+        let ctx = &contexts.get(&model_id).unwrap().context;
 
         let mut state = ctx.create_state().map_err(|e| e.to_string())?;
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
@@ -163,10 +235,67 @@ mod tests {
         write_test_tone(&wav_path);
 
         let engine = WhisperEngine::new("base.en".to_string(), model_path);
-        let result = engine.transcribe(&wav_path);
+        let result = engine.transcribe_with_model(&wav_path, None);
 
         std::fs::remove_file(&wav_path).ok();
         assert!(result.is_ok(), "transcription failed: {:?}", result.err());
+    }
+
+    /// Exercises the warm-context pool's model-switching path: transcribing
+    /// with a `model_override` different from the engine's default should
+    /// load and cache a second context under its own id, then a later call
+    /// back on the default should still work off the original one. Reuses
+    /// the single locally-downloaded model file under two different ids
+    /// (rather than requiring a second real model in the repo) purely to
+    /// exercise the HashMap-keyed load/lookup path in `ensure_context_for`
+    /// and `transcribe_with_model`'s override handling.
+    #[test]
+    fn transcribe_with_model_override_switches_contexts() {
+        let model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("models/ggml-base.en-q5_1.bin");
+        if !model_path.exists() {
+            eprintln!("skipping: model not downloaded, run scripts/download-model.sh");
+            return;
+        }
+
+        let wav_path = std::env::temp_dir().join("dev-whisper-smoke-test-override.wav");
+        write_test_tone(&wav_path);
+
+        let engine = WhisperEngine::new("base.en".to_string(), model_path.clone());
+        assert_eq!(engine.active_model_id(), "base.en");
+
+        // Default model, no override.
+        let default_result = engine.transcribe_with_model(&wav_path, None);
+        assert!(
+            default_result.is_ok(),
+            "default transcription failed: {:?}",
+            default_result.err()
+        );
+
+        // Override to a differently-keyed "model" (same underlying file) —
+        // should load a second warm context rather than reusing the
+        // default's, and still transcribe successfully.
+        let override_result = engine.transcribe_with_model(
+            &wav_path,
+            Some(("base.en-alias".to_string(), model_path)),
+        );
+        assert!(
+            override_result.is_ok(),
+            "override transcription failed: {:?}",
+            override_result.err()
+        );
+
+        // Switching back to the default (no override) should still work
+        // off the original warm context.
+        let default_again = engine.transcribe_with_model(&wav_path, None);
+        assert!(
+            default_again.is_ok(),
+            "post-override default transcription failed: {:?}",
+            default_again.err()
+        );
+        assert_eq!(engine.active_model_id(), "base.en");
+
+        std::fs::remove_file(&wav_path).ok();
     }
 
     #[test]

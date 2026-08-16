@@ -171,7 +171,7 @@ fn download_to_file(app: &AppHandle, id: &str, url: &str, dest: &std::path::Path
 #[tauri::command]
 pub fn set_active_model(app: AppHandle, id: String, state: State<RecordingState>) -> Result<(), String> {
     let path = resolve_model_path(&app, &id).ok_or_else(|| "model not downloaded".to_string())?;
-    state.whisper.set_model(id.clone(), path);
+    state.whisper.set_default_model(id.clone(), path);
 
     let mut cfg = config::load(&app);
     cfg.active_model = Some(id);

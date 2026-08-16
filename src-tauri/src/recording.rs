@@ -72,12 +72,30 @@ pub fn toggle_recording(app: &AppHandle) {
 
 fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
     let state = app.state::<RecordingState>();
-    match state.whisper.transcribe(wav_path) {
-        Ok(text) if !text.is_empty() => {
-            let active_app = state.active_app.lock().unwrap().clone();
-            let bundle_id = active_app.as_ref().map(|info| info.bundle_id.clone());
-            let app_name = active_app.map(|info| info.name);
 
+    let active_app = state.active_app.lock().unwrap().clone();
+    let bundle_id = active_app.as_ref().map(|info| info.bundle_id.clone());
+    let app_name = active_app.map(|info| info.name);
+
+    // Mode (and its stt_model override, if any) has to be resolved *before*
+    // transcribing now, not after — which model to transcribe with depends
+    // on it. Casing-command detection still happens after, on the
+    // resulting text, since that's orthogonal to which model produced it.
+    let cfg = crate::config::load(app);
+    let settings = modes::resolve_settings(bundle_id.as_deref(), &cfg.mode_rules);
+    let model_override = settings.stt_model.as_ref().and_then(|id| {
+        crate::models::resolve_model_path(app, id).map(|path| (id.clone(), path))
+    });
+    eprintln!(
+        "modes: bundle_id={bundle_id:?} rules={} resolved_mode={:?} stt_model_override={:?} (resolved={})",
+        cfg.mode_rules.len(),
+        settings.mode,
+        settings.stt_model,
+        model_override.is_some(),
+    );
+
+    match state.whisper.transcribe_with_model(wav_path, model_override) {
+        Ok(text) if !text.is_empty() => {
             // Casing directives ("snake case error response handler") are a
             // cross-cutting syntax command, not gated behind a Mode — they
             // apply no matter which app/mode is active, and skip both
@@ -89,14 +107,8 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
                     (cased, "casing".to_string())
                 }
                 None => {
-                    let cfg = crate::config::load(app);
-                    let settings = modes::resolve_settings(bundle_id.as_deref(), &cfg.mode_rules);
                     let formatted = modes::apply_mode(settings.mode, &text);
-                    eprintln!(
-                        "modes: bundle_id={bundle_id:?} rules={} resolved_mode={:?} transcript={text:?} formatted={formatted:?}",
-                        cfg.mode_rules.len(),
-                        settings.mode,
-                    );
+                    eprintln!("modes: transcript={text:?} formatted={formatted:?}");
 
                     let formatted = if settings.use_llm_refinement {
                         let _ = app.emit("refining-started", ());
