@@ -11,6 +11,14 @@ fn accessibility_trusted() -> bool {
     true
 }
 
+/// Copies `text` to the clipboard without simulating a paste keystroke —
+/// used by the "copy only" setting, and doesn't need Accessibility
+/// permission since it never sends a synthetic keystroke.
+pub fn copy_text(text: &str) -> Result<(), String> {
+    let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    clipboard.set_text(text.to_string()).map_err(|e| e.to_string())
+}
+
 /// Copies `text` to the clipboard and simulates Cmd+V so it lands at the
 /// active cursor position. Requires macOS Accessibility permission. Without
 /// it, `simulate()` below returns Ok but the OS silently drops the
@@ -25,8 +33,7 @@ pub fn paste_text(text: &str) -> Result<(), String> {
         );
     }
 
-    let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-    clipboard.set_text(text.to_string()).map_err(|e| e.to_string())?;
+    copy_text(text)?;
 
     // Give the OS a moment to register the clipboard update before pasting.
     thread::sleep(Duration::from_millis(50));
@@ -42,4 +49,26 @@ fn send(event: EventType) -> Result<(), String> {
     simulate(&event).map_err(|e| format!("{e:?}"))?;
     thread::sleep(Duration::from_millis(20));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Exercises the real system clipboard rather than mocking it — save
+    /// and restore whatever was already there so the test doesn't clobber
+    /// the developer's actual clipboard contents.
+    #[test]
+    fn copy_text_writes_to_the_real_clipboard() {
+        let mut clipboard = arboard::Clipboard::new().expect("clipboard unavailable");
+        let previous = clipboard.get_text().ok();
+
+        let marker = "dev-whisper-copy-only-test-marker";
+        copy_text(marker).expect("copy_text failed");
+        assert_eq!(clipboard.get_text().unwrap(), marker);
+
+        if let Some(previous) = previous {
+            let _ = clipboard.set_text(previous);
+        }
+    }
 }

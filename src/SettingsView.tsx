@@ -784,20 +784,32 @@ function LlmSection() {
 
 function GeneralSection() {
   const [autostart, setAutostart] = useState(false);
+  const [copyOnly, setCopyOnly] = useState(false);
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
-    invoke<boolean>("get_autostart_enabled")
-      .then(setAutostart)
-      .catch((err) => console.error("failed to load autostart setting:", err))
+    Promise.all([invoke<boolean>("get_autostart_enabled"), invoke<boolean>("get_copy_only")])
+      .then(([autostartValue, copyOnlyValue]) => {
+        setAutostart(autostartValue);
+        setCopyOnly(copyOnlyValue);
+      })
+      .catch((err) => console.error("failed to load general settings:", err))
       .finally(() => setChecked(true));
   }, []);
 
-  function toggle(enabled: boolean) {
+  function toggleAutostart(enabled: boolean) {
     setAutostart(enabled);
     invoke("set_autostart_enabled", { enabled }).catch((err) => {
       console.error("set_autostart_enabled failed:", err);
       setAutostart(!enabled);
+    });
+  }
+
+  function toggleCopyOnly(enabled: boolean) {
+    setCopyOnly(enabled);
+    invoke("set_copy_only", { enabled }).catch((err) => {
+      console.error("set_copy_only failed:", err);
+      setCopyOnly(!enabled);
     });
   }
 
@@ -807,15 +819,26 @@ function GeneralSection() {
       {!checked ? (
         <span className="loading loading-spinner loading-xs" />
       ) : (
-        <label className="flex items-center gap-1.5 text-xs">
-          <input
-            type="checkbox"
-            className="checkbox checkbox-xs"
-            checked={autostart}
-            onChange={(e) => toggle(e.target.checked)}
-          />
-          Launch Dev Whisper at login
-        </label>
+        <div className="flex flex-col gap-1">
+          <label className="flex items-center gap-1.5 text-xs">
+            <input
+              type="checkbox"
+              className="checkbox checkbox-xs"
+              checked={autostart}
+              onChange={(e) => toggleAutostart(e.target.checked)}
+            />
+            Launch Dev Whisper at login
+          </label>
+          <label className="flex items-center gap-1.5 text-xs">
+            <input
+              type="checkbox"
+              className="checkbox checkbox-xs"
+              checked={copyOnly}
+              onChange={(e) => toggleCopyOnly(e.target.checked)}
+            />
+            Copy only — don't auto-paste into the active app
+          </label>
+        </div>
       )}
     </div>
   );

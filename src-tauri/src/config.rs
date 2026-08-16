@@ -50,6 +50,12 @@ pub struct AppConfig {
     /// re-centering. `None` until the user drags it at least once.
     #[serde(default)]
     pub widget_position: Option<(f64, f64)>,
+    /// When true, transcripts are copied to the clipboard but never pasted
+    /// via a simulated keystroke — for users who'd rather paste manually
+    /// (e.g. Cmd+V themselves) or whose setup makes the synthetic keystroke
+    /// unreliable. Also means Accessibility permission isn't needed.
+    #[serde(default)]
+    pub copy_only: bool,
 }
 
 fn default_history_retention_days() -> u32 {
@@ -67,6 +73,7 @@ impl Default for AppConfig {
             history_retention_days: default_history_retention_days(),
             llm_model: crate::llm::default_model(),
             widget_position: None,
+            copy_only: false,
         }
     }
 }
@@ -151,5 +158,6 @@ mod tests {
         assert!(restored.mode_rules.is_empty());
         assert_eq!(restored.vocabulary, crate::stt::default_vocabulary());
         assert_eq!(restored.history_retention_days, 30);
+        assert!(!restored.copy_only);
     }
 }

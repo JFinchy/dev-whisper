@@ -160,10 +160,17 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
                 (formatted, format!("{:?}", settings.mode))
             };
 
-            match paste_text(&formatted) {
+            let deliver = if cfg.copy_only {
+                crate::paste::copy_text(&formatted)
+            } else {
+                paste_text(&formatted)
+            };
+
+            match deliver {
                 Ok(()) => {
                     // Only log to history what actually reached the user —
-                    // a failed paste shouldn't silently show up as history.
+                    // a failed paste/copy shouldn't silently show up as
+                    // history.
                     crate::history::append_entry(app, &formatted, app_name, Some(mode_label));
                     let _ = app.emit("transcript-ready", formatted);
                 }
@@ -221,6 +228,18 @@ pub fn set_vocabulary(app: AppHandle, terms: Vec<String>, state: tauri::State<Re
 
     let mut cfg = crate::config::load(&app);
     cfg.vocabulary = terms;
+    let _ = crate::config::save(&app, &cfg);
+}
+
+#[tauri::command]
+pub fn get_copy_only(app: AppHandle) -> bool {
+    crate::config::load(&app).copy_only
+}
+
+#[tauri::command]
+pub fn set_copy_only(app: AppHandle, enabled: bool) {
+    let mut cfg = crate::config::load(&app);
+    cfg.copy_only = enabled;
     let _ = crate::config::save(&app, &cfg);
 }
 
