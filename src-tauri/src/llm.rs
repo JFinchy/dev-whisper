@@ -222,6 +222,61 @@ pub fn refine(mode: crate::modes::Mode, text: &str, model: &str) -> Result<Strin
     }
 }
 
+/// Small models often ignore "no markdown fences" instructions and wrap
+/// the response in a fenced code block anyway — strip one leading/trailing
+/// fence if present so the output pastes as raw code, not fenced markdown.
+fn strip_markdown_fences(text: &str) -> String {
+    let trimmed = text.trim();
+    if !trimmed.starts_with("```") {
+        return trimmed.to_string();
+    }
+    let Some(after_open) = trimmed.find('\n').map(|idx| &trimmed[idx + 1..]) else {
+        return trimmed.to_string();
+    };
+    match after_open.rfind("```") {
+        Some(idx) => after_open[..idx].trim_end().to_string(),
+        None => after_open.trim_end().to_string(),
+    }
+}
+
+/// Sends a natural-language "generate boilerplate for X" request (see
+/// boilerplate.rs) to Ollama for code generation. Separate from `refine()`
+/// since code generation is a heavier task than dictation cleanup and
+/// warrants a longer timeout.
+pub fn generate_boilerplate(request: &str, model: &str) -> Result<String, String> {
+    let instruction = "Generate the code requested below. Output ONLY the code itself — no \
+                        explanation, no markdown code fences, no surrounding commentary. If the \
+                        request doesn't specify a language, infer the most likely one from \
+                        context.";
+    let body = serde_json::json!({
+        "model": model,
+        "prompt": format!("{instruction}\n\nRequest: {request}"),
+        "stream": false,
+        "think": false,
+    });
+
+    let started = Instant::now();
+    let resp = ureq::post(OLLAMA_GENERATE_URL)
+        // Code generation is a heavier task than dictation cleanup and can
+        // legitimately take longer than refine()'s 30s budget.
+        .timeout(std::time::Duration::from_secs(60))
+        .send_json(body)
+        .map_err(|e| format!("Ollama request failed (is `ollama serve` running?): {e}"))?;
+
+    let parsed: GenerateResponse = resp
+        .into_json()
+        .map_err(|e| format!("failed to parse Ollama response: {e}"))?;
+
+    record_latency(model, started.elapsed().as_millis() as u64);
+
+    let code = strip_markdown_fences(&parsed.response);
+    if code.is_empty() {
+        Err("Ollama returned an empty response".to_string())
+    } else {
+        Ok(code)
+    }
+}
+
 /// Names of locally-pulled Ollama models, for the Settings picker. Empty
 /// (not an error) if Ollama isn't reachable, so the UI can show "Ollama
 /// not running" rather than a raw error.
@@ -282,5 +337,48 @@ mod tests {
         let latency = last_latency_ms(model);
         assert!(latency.is_some(), "successful refine() should record a latency");
         eprintln!("Ollama ({model}) refine() latency: {}ms", latency.unwrap());
+    }
+
+    #[test]
+    fn strip_markdown_fences_removes_fenced_block_with_language_tag() {
+        let input = "```python\ndef add(a, b):\n    return a + b\n```";
+        assert_eq!(strip_markdown_fences(input), "def add(a, b):\n    return a + b");
+    }
+
+    #[test]
+    fn strip_markdown_fences_removes_fenced_block_without_language_tag() {
+        let input = "```\nlet x = 1;\n```";
+        assert_eq!(strip_markdown_fences(input), "let x = 1;");
+    }
+
+    #[test]
+    fn strip_markdown_fences_leaves_unfenced_text_unchanged() {
+        assert_eq!(strip_markdown_fences("let x = 1;"), "let x = 1;");
+    }
+
+    /// Smoke test against a real, locally-running Ollama instance — skips
+    /// if Ollama isn't reachable, matching `refines_text_via_real_ollama`.
+    #[test]
+    fn generates_boilerplate_via_real_ollama() {
+        let models = list_ollama_models();
+        if models.is_empty() {
+            eprintln!("skipping: no Ollama models found (is `ollama serve` running?)");
+            return;
+        }
+        let model = &models[0];
+
+        let result = generate_boilerplate("a Python function that adds two numbers", model);
+
+        match result {
+            Ok(code) => {
+                assert!(!code.is_empty(), "generated code should not be empty");
+                assert!(
+                    !code.trim_start().starts_with("```"),
+                    "output should have markdown fences stripped, got: {code:?}"
+                );
+                eprintln!("Ollama ({model}) generated boilerplate: {code:?}");
+            }
+            Err(err) => panic!("boilerplate generation failed: {err}"),
+        }
     }
 }

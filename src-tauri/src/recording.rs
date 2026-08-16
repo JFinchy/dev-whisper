@@ -101,29 +101,42 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
             // apply no matter which app/mode is active, and skip both
             // rule-based formatting and LLM refinement entirely since the
             // mechanical transform already fully resolves the output.
-            let (formatted, mode_label) = match crate::syntax::try_apply_casing_command(&text) {
-                Some(cased) => {
-                    eprintln!("syntax: casing command matched, transcript={text:?} output={cased:?}");
-                    (cased, "casing".to_string())
+            let (formatted, mode_label) = if let Some(cased) =
+                crate::syntax::try_apply_casing_command(&text)
+            {
+                eprintln!("syntax: casing command matched, transcript={text:?} output={cased:?}");
+                (cased, "casing".to_string())
+            } else if let Some(request) = crate::boilerplate::try_extract_request(&text) {
+                eprintln!("boilerplate: request matched, transcript={text:?} request={request:?}");
+                let _ = app.emit("refining-started", ());
+                match crate::llm::generate_boilerplate(&request, &cfg.llm_model) {
+                    Ok(code) => (code, "boilerplate".to_string()),
+                    Err(err) => {
+                        // Falls back to normal mode formatting rather than
+                        // pasting nothing — a down/missing Ollama shouldn't
+                        // eat the user's dictation.
+                        eprintln!("boilerplate: generation failed, falling back to plain formatting: {err}");
+                        let formatted = modes::apply_mode(settings.mode, &text);
+                        (formatted, format!("{:?}", settings.mode))
+                    }
                 }
-                None => {
-                    let formatted = modes::apply_mode(settings.mode, &text);
-                    eprintln!("modes: transcript={text:?} formatted={formatted:?}");
+            } else {
+                let formatted = modes::apply_mode(settings.mode, &text);
+                eprintln!("modes: transcript={text:?} formatted={formatted:?}");
 
-                    let formatted = if settings.use_llm_refinement {
-                        let _ = app.emit("refining-started", ());
-                        match crate::llm::refine(settings.mode, &formatted, &cfg.llm_model) {
-                            Ok(refined) => refined,
-                            Err(err) => {
-                                eprintln!("llm: refinement failed, pasting unrefined text: {err}");
-                                formatted
-                            }
+                let formatted = if settings.use_llm_refinement {
+                    let _ = app.emit("refining-started", ());
+                    match crate::llm::refine(settings.mode, &formatted, &cfg.llm_model) {
+                        Ok(refined) => refined,
+                        Err(err) => {
+                            eprintln!("llm: refinement failed, pasting unrefined text: {err}");
+                            formatted
                         }
-                    } else {
-                        formatted
-                    };
-                    (formatted, format!("{:?}", settings.mode))
-                }
+                    }
+                } else {
+                    formatted
+                };
+                (formatted, format!("{:?}", settings.mode))
             };
 
             match paste_text(&formatted) {
