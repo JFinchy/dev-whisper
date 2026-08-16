@@ -21,6 +21,25 @@ pub struct RecordingState {
     pub active_app: Mutex<Option<AppInfo>>,
 }
 
+/// Swaps the tray icon between its default look and a red-dot "recording"
+/// variant so the recording state is visible even when the widget window
+/// is hidden or off-screen. Best-effort: a missing tray/icon is silently
+/// skipped rather than failing the recording toggle over a cosmetic issue.
+fn set_tray_recording_indicator(app: &AppHandle, recording: bool) {
+    let Some(tray) = app.tray_by_id(crate::TRAY_ICON_ID) else {
+        return;
+    };
+    let Some(base) = app.default_window_icon() else {
+        return;
+    };
+    let icon = if recording {
+        crate::recording_tray_icon(base)
+    } else {
+        base.clone()
+    };
+    let _ = tray.set_icon(Some(icon));
+}
+
 /// Shared by the tray/UI toggle command and the global hotkey listener so
 /// both drive the same start/stop lifecycle.
 pub fn toggle_recording(app: &AppHandle) {
@@ -28,6 +47,7 @@ pub fn toggle_recording(app: &AppHandle) {
     let was_recording = state.is_recording.fetch_xor(true, Ordering::SeqCst);
 
     if was_recording {
+        set_tray_recording_indicator(app, false);
         match state.audio.stop() {
             Ok(path) => {
                 let _ = app.emit("recording-stopped", path.to_string_lossy().to_string());
@@ -39,6 +59,7 @@ pub fn toggle_recording(app: &AppHandle) {
             }
         }
     } else {
+        set_tray_recording_indicator(app, true);
         state.audio.start();
 
         // Capture which app the user was in *before* showing/focusing our

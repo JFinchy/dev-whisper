@@ -37,6 +37,42 @@ use recording::{
 use shortcut::{get_shortcut, set_shortcut, PushToTalkState};
 use stt::WhisperEngine;
 
+/// Shared between the tray builder in `run()` and `recording::toggle_recording`
+/// (which looks the tray back up via `AppHandle::tray_by_id` to swap its icon)
+/// so both sides agree on which tray they mean without threading a handle
+/// through `RecordingState`.
+pub const TRAY_ICON_ID: &str = "main";
+
+/// Draws a small red dot over the bottom-right corner of `base` — gives the
+/// tray icon a distinct "recording" state without needing a separate icon
+/// asset checked into the repo. Recomputed on each recording start rather
+/// than cached; a 32x32 pixel loop is sub-millisecond.
+pub fn recording_tray_icon(base: &tauri::image::Image) -> tauri::image::Image<'static> {
+    let width = base.width();
+    let height = base.height();
+    let mut rgba = base.rgba().to_vec();
+
+    let radius = (width.min(height) as f32 * 0.3).max(3.0);
+    let cx = width as f32 * 0.72;
+    let cy = height as f32 * 0.72;
+
+    for y in 0..height {
+        for x in 0..width {
+            let dx = x as f32 + 0.5 - cx;
+            let dy = y as f32 + 0.5 - cy;
+            if dx * dx + dy * dy <= radius * radius {
+                let idx = ((y * width + x) * 4) as usize;
+                rgba[idx] = 220;
+                rgba[idx + 1] = 38;
+                rgba[idx + 2] = 38;
+                rgba[idx + 3] = 255;
+            }
+        }
+    }
+
+    tauri::image::Image::new_owned(rgba, width, height)
+}
+
 #[tauri::command]
 fn open_settings(app: tauri::AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("settings") {
@@ -251,7 +287,7 @@ pub fn run() {
                 &[&toggle_recording_item, &toggle_widget, &open_settings_item, &quit],
             )?;
 
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id(TRAY_ICON_ID)
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -279,4 +315,31 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recording_tray_icon_paints_a_red_dot_without_changing_dimensions() {
+        let width = 32;
+        let height = 32;
+        let base = tauri::image::Image::new_owned(vec![10u8; (width * height * 4) as usize], width, height);
+
+        let marked = recording_tray_icon(&base);
+        assert_eq!(marked.width(), width);
+        assert_eq!(marked.height(), height);
+
+        // Center of the dot (per recording_tray_icon's 0.72/0.72 placement)
+        // should be opaque red.
+        let cx = (width as f32 * 0.72) as u32;
+        let cy = (height as f32 * 0.72) as u32;
+        let idx = ((cy * width + cx) * 4) as usize;
+        let rgba = marked.rgba();
+        assert_eq!(&rgba[idx..idx + 4], &[220, 38, 38, 255]);
+
+        // Top-left corner, far from the dot, should be untouched.
+        assert_eq!(&rgba[0..4], &[10, 10, 10, 10]);
+    }
 }
