@@ -86,7 +86,12 @@ pub fn resolve_settings(bundle_id: Option<&str>, rules: &[AppModeRule]) -> Resol
     ResolvedSettings {
         mode,
         stt_model: None,
-        use_llm_refinement: false,
+        // Casual mode's rule-based path is a no-op (regex can't meaningfully
+        // "sound casual"), so it's the one builtin default worth defaulting
+        // to LLM refinement rather than leaving the raw transcript as-is.
+        // CLI/Plain keep the conservative false default — CLI already gets
+        // real value from the rule-based formatting alone.
+        use_llm_refinement: mode == Mode::Casual,
     }
 }
 
@@ -156,6 +161,34 @@ mod tests {
     fn builtin_default_applies_when_no_user_rule() {
         assert_eq!(resolve_mode(Some("com.apple.Terminal"), &[]), Mode::Cli);
         assert_eq!(resolve_mode(Some("com.tinyspeck.slackmacgap"), &[]), Mode::Casual);
+    }
+
+    #[test]
+    fn casual_builtin_default_uses_llm_refinement() {
+        // Casual's rule-based path is a no-op, so the builtin default
+        // should opt into LLM refinement rather than leaving raw text as-is.
+        let settings = resolve_settings(Some("com.tinyspeck.slackmacgap"), &[]);
+        assert_eq!(settings.mode, Mode::Casual);
+        assert!(settings.use_llm_refinement);
+    }
+
+    #[test]
+    fn cli_and_plain_builtin_defaults_do_not_use_llm_refinement() {
+        let cli = resolve_settings(Some("com.apple.Terminal"), &[]);
+        assert!(!cli.use_llm_refinement);
+
+        let plain = resolve_settings(Some("com.example.unknown"), &[]);
+        assert!(!plain.use_llm_refinement);
+    }
+
+    #[test]
+    fn user_rule_overrides_the_casual_llm_default() {
+        // An explicit user rule always wins, even if it disables LLM
+        // refinement for an app whose builtin default is Casual.
+        let mut r = rule("com.tinyspeck.slackmacgap", Mode::Casual);
+        r.use_llm_refinement = false;
+        let settings = resolve_settings(Some("com.tinyspeck.slackmacgap"), &[r]);
+        assert!(!settings.use_llm_refinement);
     }
 
     #[test]
