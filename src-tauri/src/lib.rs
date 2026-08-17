@@ -13,6 +13,7 @@ mod paste;
 mod punctuation;
 mod recording;
 mod shortcut;
+mod snippets;
 mod stt;
 mod syntax;
 mod widget;
@@ -43,6 +44,7 @@ use recording::{
     set_vocabulary, toggle_recording, toggle_recording_command, RecordingState,
 };
 use shortcut::{get_shortcut, set_shortcut, PushToTalkState};
+use snippets::{get_snippets, set_snippets};
 use widget::{get_widget_mode, set_widget_mode, set_widget_size};
 use stt::WhisperEngine;
 
@@ -229,6 +231,8 @@ pub fn run() {
             get_widget_mode,
             set_widget_mode,
             set_widget_size,
+            get_snippets,
+            set_snippets,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

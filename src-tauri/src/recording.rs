@@ -154,12 +154,25 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
                 (text, false)
             };
 
+            // Snippets ("pr checklist", "standup update") are the most
+            // explicit, intentional signal of the pre-LLM checks — a
+            // literal saved macro the user (or a shipped default) defined
+            // themselves — so they're checked first, ahead of casing
+            // commands and boilerplate requests, in case of a coincidental
+            // overlap. Like those, skips mode formatting and LLM
+            // refinement entirely: the output is already fully resolved.
+            let (formatted, mode_label) = if let Some(expanded) =
+                crate::snippets::try_expand(&text, &cfg.snippets)
+            {
+                crate::applog!("snippets: trigger matched, transcript={text:?}");
+                (expanded, "snippet".to_string())
+            }
             // Casing directives ("snake case error response handler") are a
             // cross-cutting syntax command, not gated behind a Mode — they
             // apply no matter which app/mode is active, and skip both
             // rule-based formatting and LLM refinement entirely since the
             // mechanical transform already fully resolves the output.
-            let (formatted, mode_label) = if let Some(cased) =
+            else if let Some(cased) =
                 crate::syntax::try_apply_casing_command(&text)
             {
                 crate::applog!("syntax: casing command matched, transcript={text:?} output={cased:?}");

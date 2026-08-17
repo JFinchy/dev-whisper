@@ -77,6 +77,12 @@ pub struct AppConfig {
     /// just working out of the box like the other punctuation commands.
     #[serde(default)]
     pub press_enter_enabled: bool,
+    /// Spoken-cue -> saved-text-block expansions (see `snippets.rs`).
+    /// Defaults to `snippets::default_snippets()`, same reasoning as
+    /// `vocabulary` above — useful out of the box, not an empty list a
+    /// user has to populate before the feature does anything.
+    #[serde(default = "crate::snippets::default_snippets")]
+    pub snippets: Vec<crate::snippets::Snippet>,
 }
 
 fn default_history_retention_days() -> u32 {
@@ -98,6 +104,7 @@ impl Default for AppConfig {
             widget_mode: crate::widget::WidgetMode::default(),
             journal_enabled: false,
             press_enter_enabled: false,
+            snippets: crate::snippets::default_snippets(),
         }
     }
 }
@@ -185,5 +192,6 @@ mod tests {
         assert!(!restored.copy_only);
         assert_eq!(restored.widget_mode, crate::widget::WidgetMode::default());
         assert!(!restored.journal_enabled);
+        assert_eq!(restored.snippets, crate::snippets::default_snippets());
     }
 }

@@ -83,34 +83,34 @@ build phases.
     that's exposed beyond Tauri's IPC, which it currently isn't) or this
     can be revisited if it turns out to matter in practice.
 
-- **Snippet library** (from the 2026-08-17 competitive research — Wispr
-  Flow: a spoken cue expands to a saved block of text, e.g. "PR
-  Checklist" or "Environment Setup"). Not started. Distinct from the
-  vocabulary editor, which is about recognition *accuracy*, not
-  insertion. Design, following the same shape as the already-shipped
-  Syntax & Casing Commands (`syntax.rs`) and Boilerplate Generation
-  (`boilerplate.rs`) — a pure, fast, pre-LLM detection step in the
-  transcript pipeline:
-  - New config: `snippets: Vec<Snippet>` where
-    `Snippet { trigger: String, body: String }`, user-managed from a new
-    Settings section (same add/edit/delete pattern as the Vocabulary
-    editor or Mode Rules).
-  - New `snippets.rs`: `try_expand(text: &str, snippets: &[Snippet]) ->
-    Option<String>` — case-insensitive match of the *entire* trimmed
-    transcript against a configured trigger (not a prefix match like
-    casing commands, since a trigger like "standup template" is meant to
-    be spoken as a complete, deliberate cue, not a directive with content
-    trailing it). Returns the saved body verbatim on a match.
-  - Wired into `recording.rs`'s `transcribe_and_paste` **before** the
-    casing-command check — a snippet match is the most explicit,
-    intentional signal of the three pre-LLM checks (a literal saved
-    macro the user defined themselves), so it should win over a
-    coincidental overlap with a casing directive or boilerplate phrase.
-    Skips mode formatting and LLM refinement entirely, same reasoning as
-    casing commands: the output is already fully resolved.
-  - Still logged to history for consistency, tagged with a `"snippet"`
-    mode label (matching the existing `"casing"`/`"boilerplate"` label
-    convention).
+- ~~**Snippet library**~~ (shipped 2026-08-17, from the 2026-08-17
+  competitive research — Wispr Flow: a spoken cue expands to a saved
+  block of text, e.g. "PR Checklist" or "Environment Setup"). Distinct
+  from the vocabulary editor, which is about recognition *accuracy*, not
+  insertion. `snippets.rs`: `Snippet { trigger, body }`,
+  `try_expand(text, snippets) -> Option<String>` — case-insensitive match
+  of the *entire* trimmed transcript against a configured trigger (not a
+  prefix match like casing commands, since a trigger like "standup
+  update" is meant to be spoken as a complete, deliberate cue, not a
+  directive with content trailing it), tolerant of Whisper's own trailing
+  sentence punctuation. Ships with four ready-to-use dev defaults (PR
+  checklist, standup update, bug report template, commit message
+  template) via `default_snippets()` rather than an empty list, same
+  reasoning as `stt::default_vocabulary()` — useful out of the box.
+  Wired into `recording.rs`'s `transcribe_and_paste` **before** the
+  casing-command check — a snippet match is the most explicit,
+  intentional signal of the pre-LLM checks (a literal saved macro the
+  user, or a shipped default, defined), so it wins over a coincidental
+  overlap with a casing directive or boilerplate phrase. Skips mode
+  formatting and LLM refinement entirely, same reasoning as casing
+  commands: the output is already fully resolved. Logged to history
+  tagged with a `"snippet"` mode label (matching the existing
+  `"casing"`/`"boilerplate"` label convention). Settings gets a new
+  Snippets section (`SnippetsSection` in `SettingsView.tsx`) with
+  click-to-edit-in-place and delete, persisted via a single
+  full-list-replace `set_snippets` command (simpler than a keyed
+  add/update/remove trio, since a snippet's trigger — its only natural
+  key — is itself user-editable).
 
 - **Smart Formatting / Backtrack parity** (from the 2026-08-17 Wispr Flow
   docs review —
