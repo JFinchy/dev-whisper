@@ -115,11 +115,13 @@ build phases.
 - **Smart Formatting / Backtrack parity** (from the 2026-08-17 Wispr Flow
   docs review —
   [Smart Formatting & Backtrack](https://docs.wisprflow.ai/articles/5373093536-how-do-i-use-smart-formatting-and-backtrack)).
-  Partially started. Wispr Flow's version is a cloud-processed feature;
-  the parts worth building here are the ones that work as pure
-  deterministic passes (same shape as the already-shipped Syntax &
-  Casing Commands in `syntax.rs`), so they're instant and don't depend on
-  Ollama being up:
+  All four deterministic sub-features shipped 2026-08-17 (named
+  punctuation, spoken lists, "press enter", Backtrack). Wispr Flow's
+  version is a cloud-processed feature; the parts worth building here
+  were the ones that work as pure deterministic passes (same shape as
+  the already-shipped Syntax & Casing Commands in `syntax.rs`), so
+  they're instant and don't depend on Ollama being up. What's left is
+  explicitly deferred or out of scope, see below:
   - ~~**Named punctuation commands**~~ (shipped 2026-08-17) — say
     "period", "comma", "open paren", "em dash", "new line", etc. and get
     the literal character instead of the spoken word. `punctuation.rs`:
@@ -163,17 +165,27 @@ build phases.
     entire utterance is just "press enter", nothing is pasted/copied
     (avoids clobbering the clipboard with an empty string) but Enter
     still fires and no history entry is logged.
-  - **Backtrack (trigger-word case only)** — new `backtrack.rs`:
-    `try_backtrack(text: &str) -> Option<String>`, a deterministic pass
-    that collapses "X actually Y" -> "Y" and "X, scratch that, Y" -> "Y"
-    for an explicit trigger-word list. This is deliberately narrower than
-    Wispr's version, which also catches natural restatement without a
-    trigger word via full-context LLM judgment — that fuzzier case is
+  - ~~**Backtrack (trigger-word case only)**~~ (shipped 2026-08-17) —
+    `backtrack.rs`: `try_backtrack(text: &str) -> String`, a deterministic
+    pass that collapses "X, actually Y" -> "Y" and "X scratch that Y" ->
+    "Y". Runs after `expand_punctuation` in `recording.rs`, since the
+    "actually" trigger needs a literal preceding comma to fire — bare
+    "actually" is far too common a word in ordinary speech ("I actually
+    enjoyed it") to treat as a correction cue on its own; requiring the
+    comma (a real spoken pause, whether from an explicit "comma" command
+    or Whisper's own punctuation) cuts most of that false-positive rate.
+    Known residual risk: a hedge like "well, actually, I think it's fine"
+    still has the comma and will still misfire — not eliminated, just
+    reduced. "scratch that" needs no such gate, it's unambiguous on its
+    own. Deliberately narrower than Wispr's version in another way too:
+    on a match it discards the *entire* prefix rather than doing Wispr's
+    partial word-level diff (their own "at 2 actually 3" example keeps
+    "at" and only swaps the number; ours produces just "3"). The
+    no-trigger-word natural-restatement case Wispr also catches (via
+    full-context LLM judgment) stays out of scope, same as before —
     already partially covered by the existing "fix filler words, false
-    starts" instruction in `llm.rs`'s refinement prompts (when a mode has
-    LLM refinement on; Plain mode defaults it off). The new deterministic
-    pass exists so the common explicit-trigger-word case works even with
-    Ollama down, same rationale as the boilerplate-generation fallback.
+    starts" instruction in `llm.rs`'s refinement prompts when a mode has
+    LLM refinement on (Plain mode defaults it off).
   - **Explicitly deferred, lower priority**: trailing-period-by-app +
     "Writing Style" tuning, and context-aware mid-sentence
     lowercasing/spacing — both cosmetic relative to the above, and the

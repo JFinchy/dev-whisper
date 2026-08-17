@@ -1,5 +1,6 @@
 mod app_detect;
 mod audio;
+mod backtrack;
 mod boilerplate;
 mod config;
 mod history;

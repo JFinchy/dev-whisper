@@ -134,6 +134,14 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
             // than against the literal spoken words.
             let text = crate::punctuation::expand_punctuation(&text);
 
+            // Backtrack ("...at two, actually three") collapses a
+            // self-correction down to just the corrected tail. Runs after
+            // punctuation expansion, not before — its "actually" trigger
+            // requires a literal preceding comma, which only exists once
+            // a spoken "comma" (or Whisper's own natural comma insertion)
+            // has already been resolved to the character.
+            let text = crate::backtrack::try_backtrack(&text);
+
             // "Press enter": stripped before casing/boilerplate/mode so
             // none of those see the trailing control phrase as content.
             // Gated behind a Settings toggle (default off) — an
