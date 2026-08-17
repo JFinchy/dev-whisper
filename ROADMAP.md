@@ -9,27 +9,35 @@ left," not "what's the history."
 
 ## Now — from competitive research (SuperWhisper 2026-08-16, broader landscape 2026-08-17)
 
-Ranked by leverage; see `BACKLOG.md` for the full research writeups.
+Ranked by leverage; see `BACKLOG.md` for the full research writeups. #2
+and #3 bumped up on 2026-08-17 based on explicit user interest, not just
+research-leverage ranking — both now have a full implementation design in
+`BACKLOG.md`, not just a one-line idea.
 
 1. **Direct coding-agent integration** (Claude Code/Cursor/etc. plugins,
    a coding-agent panel, hook support) — the developer-specific angle
    SuperWhisper itself is now leaning into; local/private is our edge
    over their approach.
-2. **Selected-text/on-screen context feeding LLM refinement** — extends
+2. **Output-side workflow automation** — a generic configurable webhook
+   fired after each delivered dictation, covering Notion/Slack/n8n/
+   Zapier/Make.com the way MacWhisper's integrations do, without us
+   maintaining a bespoke client per service. Complements the deep-link
+   hooks already shipped, which only cover the *input* side
+   (starting/stopping a recording via script). Off by default — sending
+   dictated text off-device is a deliberate opt-in, not a default.
+3. **Snippet library** — a spoken cue expands to a saved block of text
+   (a PR checklist, a calendar link, standard onboarding instructions),
+   distinct from the vocabulary editor (which is about recognition
+   accuracy, not insertion). Seen on Wispr Flow. Detected the same way
+   as the shipped Syntax & Casing Commands / Boilerplate Generation —
+   pure, fast, no LLM needed to look up a saved trigger phrase.
+4. **Selected-text/on-screen context feeding LLM refinement** — extends
    shipped app-aware refinement and boilerplate generation with real code
    context, not just app identity. VoiceInk already ships this (via
    SelectedTextKit) — validated as achievable, not speculative.
-3. **Realtime streaming transcript display** — partial results shown
+5. **Realtime streaming transcript display** — partial results shown
    while still speaking, not just after release. Real UX upgrade to the
    shipped push-to-talk loop.
-4. **Output-side workflow automation** — route a finished transcript or
-   journal summary to Notion/Slack/a custom webhook, the way MacWhisper
-   does. Complements the deep-link hooks we already shipped, which only
-   cover the *input* side (starting/stopping a recording via script).
-5. **Snippet library** — a spoken cue expands to a saved block of text
-   (a PR checklist, a calendar link, standard onboarding instructions),
-   distinct from the vocabulary editor (which is about recognition
-   accuracy, not insertion). Seen on Wispr Flow.
 6. **History reprocessing + full-text search** — history is currently
    append-only with no way to re-run a past recording through a
    different mode or search it.

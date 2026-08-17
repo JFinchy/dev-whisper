@@ -48,6 +48,70 @@ build phases.
 
 ## Feature Requests
 
+- **Output-side workflow automation** (from the 2026-08-17 competitive
+  research — MacWhisper routes transcripts to Notion/Zapier/Obsidian/
+  n8n/Make.com/webhooks). Not started. Design:
+  - A single generic primitive rather than N bespoke integrations: a
+    configurable **webhook URL** (`webhook_url: Option<String>` in
+    `AppConfig`) that gets a `POST` with a JSON body
+    (`{timestamp_ms, text, summary, app_name, mode}`) after every
+    successfully delivered dictation. This is almost certainly what
+    MacWhisper's "integrations" actually are under the hood too — Notion/
+    Slack/n8n/Zapier/Make.com all accept incoming webhooks natively, so
+    one primitive covers all of them without us maintaining N OAuth
+    flows and API clients.
+  - New `webhook.rs`: `send_entry(app, entry)` — fires in its own
+    background thread (same pattern as journal summarization in
+    `recording.rs`) so a slow or unreachable endpoint never adds latency
+    to the paste; `ureq::post` with a short (~10s) timeout; failures go
+    through `applog!`, never surfaced to the user as an error, since a
+    webhook is a side channel, not the primary delivery path.
+  - Settings: a URL field plus a "Send test event" button (so a user can
+    confirm their Zapier/n8n/webhook.site endpoint is wired correctly
+    without waiting for a real dictation to test it).
+  - Off by default (empty URL = disabled) — matches the app's existing
+    pattern of opt-in background activity (`copy_only`, autostart,
+    `journal_enabled`), and deliberately so here: enabling this means
+    dictated text leaves the device to a user-chosen destination, which
+    cuts against the local-only default and should be a conscious,
+    explicit choice, not an accident.
+  - Known v1 gap: since the webhook fires immediately after paste but
+    journal summaries are generated asynchronously afterward, the
+    `summary` field will be `null` at send time when `journal_enabled`
+    is on. Acceptable for a first pass — downstream automations that
+    care about the summary can fetch/poll `list_history_entries` (once
+    that's exposed beyond Tauri's IPC, which it currently isn't) or this
+    can be revisited if it turns out to matter in practice.
+
+- **Snippet library** (from the 2026-08-17 competitive research — Wispr
+  Flow: a spoken cue expands to a saved block of text, e.g. "PR
+  Checklist" or "Environment Setup"). Not started. Distinct from the
+  vocabulary editor, which is about recognition *accuracy*, not
+  insertion. Design, following the same shape as the already-shipped
+  Syntax & Casing Commands (`syntax.rs`) and Boilerplate Generation
+  (`boilerplate.rs`) — a pure, fast, pre-LLM detection step in the
+  transcript pipeline:
+  - New config: `snippets: Vec<Snippet>` where
+    `Snippet { trigger: String, body: String }`, user-managed from a new
+    Settings section (same add/edit/delete pattern as the Vocabulary
+    editor or Mode Rules).
+  - New `snippets.rs`: `try_expand(text: &str, snippets: &[Snippet]) ->
+    Option<String>` — case-insensitive match of the *entire* trimmed
+    transcript against a configured trigger (not a prefix match like
+    casing commands, since a trigger like "standup template" is meant to
+    be spoken as a complete, deliberate cue, not a directive with content
+    trailing it). Returns the saved body verbatim on a match.
+  - Wired into `recording.rs`'s `transcribe_and_paste` **before** the
+    casing-command check — a snippet match is the most explicit,
+    intentional signal of the three pre-LLM checks (a literal saved
+    macro the user defined themselves), so it should win over a
+    coincidental overlap with a casing directive or boilerplate phrase.
+    Skips mode formatting and LLM refinement entirely, same reasoning as
+    casing commands: the output is already fully resolved.
+  - Still logged to history for consistency, tagged with a `"snippet"`
+    mode label (matching the existing `"casing"`/`"boilerplate"` label
+    convention).
+
 - **App-aware modes + LLM refinement** (shipped 2026-08-15) —
   frontmost-app detection (`app_detect.rs`, `NSWorkspace`), a mode
   framework with built-in defaults for common apps (`modes.rs`), a
