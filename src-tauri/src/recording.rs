@@ -118,8 +118,16 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
 
     match state.whisper.transcribe_with_model(wav_path, model_override) {
         Ok(text) if !text.is_empty() => {
+            // Spoken numbered lists ("one... two...") are expanded before
+            // punctuation commands — it needs to see the raw marker words
+            // ("one", "two") before anything else touches them, and it
+            // hands back a real newline-separated list for the
+            // punctuation pass (and everything downstream) to treat as
+            // ordinary already-formatted text.
+            let text = crate::punctuation::expand_lists(&text);
+
             // Named punctuation commands ("period", "open paren", "new
-            // line") are expanded first, ahead of everything else — like
+            // line") are expanded next, ahead of everything else — like
             // casing commands below, they're cross-cutting rather than
             // mode-gated, and downstream steps (casing extraction, LLM
             // refinement) all work better against already-punctuated text

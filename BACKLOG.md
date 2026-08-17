@@ -132,11 +132,23 @@ build phases.
     inserted before it when it follows a plain word (context this
     deterministic pass doesn't have) — documented in a test, not silently
     wrong.
-  - **Spoken numbered lists** — "one... two..." or "first... second..."
-    at clause boundaries becomes a real numbered list (`1. ... 2. ...`
-    with line breaks). Likely lives in `punctuation.rs` alongside the
-    punctuation table since it's the same class of deterministic
-    text-shape transform.
+  - ~~**Spoken numbered lists**~~ (shipped 2026-08-17) — "one... two..."
+    or "first... second..." becomes a real newline-separated numbered
+    list (`1. ... 2. ...`). Lives in `punctuation.rs` as
+    `expand_lists`, alongside the punctuation table, and runs first in
+    the pipeline (before `expand_punctuation`) so a command word like
+    "period" said right at a list break is still recognized on its own
+    rather than glued to the next item's marker — required teaching
+    `expand_punctuation`'s tokenizer to treat an embedded `\n` as its
+    own hard-delimited token rather than a whitespace separator that
+    silently drops it. Requires at least two markers in strictly
+    consecutive order starting at one/first (a lone "one" is too common
+    a word to treat as a list start) and doesn't capitalize item text
+    or add a lead-in colon the way Wispr's context-aware version does.
+    Known, accepted false positive: an ordinary sentence using both
+    "one" and "two" as plain numbers ("one item for two dollars") also
+    matches — no surrounding-context signal available to rule that out
+    without an LLM in the loop.
   - **"Press enter"** — detect a trailing "press enter" (allowing for
     trailing punctuation Whisper may have added), strip it from the
     pasted text, and simulate an Enter keystroke after the paste
