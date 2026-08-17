@@ -52,6 +52,32 @@ function IconGear() {
     </svg>
   );
 }
+function IconBook() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5V5.5Z" />
+      <path d="M4 19a2.5 2.5 0 0 1 2.5-2.5H20" />
+    </svg>
+  );
+}
+function IconClock() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 3" />
+    </svg>
+  );
+}
+function IconPalette() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.4-.3-.3-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.3A4.2 4.2 0 0 0 21 12c0-5-4-9-9-9Z" />
+      <circle cx="7.5" cy="10.5" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="7.5" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="16.5" cy="10.5" r="1.1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
 
 type ShortcutConfig = {
   meta: boolean;
@@ -258,7 +284,7 @@ function DeviceSection() {
   }
 
   return (
-    <div className="mb-4">
+    <div className="mb-4 border-t border-base-content/10 pt-3">
       <label className="mb-1 block text-xs font-medium opacity-70">Microphone</label>
       {loading ? (
         <span className="loading loading-spinner loading-xs" />
@@ -652,7 +678,7 @@ function HistorySection() {
   }
 
   return (
-    <div className="mb-4 border-t border-base-content/10 pt-3">
+    <div className="mb-4">
       <div className="mb-1 flex items-center justify-between">
         <label className="text-xs font-medium opacity-70">History</label>
         <div className="flex items-center gap-1.5">
@@ -1192,26 +1218,45 @@ function VoiceIsolationSection() {
   );
 }
 
-type NodeId = "input" | "recognition" | "mode" | "refinement" | "output";
-type ActiveNode = NodeId | "app" | null;
+type PageId =
+  | "dictation"
+  | "voice"
+  | "vocabulary"
+  | "modes"
+  | "llm"
+  | "history"
+  | "integrations"
+  | "appearance"
+  | "advanced";
 
-const CHAIN: { id: NodeId; label: string; icon: () => ReactElement }[] = [
-  { id: "input", label: "Input", icon: IconMic },
-  { id: "recognition", label: "Recognition", icon: IconWave },
-  { id: "mode", label: "Mode", icon: IconWindow },
-  { id: "refinement", label: "Refinement", icon: IconCpu },
-  { id: "output", label: "Output", icon: IconPlug },
+const NAV: { id: PageId; label: string; icon: () => ReactElement }[] = [
+  { id: "dictation", label: "Dictation", icon: IconMic },
+  { id: "voice", label: "Voice", icon: IconWave },
+  { id: "vocabulary", label: "Vocabulary", icon: IconBook },
+  { id: "modes", label: "Modes", icon: IconWindow },
+  { id: "llm", label: "LLM", icon: IconCpu },
+  { id: "history", label: "History", icon: IconClock },
+  { id: "integrations", label: "Integrations", icon: IconPlug },
 ];
 
-const NODE_DRAWER_TITLE: Record<NodeId, string> = {
-  input: "Input — microphone & shortcut",
-  recognition: "Recognition — Whisper model, voice isolation, vocabulary",
-  mode: "Mode — app-aware formatting rules",
-  refinement: "Refinement — local LLM (Ollama)",
-  output: "Output — delivery, webhook, history",
+const FOOTER_NAV: { id: PageId; label: string; icon: () => ReactElement }[] = [
+  { id: "appearance", label: "Appearance", icon: IconPalette },
+  { id: "advanced", label: "Advanced", icon: IconGear },
+];
+
+const PAGE_TITLE: Record<PageId, string> = {
+  dictation: "Dictation",
+  voice: "Voice — Whisper model & isolation",
+  vocabulary: "Vocabulary",
+  modes: "Modes — app-aware formatting rules",
+  llm: "LLM — local refinement (Ollama)",
+  history: "History",
+  integrations: "Integrations — delivery & webhook",
+  appearance: "Appearance",
+  advanced: "Advanced",
 };
 
-function ChainNode({
+function NavItem({
   label,
   icon,
   active,
@@ -1223,16 +1268,16 @@ function ChainNode({
   onClick: () => void;
 }) {
   return (
-    <button type="button" className={`dw-chain-node ${active ? "active" : ""}`} onClick={onClick}>
+    <button type="button" className={`dw-nav-item ${active ? "active" : ""}`} onClick={onClick}>
       <span className="dw-icon">{icon}</span>
-      <span className="dw-label">{label}</span>
+      {label}
     </button>
   );
 }
 
 function SettingsView() {
   const [theme, setThemeState] = useState<ThemeId>("terminal");
-  const [active, setActive] = useState<ActiveNode>("input");
+  const [page, setPage] = useState<PageId>("dictation");
 
   useEffect(() => {
     invoke<ThemeId>("get_theme")
@@ -1257,68 +1302,65 @@ function SettingsView() {
     invoke("set_theme", { theme: next }).catch((err) => console.error("set_theme failed:", err));
   }
 
-  function toggle(id: ActiveNode) {
-    setActive((current) => (current === id ? null : id));
-  }
-
   return (
-    <main className="dw-shell h-screen overflow-y-auto">
-      <div className="dw-titlebar">
-        <h1>Dev Whisper — signal chain</h1>
-      </div>
-
-      <div className="dw-chain-row">
-        {CHAIN.map((node) => (
-          <div key={node.id} className="contents">
-            <ChainNode
-              label={node.label}
-              icon={node.icon()}
-              active={active === node.id}
-              onClick={() => toggle(node.id)}
-            />
-            {node.id !== "output" && <div className="dw-chain-link" />}
+    <main className="dw-shell h-screen">
+      <div className="dw-app-shell">
+        <nav className="dw-sidebar">
+          <div className="dw-brand">
+            <IconMic />
+            Dev Whisper
           </div>
-        ))}
-        <div className="dw-chain-app-gap" />
-        <ChainNode label="App" icon={<IconGear />} active={active === "app"} onClick={() => toggle("app")} />
-      </div>
+          {NAV.map((item) => (
+            <NavItem
+              key={item.id}
+              label={item.label}
+              icon={item.icon()}
+              active={page === item.id}
+              onClick={() => setPage(item.id)}
+            />
+          ))}
+          <div className="dw-sidebar-foot">
+            {FOOTER_NAV.map((item) => (
+              <NavItem
+                key={item.id}
+                label={item.label}
+                icon={item.icon()}
+                active={page === item.id}
+                onClick={() => setPage(item.id)}
+              />
+            ))}
+          </div>
+        </nav>
 
-      {active && (
-        <div className="dw-drawer">
-          <p className="dw-drawer-title">
-            {active === "app" ? "App — general, appearance & logs" : NODE_DRAWER_TITLE[active]}
-          </p>
-          {active === "input" && (
+        <div className="dw-page">
+          <h2 className="dw-page-title">{PAGE_TITLE[page]}</h2>
+          {page === "dictation" && (
             <>
+              <GeneralSection />
               <DeviceSection />
               <ShortcutSection />
             </>
           )}
-          {active === "recognition" && (
+          {page === "voice" && (
             <>
               <ModelsSection />
               <VoiceIsolationSection />
-              <VocabularySection />
             </>
           )}
-          {active === "mode" && <AppModesSection />}
-          {active === "refinement" && <LlmSection />}
-          {active === "output" && (
+          {page === "vocabulary" && <VocabularySection />}
+          {page === "modes" && <AppModesSection />}
+          {page === "llm" && <LlmSection />}
+          {page === "history" && <HistorySection />}
+          {page === "integrations" && (
             <>
               <DeliverySection />
               <WebhookSection />
-              <HistorySection />
             </>
           )}
-          {active === "app" && (
-            <>
-              <GeneralSection />
-              <ThemeSection theme={theme} onChange={changeTheme} />
-              <LogsSection />
-            </>
-          )}
+          {page === "appearance" && <ThemeSection theme={theme} onChange={changeTheme} />}
+          {page === "advanced" && <LogsSection />}
         </div>
-      )}
+      </div>
     </main>
   );
 }
