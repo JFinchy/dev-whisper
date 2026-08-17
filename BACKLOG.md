@@ -179,6 +179,65 @@ build phases.
 
 ## Research / Exploration
 
+- **Competitive landscape: dictation/Whisper tools beyond SuperWhisper**
+  (researched 2026-08-17, via live browsing — WebSearch/WebFetch were down
+  platform-wide, real infra outage, not fabricated data) — covered Wispr
+  Flow, MacWhisper, VoiceInk, and Talon Voice as a different-category
+  reference point.
+  - **Landscape**: two real pricing/architecture clusters exist, not one.
+    *Cloud/hybrid subscription*: Wispr Flow ($0 free tier capped at
+    2,000 words/week, $12/user/mo Pro, Enterprise; SOC2/HIPAA/ISO 27001;
+    cloud-processed) and SuperWhisper (hybrid, see prior entry above).
+    *Local one-time-purchase*: MacWhisper (free + €64 lifetime Pro,
+    local Whisper/Parakeet models, optional bring-your-own-key cloud AI
+    layer) and VoiceInk (100% offline, open source GPLv3, $29-69
+    lifetime tiered by device count, no subscription at all). Dev
+    Whisper is local *and* fully free — a combination none of the four
+    match.
+  - **VoiceInk is our closest architectural peer**: whisper.cpp-based,
+    app-aware "Modes" that auto-apply settings per app/URL (same concept
+    as our `modes.rs`), personal dictionary, global push-to-talk
+    shortcuts, launch-at-login — all things we also have. Meaningful
+    gaps where *they're* ahead: on-screen/selected-text context
+    awareness is already shipped (via a library called SelectedTextKit,
+    a real macOS API for reading text selections) — validates our own
+    unbuilt "Now" item #3 (selected-text context feeding LLM
+    refinement) is both achievable and worth prioritizing, and points at
+    a concrete implementation path. They've also already shipped
+    Parakeet model support (relevant data point for our
+    validate-first-spike item, though doesn't resolve our own
+    CoreML-instability concern since their acceleration path is
+    unconfirmed) and a built-in conversational "AI Assistant" mode,
+    a real step toward PRODUCT_SPEC.md §5's "Rubber Ducking" vision.
+  - **Wispr Flow has a dedicated developer product page**
+    ("Flow for Developers"): recognizes dev terms/camelCase/snake_case,
+    tags files in Cursor/Windsurf to bring code context into AI prompts,
+    and has a **snippet library** — spoken cue expands to a saved block
+    of text (PR checklist, calendar link, onboarding instructions). This
+    is a new pattern, distinct from a vocabulary list (which is about
+    recognition accuracy, not insertion) — not currently tracked
+    anywhere in our roadmap.
+  - **MacWhisper has CLI control plus output-side workflow automation**:
+    "Control MacWhisper from the CLI. Hook it up in your agent or
+    scripting workflows," and auto-uploads transcripts to Notion,
+    Zapier, Obsidian, n8n, Make.com, or a custom webhook. Our deep-link
+    hooks (shipped 2026-08-16) cover the *input* side (start/stop
+    recording via script); nothing covers routing a finished
+    transcript/journal-summary *out* to another tool — a real gap this
+    surfaced, not previously tracked.
+  - **Talon Voice** is a different category worth naming explicitly, not
+    a feature-parity competitor: full hands-free computer control (voice
+    + eye tracking + noise clicks), Python-scriptable, free/donation —
+    the actual incumbent tool serious RSI-affected/hands-free-coding
+    developers already use. Not dictation-with-formatting like the rest
+    of this list; not worth chasing feature parity with, but worth
+    knowing it's what that specific audience segment compares us
+    against.
+  - **New, previously untracked findings to fold into ROADMAP.md**:
+    output-side workflow automation (Notion/webhook/Slack routing for
+    transcripts), and a snippet library (spoken-cue text expansion,
+    separate from the vocabulary editor).
+
 - **Single-speaker voice isolation** — reject background noise (music,
   other people talking, kids yelling) so only the primary user's voice
   reaches Whisper. Candidate approaches: voice activity detection (VAD)
