@@ -1,6 +1,57 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { applyTheme, THEME_ORDER, THEME_LABEL, THEMES, type ThemeId } from "./theme";
+
+function IconMic() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <path d="M12 18v3" />
+      <path d="M9 21h6" />
+    </svg>
+  );
+}
+function IconWave() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M3 12h2M7 8v8M11 4v16M15 8v8M19 10v4M21 12h0" />
+    </svg>
+  );
+}
+function IconWindow() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 9h18" />
+    </svg>
+  );
+}
+function IconCpu() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+      <path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3" />
+    </svg>
+  );
+}
+function IconPlug() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0V8Z" />
+      <path d="M12 17v4" />
+    </svg>
+  );
+}
+function IconGear() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" />
+    </svg>
+  );
+}
 
 type ShortcutConfig = {
   meta: boolean;
@@ -149,7 +200,7 @@ function ModelsSection() {
   }
 
   return (
-    <div className="mb-4 border-t border-base-content/10 pt-3">
+    <div className="mb-4">
       <label className="mb-1 block text-xs font-medium opacity-70">Whisper model</label>
       <ul className="flex flex-col gap-1.5">
         {models.map((m) => (
@@ -207,7 +258,7 @@ function DeviceSection() {
   }
 
   return (
-    <div className="mb-4 border-t border-base-content/10 pt-3">
+    <div className="mb-4">
       <label className="mb-1 block text-xs font-medium opacity-70">Microphone</label>
       {loading ? (
         <span className="loading loading-spinner loading-xs" />
@@ -322,7 +373,7 @@ function AppModesSection() {
   }
 
   return (
-    <div className="mb-4 border-t border-base-content/10 pt-3">
+    <div className="mb-4">
       <label className="mb-1 block text-xs font-medium opacity-70">App modes</label>
 
       {rules.length > 0 && (
@@ -897,7 +948,7 @@ function LlmSection() {
   }
 
   return (
-    <div className="mb-4 border-t border-base-content/10 pt-3">
+    <div className="mb-4">
       <label className="mb-1 block text-xs font-medium opacity-70">LLM refinement</label>
       {!checked ? (
         <span className="loading loading-spinner loading-xs" />
@@ -964,21 +1015,78 @@ const WIDGET_MODE_LABEL: Record<WidgetMode, string> = {
   detailed: "Detailed — full status panel",
 };
 
+function DeliverySection() {
+  const [copyOnly, setCopyOnly] = useState(false);
+  const [checked, setChecked] = useState(false);
+
+  useEffect(() => {
+    invoke<boolean>("get_copy_only")
+      .then(setCopyOnly)
+      .catch((err) => console.error("get_copy_only failed:", err))
+      .finally(() => setChecked(true));
+  }, []);
+
+  function toggleCopyOnly(enabled: boolean) {
+    setCopyOnly(enabled);
+    invoke("set_copy_only", { enabled }).catch((err) => {
+      console.error("set_copy_only failed:", err);
+      setCopyOnly(!enabled);
+    });
+  }
+
+  return (
+    <div className="mb-4 border-b border-base-content/10 pb-3">
+      <label className="mb-1 block text-xs font-medium opacity-70">Delivery</label>
+      {!checked ? (
+        <span className="loading loading-spinner loading-xs" />
+      ) : (
+        <label className="flex items-center gap-1.5 text-xs">
+          <input
+            type="checkbox"
+            className="checkbox checkbox-xs"
+            checked={copyOnly}
+            onChange={(e) => toggleCopyOnly(e.target.checked)}
+          />
+          Copy only — don't auto-paste into the active app
+        </label>
+      )}
+    </div>
+  );
+}
+
+function ThemeSection({ theme, onChange }: { theme: ThemeId; onChange: (id: ThemeId) => void }) {
+  return (
+    <div className="mb-4 border-b border-base-content/10 pb-3">
+      <label className="mb-1 block text-xs font-medium opacity-70">Appearance</label>
+      <div className="flex flex-col gap-1.5">
+        {THEME_ORDER.map((id) => (
+          <button
+            key={id}
+            type="button"
+            className={`dw-theme-row ${theme === id ? "active" : ""}`}
+            onClick={() => onChange(id)}
+          >
+            <span className="flex items-center gap-2">
+              <span className="dw-theme-dot" style={{ background: THEMES[id].accent }} />
+              {THEME_LABEL[id]}
+            </span>
+            {theme === id && <span>✓</span>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function GeneralSection() {
   const [autostart, setAutostart] = useState(false);
-  const [copyOnly, setCopyOnly] = useState(false);
   const [widgetMode, setWidgetModeState] = useState<WidgetMode>("compact");
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
-    Promise.all([
-      invoke<boolean>("get_autostart_enabled"),
-      invoke<boolean>("get_copy_only"),
-      invoke<WidgetMode>("get_widget_mode"),
-    ])
-      .then(([autostartValue, copyOnlyValue, widgetModeValue]) => {
+    Promise.all([invoke<boolean>("get_autostart_enabled"), invoke<WidgetMode>("get_widget_mode")])
+      .then(([autostartValue, widgetModeValue]) => {
         setAutostart(autostartValue);
-        setCopyOnly(copyOnlyValue);
         setWidgetModeState(widgetModeValue);
       })
       .catch((err) => console.error("failed to load general settings:", err))
@@ -990,14 +1098,6 @@ function GeneralSection() {
     invoke("set_autostart_enabled", { enabled }).catch((err) => {
       console.error("set_autostart_enabled failed:", err);
       setAutostart(!enabled);
-    });
-  }
-
-  function toggleCopyOnly(enabled: boolean) {
-    setCopyOnly(enabled);
-    invoke("set_copy_only", { enabled }).catch((err) => {
-      console.error("set_copy_only failed:", err);
-      setCopyOnly(!enabled);
     });
   }
 
@@ -1025,15 +1125,6 @@ function GeneralSection() {
               onChange={(e) => toggleAutostart(e.target.checked)}
             />
             Launch Dev Whisper at login
-          </label>
-          <label className="flex items-center gap-1.5 text-xs">
-            <input
-              type="checkbox"
-              className="checkbox checkbox-xs"
-              checked={copyOnly}
-              onChange={(e) => toggleCopyOnly(e.target.checked)}
-            />
-            Copy only — don't auto-paste into the active app
           </label>
           <label className="flex items-center gap-1.5 text-xs">
             Widget:
@@ -1075,7 +1166,7 @@ function VoiceIsolationSection() {
   }
 
   return (
-    <div className="mb-4 border-b border-base-content/10 pb-3">
+    <div className="mb-4 border-t border-base-content/10 pt-3">
       <label className="mb-1 block text-xs font-medium opacity-70">Voice Isolation</label>
       {!checked ? (
         <span className="loading loading-spinner loading-xs" />
@@ -1101,21 +1192,133 @@ function VoiceIsolationSection() {
   );
 }
 
-function SettingsView() {
+type NodeId = "input" | "recognition" | "mode" | "refinement" | "output";
+type ActiveNode = NodeId | "app" | null;
+
+const CHAIN: { id: NodeId; label: string; icon: () => ReactElement }[] = [
+  { id: "input", label: "Input", icon: IconMic },
+  { id: "recognition", label: "Recognition", icon: IconWave },
+  { id: "mode", label: "Mode", icon: IconWindow },
+  { id: "refinement", label: "Refinement", icon: IconCpu },
+  { id: "output", label: "Output", icon: IconPlug },
+];
+
+const NODE_DRAWER_TITLE: Record<NodeId, string> = {
+  input: "Input — microphone & shortcut",
+  recognition: "Recognition — Whisper model, voice isolation, vocabulary",
+  mode: "Mode — app-aware formatting rules",
+  refinement: "Refinement — local LLM (Ollama)",
+  output: "Output — delivery, webhook, history",
+};
+
+function ChainNode({
+  label,
+  icon,
+  active,
+  onClick,
+}: {
+  label: string;
+  icon: ReactElement;
+  active: boolean;
+  onClick: () => void;
+}) {
   return (
-    <main className="h-screen overflow-y-auto bg-base-300 px-5 py-4 text-base-content">
-      <h1 className="mb-4 text-base font-semibold">Settings</h1>
-      <GeneralSection />
-      <DeviceSection />
-      <ShortcutSection />
-      <ModelsSection />
-      <VoiceIsolationSection />
-      <AppModesSection />
-      <LlmSection />
-      <VocabularySection />
-      <HistorySection />
-      <WebhookSection />
-      <LogsSection />
+    <button type="button" className={`dw-chain-node ${active ? "active" : ""}`} onClick={onClick}>
+      <span className="dw-icon">{icon}</span>
+      <span className="dw-label">{label}</span>
+    </button>
+  );
+}
+
+function SettingsView() {
+  const [theme, setThemeState] = useState<ThemeId>("terminal");
+  const [active, setActive] = useState<ActiveNode>("input");
+
+  useEffect(() => {
+    invoke<ThemeId>("get_theme")
+      .then((t) => {
+        setThemeState(t);
+        applyTheme(t);
+      })
+      .catch((err) => console.error("get_theme failed:", err));
+
+    const unlisten = listen<ThemeId>("theme-changed", (e) => {
+      setThemeState(e.payload);
+      applyTheme(e.payload);
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
+
+  function changeTheme(next: ThemeId) {
+    setThemeState(next);
+    applyTheme(next);
+    invoke("set_theme", { theme: next }).catch((err) => console.error("set_theme failed:", err));
+  }
+
+  function toggle(id: ActiveNode) {
+    setActive((current) => (current === id ? null : id));
+  }
+
+  return (
+    <main className="dw-shell h-screen overflow-y-auto">
+      <div className="dw-titlebar">
+        <h1>Dev Whisper — signal chain</h1>
+      </div>
+
+      <div className="dw-chain-row">
+        {CHAIN.map((node) => (
+          <div key={node.id} className="contents">
+            <ChainNode
+              label={node.label}
+              icon={node.icon()}
+              active={active === node.id}
+              onClick={() => toggle(node.id)}
+            />
+            {node.id !== "output" && <div className="dw-chain-link" />}
+          </div>
+        ))}
+        <div className="dw-chain-app-gap" />
+        <ChainNode label="App" icon={<IconGear />} active={active === "app"} onClick={() => toggle("app")} />
+      </div>
+
+      {active && (
+        <div className="dw-drawer">
+          <p className="dw-drawer-title">
+            {active === "app" ? "App — general, appearance & logs" : NODE_DRAWER_TITLE[active]}
+          </p>
+          {active === "input" && (
+            <>
+              <DeviceSection />
+              <ShortcutSection />
+            </>
+          )}
+          {active === "recognition" && (
+            <>
+              <ModelsSection />
+              <VoiceIsolationSection />
+              <VocabularySection />
+            </>
+          )}
+          {active === "mode" && <AppModesSection />}
+          {active === "refinement" && <LlmSection />}
+          {active === "output" && (
+            <>
+              <DeliverySection />
+              <WebhookSection />
+              <HistorySection />
+            </>
+          )}
+          {active === "app" && (
+            <>
+              <GeneralSection />
+              <ThemeSection theme={theme} onChange={changeTheme} />
+              <LogsSection />
+            </>
+          )}
+        </div>
+      )}
     </main>
   );
 }

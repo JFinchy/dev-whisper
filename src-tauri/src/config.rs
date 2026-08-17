@@ -87,6 +87,10 @@ pub struct AppConfig {
     /// opt-in, matching `copy_only`/autostart/`journal_enabled`.
     #[serde(default)]
     pub webhook_url: Option<String>,
+    /// Settings window color theme (and the widget's accent color) — see
+    /// `theme.rs`. Defaults to Terminal.
+    #[serde(default)]
+    pub theme: crate::theme::Theme,
 }
 
 fn default_history_retention_days() -> u32 {
@@ -110,6 +114,7 @@ impl Default for AppConfig {
             isolated_voice_enabled: false,
             voice_enrolled: false,
             webhook_url: None,
+            theme: crate::theme::Theme::default(),
         }
     }
 }
@@ -200,5 +205,6 @@ mod tests {
         assert!(!restored.isolated_voice_enabled);
         assert!(!restored.voice_enrolled);
         assert!(restored.webhook_url.is_none());
+        assert_eq!(restored.theme, crate::theme::Theme::default());
     }
 }

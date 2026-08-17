@@ -19,6 +19,12 @@ pub struct RecordingState {
     /// clicking a button in the widget, so the widget is always already
     /// frontmost by that point).
     pub active_app: Mutex<Option<AppInfo>>,
+    /// One-shot override for the *next* dictation's formatting mode, set
+    /// from the widget's quick-actions flyout (see WidgetView.tsx). Takes
+    /// priority over whatever `modes::resolve_settings` would otherwise
+    /// pick for the frontmost app, and is consumed (cleared) the moment a
+    /// dictation uses it, so it never silently applies to a second one.
+    pub mode_override: Mutex<Option<modes::Mode>>,
 }
 
 /// Swaps the tray icon between its default template look and a red-dot
@@ -104,7 +110,14 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
     // on it. Casing-command detection still happens after, on the
     // resulting text, since that's orthogonal to which model produced it.
     let cfg = crate::config::load(app);
-    let settings = modes::resolve_settings(bundle_id.as_deref(), &cfg.mode_rules);
+    let mut settings = modes::resolve_settings(bundle_id.as_deref(), &cfg.mode_rules);
+    if let Some(override_mode) = state.mode_override.lock().unwrap().take() {
+        crate::applog!(
+            "modes: next-dictation override {override_mode:?} applied over resolved {:?}",
+            settings.mode
+        );
+        settings.mode = override_mode;
+    }
     let model_override = settings.stt_model.as_ref().and_then(|id| {
         crate::models::resolve_model_path(app, id).map(|path| (id.clone(), path))
     });
@@ -309,6 +322,19 @@ pub fn set_isolated_voice_enabled(app: AppHandle, enabled: bool) {
     let mut cfg = crate::config::load(&app);
     cfg.isolated_voice_enabled = enabled;
     let _ = crate::config::save(&app, &cfg);
+}
+
+/// Set (or clear, with `None`) the one-shot mode override for the next
+/// dictation — see `RecordingState::mode_override`. Not persisted to
+/// config: this is deliberately session/one-shot state, not a setting.
+#[tauri::command]
+pub fn set_next_mode_override(mode: Option<modes::Mode>, state: tauri::State<RecordingState>) {
+    *state.mode_override.lock().unwrap() = mode;
+}
+
+#[tauri::command]
+pub fn get_next_mode_override(state: tauri::State<RecordingState>) -> Option<modes::Mode> {
+    *state.mode_override.lock().unwrap()
 }
 
 #[derive(serde::Serialize)]
