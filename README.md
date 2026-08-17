@@ -1,8 +1,9 @@
 # Dev Whisper
 
 Local, privacy-first dictation for developers. See `FEATURES.md` for
-everything currently built, `PRODUCT_SPEC.md` for the product vision, and
-`ROADMAP.md`/`BACKLOG.md` for what's next.
+everything currently built, `PRODUCT_SPEC.md` for the product vision,
+`ROADMAP.md`/`BACKLOG.md` for what's next, and `MANUAL_TESTS.md` for
+things awaiting live-mic verification.
 
 ## Setup
 

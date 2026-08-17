@@ -98,11 +98,9 @@ build phases.
     (loads the actual bundled `.onnx`, asserts a 256-dim embedding on a
     synthetic tone — passed). Full suite: 86 tests green, `tsc --noEmit`
     and `bun run build` both clean.
-  - **Not yet done**: manual end-to-end verification (real enrollment,
-    background-second-voice rejection test, confirming the
-    `RecordingPurpose` hotkey guard, tuning `SIMILARITY_THRESHOLD` against
-    real voices) — this needs a live mic and a second real/played voice,
-    not something verifiable by automated tests alone.
+  - **Not yet done**: manual end-to-end verification — needs a live mic
+    and a second real/played voice, not something automated tests alone
+    can check. See `MANUAL_TESTS.md` for the checklist.
   - **Scope note**: this deliberately revisits the 2026-08-16 SuperWhisper
     research's call to leave speaker diarization/meeting-notes out of
     scope. Multi-speaker "meeting mode" (labeling Speaker 1/2/3 segments)
