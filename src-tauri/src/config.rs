@@ -68,6 +68,14 @@ pub struct AppConfig {
     /// `copy_only`, autostart).
     #[serde(default)]
     pub journal_enabled: bool,
+    /// Fires a `POST` with the delivered transcript to this URL after every
+    /// successful paste — a generic primitive covering Notion/Slack/n8n/
+    /// Zapier/Make.com/webhook.site, since all of them accept incoming
+    /// webhooks natively (see `webhook.rs`). `None`/empty disables it.
+    /// Off by default: sending dictated text off-device is a deliberate
+    /// opt-in, matching `copy_only`/autostart/`journal_enabled`.
+    #[serde(default)]
+    pub webhook_url: Option<String>,
 }
 
 fn default_history_retention_days() -> u32 {
@@ -88,6 +96,7 @@ impl Default for AppConfig {
             copy_only: false,
             widget_mode: crate::widget::WidgetMode::default(),
             journal_enabled: false,
+            webhook_url: None,
         }
     }
 }
@@ -175,5 +184,6 @@ mod tests {
         assert!(!restored.copy_only);
         assert_eq!(restored.widget_mode, crate::widget::WidgetMode::default());
         assert!(!restored.journal_enabled);
+        assert!(restored.webhook_url.is_none());
     }
 }

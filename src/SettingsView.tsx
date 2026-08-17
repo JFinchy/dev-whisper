@@ -682,6 +682,84 @@ function HistorySection() {
   );
 }
 
+function WebhookSection() {
+  const [url, setUrl] = useState("");
+  const [saved, setSaved] = useState<string | null>(null);
+  const [testState, setTestState] = useState<"idle" | "sending" | "ok" | "error">("idle");
+  const [testError, setTestError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    invoke<string | null>("get_webhook_url")
+      .then((value) => {
+        setUrl(value ?? "");
+        setSaved(value ?? null);
+      })
+      .catch((err) => console.error("get_webhook_url failed:", err))
+      .finally(() => setLoading(false));
+
+    const unlisten = listen<{ ok: boolean; error?: string }>("webhook-test-result", (e) => {
+      setTestState(e.payload.ok ? "ok" : "error");
+      setTestError(e.payload.ok ? null : e.payload.error ?? "unknown error");
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
+
+  function save() {
+    const trimmed = url.trim();
+    invoke("set_webhook_url", { url: trimmed || null })
+      .then(() => setSaved(trimmed || null))
+      .catch((err) => console.error("set_webhook_url failed:", err));
+  }
+
+  function sendTest() {
+    setTestState("sending");
+    setTestError(null);
+    invoke("send_test_webhook").catch((err) => {
+      setTestState("error");
+      setTestError(String(err));
+    });
+  }
+
+  return (
+    <div className="mb-4 border-t border-base-content/10 pt-3">
+      <label className="mb-1 block text-xs font-medium opacity-70">Output webhook</label>
+      <p className="mb-1.5 text-xs opacity-50">
+        Sends each delivered dictation as a JSON POST to this URL — wire it into Zapier, n8n,
+        Make.com, or a Notion/Slack incoming webhook. Off by default: dictated text only leaves
+        the device once you set a URL here.
+      </p>
+      {loading ? (
+        <span className="loading loading-spinner loading-xs" />
+      ) : (
+        <>
+          <div className="flex gap-1.5">
+            <input
+              className="input input-sm flex-1"
+              placeholder="https://hooks.example.com/…"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onBlur={save}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") save();
+              }}
+            />
+            <button className="btn btn-sm" onClick={sendTest} disabled={!saved || testState === "sending"}>
+              {testState === "sending" ? "Sending…" : "Send test event"}
+            </button>
+          </div>
+          {testState === "ok" && <p className="mt-1 text-xs text-success">Test event delivered.</p>}
+          {testState === "error" && (
+            <p className="mt-1 text-xs text-error">Test event failed: {testError}</p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 type LogEntry = { timestamp_ms: number; message: string };
 
 /// Collapsed by default — this is a diagnostic tool ("why didn't it
@@ -989,6 +1067,7 @@ function SettingsView() {
       <LlmSection />
       <VocabularySection />
       <HistorySection />
+      <WebhookSection />
       <LogsSection />
     </main>
   );
