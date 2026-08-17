@@ -311,6 +311,46 @@ pub fn expand_lists(text: &str) -> String {
     out
 }
 
+/// Detects a trailing "press enter" and strips it, so the caller can paste
+/// the remaining text and then simulate an Enter keystroke (see
+/// `paste::press_enter`). Returns `(remaining_text, should_press_enter)`.
+///
+/// Only fires at the very end of the dictation — "press enter" said
+/// mid-sentence stays in the text untouched, matching Wispr's own scoping
+/// (a user narrating a sentence that happens to contain those words
+/// shouldn't have it eaten). Tolerates Whisper's own trailing sentence
+/// punctuation after "enter" (e.g. "...press enter." still matches). If
+/// "press enter" is the *entire* utterance, returns an empty string but
+/// still signals `true` — nothing to paste, but Enter still fires.
+///
+/// Doesn't replicate Wispr's context-aware auto-punctuation (their own
+/// docs example shows "hello world press enter." becoming "Hello world."
+/// with an inserted period) — out of scope for a pure deterministic pass,
+/// same as everything else in this module.
+pub fn extract_press_enter(text: &str) -> (String, bool) {
+    const PHRASE: &str = "press enter";
+
+    let trimmed = text.trim();
+    let without_trailing_punct = trimmed.trim_end_matches(['.', '!', '?']).trim_end();
+    let lower = without_trailing_punct.to_lowercase();
+
+    if lower == PHRASE {
+        return (String::new(), true);
+    }
+
+    // `to_lowercase()` on this ASCII phrase doesn't change byte length, so
+    // `prefix.len()` stays aligned with the original-casing string below —
+    // same technique as `syntax::try_apply_casing_command`.
+    if let Some(prefix) = lower.strip_suffix(PHRASE) {
+        if prefix.is_empty() || prefix.ends_with(' ') {
+            let remaining = without_trailing_punct[..prefix.len()].trim_end();
+            return (remaining.to_string(), true);
+        }
+    }
+
+    (text.to_string(), false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -444,12 +484,55 @@ mod tests {
     #[test]
     fn composes_with_punctuation_expansion_without_losing_line_breaks() {
         // expand_lists glues its `\n` directly onto the preceding word
-        // with no space, so this exercises the `split(' ')` fix in
-        // `expand_punctuation` that keeps it from being silently dropped.
+        // with no space, so this exercises `expand_punctuation`'s
+        // `tokenize` helper, which treats that embedded newline as its
+        // own token instead of silently dropping it.
         let listed = expand_lists("todo items are one fix bug period two write tests period");
         assert_eq!(
             expand_punctuation(&listed),
             "todo items are\n1. fix bug.\n2. write tests."
+        );
+    }
+
+    #[test]
+    fn press_enter_at_end_is_stripped_and_signaled() {
+        assert_eq!(
+            extract_press_enter("hello world press enter"),
+            ("hello world".to_string(), true)
+        );
+    }
+
+    #[test]
+    fn press_enter_tolerates_whisper_trailing_punctuation() {
+        assert_eq!(
+            extract_press_enter("hello world press enter."),
+            ("hello world".to_string(), true)
+        );
+        assert_eq!(
+            extract_press_enter("hello world. press enter."),
+            ("hello world.".to_string(), true)
+        );
+    }
+
+    #[test]
+    fn press_enter_as_entire_utterance_pastes_nothing() {
+        assert_eq!(extract_press_enter("press enter"), (String::new(), true));
+        assert_eq!(extract_press_enter("Press enter."), (String::new(), true));
+    }
+
+    #[test]
+    fn press_enter_mid_sentence_is_left_alone() {
+        assert_eq!(
+            extract_press_enter("please press enter the building code"),
+            ("please press enter the building code".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn no_press_enter_returns_unchanged() {
+        assert_eq!(
+            extract_press_enter("just a normal sentence"),
+            ("just a normal sentence".to_string(), false)
         );
     }
 }

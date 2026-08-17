@@ -68,6 +68,15 @@ pub struct AppConfig {
     /// `copy_only`, autostart).
     #[serde(default)]
     pub journal_enabled: bool,
+    /// When true, a trailing "press enter" in a dictation is stripped and
+    /// replaced with a simulated Enter keystroke after paste (see
+    /// `punctuation::extract_press_enter`, `paste::press_enter`). Off by
+    /// default — an unexpected Enter keystroke (e.g. submitting a form or
+    /// sending a chat message early) is a much worse failure mode than an
+    /// unexpected paste, so this needs an explicit opt-in rather than
+    /// just working out of the box like the other punctuation commands.
+    #[serde(default)]
+    pub press_enter_enabled: bool,
 }
 
 fn default_history_retention_days() -> u32 {
@@ -88,6 +97,7 @@ impl Default for AppConfig {
             copy_only: false,
             widget_mode: crate::widget::WidgetMode::default(),
             journal_enabled: false,
+            press_enter_enabled: false,
         }
     }
 }

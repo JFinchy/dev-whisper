@@ -45,6 +45,24 @@ pub fn paste_text(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Simulates pressing Enter — used by the "press enter" voice command
+/// (`punctuation::extract_press_enter`) after the transcript itself has
+/// already been delivered. Requires Accessibility permission, same as
+/// `paste_text`, since it's also a synthetic keystroke.
+pub fn press_enter() -> Result<(), String> {
+    if !accessibility_trusted() {
+        return Err(
+            "Accessibility permission not granted. Enable Dev Whisper in System Settings > \
+             Privacy & Security > Accessibility, then try again."
+                .to_string(),
+        );
+    }
+
+    send(EventType::KeyPress(Key::Return))?;
+    send(EventType::KeyRelease(Key::Return))?;
+    Ok(())
+}
+
 fn send(event: EventType) -> Result<(), String> {
     simulate(&event).map_err(|e| format!("{e:?}"))?;
     thread::sleep(Duration::from_millis(20));

@@ -149,15 +149,20 @@ build phases.
     "one" and "two" as plain numbers ("one item for two dollars") also
     matches — no surrounding-context signal available to rule that out
     without an LLM in the loop.
-  - **"Press enter"** — detect a trailing "press enter" (allowing for
-    trailing punctuation Whisper may have added), strip it from the
-    pasted text, and simulate an Enter keystroke after the paste
-    completes. Reuses the same keystroke-simulation path `recording.rs`
-    already uses for the Cmd+V paste. Desktop-only, matches Wispr's own
-    scoping. Skip replicating Wispr's "first-use, ask before enabling"
-    discovery prompt — a plain Settings toggle (default off, since an
-    unexpected Enter keystroke is a much worse failure mode than an
-    unexpected paste) is enough.
+  - ~~**"Press enter"**~~ (shipped 2026-08-17) — a trailing "press enter"
+    (tolerant of Whisper's own trailing sentence punctuation) is stripped
+    by `punctuation::extract_press_enter` before casing/boilerplate/mode
+    ever see it, and a simulated Enter keystroke (`paste::press_enter`,
+    reusing the same `rdev` path as the Cmd+V paste) fires after
+    delivery. Gated behind a new `press_enter_enabled` Settings toggle,
+    default off (an unexpected Enter is a worse failure mode than an
+    unexpected paste) and auto-disabled/greyed-out whenever "copy only"
+    is on, since copy-only's whole point is opting out of synthetic
+    keystrokes. Skipped replicating Wispr's "first-use, ask before
+    enabling" discovery-prompt UX — a plain toggle is enough here. If the
+    entire utterance is just "press enter", nothing is pasted/copied
+    (avoids clobbering the clipboard with an empty string) but Enter
+    still fires and no history entry is logged.
   - **Backtrack (trigger-word case only)** — new `backtrack.rs`:
     `try_backtrack(text: &str) -> Option<String>`, a deterministic pass
     that collapses "X actually Y" -> "Y" and "X, scratch that, Y" -> "Y"
