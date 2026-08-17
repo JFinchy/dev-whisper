@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#322C52"/>
+      <stop offset="100%" stop-color="#1C1930"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="1024" height="1024" rx="228" ry="228" fill="url(#bg)"/>
+  <!-- layer 2 (outer): parens -->
+  <path d="M 270 352 Q 180 512 270 672" fill="none" stroke="#D97D3D" stroke-width="28" stroke-linecap="round"/>
+  <path d="M 754 352 Q 844 512 754 672" fill="none" stroke="#D97D3D" stroke-width="28" stroke-linecap="round"/>
+  <!-- layer 1 (innermost): carets, hugging the dot -->
+  <path d="M 456 392 L 340 512 L 456 632" fill="none" stroke="#F0A860" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 568 392 L 684 512 L 568 632" fill="none" stroke="#F0A860" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- recording dot, centered -->
+  <circle cx="512" cy="512" r="96" fill="#E8432A" opacity="0.16"/>
+  <circle cx="512" cy="512" r="64" fill="#E8432A"/>
+</svg>
