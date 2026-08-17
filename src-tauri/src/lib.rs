@@ -3,6 +3,7 @@ mod audio;
 mod backtrack;
 mod boilerplate;
 mod config;
+mod file_tagging;
 mod history;
 mod llm;
 mod logging;

@@ -192,10 +192,30 @@ build phases.
     trailing-period one requires the same per-app messaging-app
     detection list Wispr maintains, which is a lot of surface for a
     minor casing nicety.
-  - **Explicitly out of scope**: file tagging in Cursor/Windsurf (from
-    the same Wispr page) — belongs with the selected-text/on-screen
-    context work already tracked above under the SuperWhisper gap
-    analysis, not this entry.
+  - **Explicitly out of scope**: file tagging in Cursor/Windsurf itself
+    (from the same Wispr page) — those are windowed editors we have no
+    hook into (no project file index, no UI-native reference chip the
+    way Wispr can insert), unlike the terminal-agent version below.
+    Belongs with the selected-text/on-screen context work already
+    tracked above under the SuperWhisper gap analysis if ever picked up.
+
+- ~~**File tagging for terminal coding agents**~~ (shipped 2026-08-17,
+  requested directly rather than sourced from a competitor) —
+  `file_tagging.rs`: `tag_file_references(text: &str) -> String`, tags
+  any bare-filename-shaped token (identifier + `.` + a whitelisted
+  extension) with a leading `@`, wired into `modes::format_as_cli`'s
+  fallback branch (CLI mode, and only for text that didn't already match
+  a literal shell directive like `git commit` — tagging inside an actual
+  commit message would corrupt it). Works for Claude Code, OpenCode, and
+  Gemini CLI without needing our own project file index, since all three
+  already parse a literal `@path` typed into their prompt and do their
+  own fuzzy file resolution from there — unlike the Cursor/Windsurf case
+  above, no app-level hook needed. Known limits: bare filenames only, no
+  paths (a spoken "src slash lib dot rs" doesn't reliably glue into one
+  taggable token through the existing punctuation pipeline, which has no
+  "dot" command); and no project awareness, so it tags anything
+  file-*shaped*, real or not — same as if you'd mistyped an `@mention`
+  by hand.
 
 - **App-aware modes + LLM refinement** (shipped 2026-08-15) —
   frontmost-app detection (`app_detect.rs`, `NSWorkspace`), a mode
