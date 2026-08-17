@@ -977,6 +977,52 @@ function GeneralSection() {
   );
 }
 
+function VoiceIsolationSection() {
+  const [enabled, setEnabled] = useState(false);
+  const [checked, setChecked] = useState(false);
+
+  useEffect(() => {
+    invoke<boolean>("get_isolated_voice_enabled")
+      .then(setEnabled)
+      .catch((err) => console.error("get_isolated_voice_enabled failed:", err))
+      .finally(() => setChecked(true));
+  }, []);
+
+  function toggleEnabled(next: boolean) {
+    setEnabled(next);
+    invoke("set_isolated_voice_enabled", { enabled: next }).catch((err) => {
+      console.error("set_isolated_voice_enabled failed:", err);
+      setEnabled(!next);
+    });
+  }
+
+  return (
+    <div className="mb-4 border-b border-base-content/10 pb-3">
+      <label className="mb-1 block text-xs font-medium opacity-70">Voice Isolation</label>
+      {!checked ? (
+        <span className="loading loading-spinner loading-xs" />
+      ) : (
+        <div className="flex flex-col gap-2">
+          <label className="flex items-center gap-1.5 text-xs">
+            <input
+              type="checkbox"
+              className="checkbox checkbox-xs"
+              checked={enabled}
+              onChange={(e) => toggleEnabled(e.target.checked)}
+            />
+            Isolated Voice — filter out background noise before transcribing
+          </label>
+          <p className="text-xs opacity-60">
+            Not enrolled: this only suppresses quiet background noise, not a
+            second person talking at similar volume. Voice enrollment for
+            stronger speaker-based isolation is coming soon.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsView() {
   return (
     <main className="h-screen overflow-y-auto bg-base-300 px-5 py-4 text-base-content">
@@ -985,6 +1031,7 @@ function SettingsView() {
       <DeviceSection />
       <ShortcutSection />
       <ModelsSection />
+      <VoiceIsolationSection />
       <AppModesSection />
       <LlmSection />
       <VocabularySection />

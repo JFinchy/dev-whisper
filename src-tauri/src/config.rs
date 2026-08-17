@@ -68,6 +68,17 @@ pub struct AppConfig {
     /// `copy_only`, autostart).
     #[serde(default)]
     pub journal_enabled: bool,
+    /// When true, recordings are filtered to the primary user's voice before
+    /// transcription — see `isolate.rs`. Auto-selects between an enrolled
+    /// speaker-embedding check and a weaker energy-based fallback depending
+    /// on `voice_enrolled`.
+    #[serde(default)]
+    pub isolated_voice_enabled: bool,
+    /// Whether a voice profile has been enrolled (see `voice_isolation.rs`).
+    /// Mirrors whether `voice_profile.json` exists on disk; kept in config
+    /// too so callers don't need filesystem access just to check status.
+    #[serde(default)]
+    pub voice_enrolled: bool,
 }
 
 fn default_history_retention_days() -> u32 {
@@ -88,6 +99,8 @@ impl Default for AppConfig {
             copy_only: false,
             widget_mode: crate::widget::WidgetMode::default(),
             journal_enabled: false,
+            isolated_voice_enabled: false,
+            voice_enrolled: false,
         }
     }
 }
@@ -175,5 +188,7 @@ mod tests {
         assert!(!restored.copy_only);
         assert_eq!(restored.widget_mode, crate::widget::WidgetMode::default());
         assert!(!restored.journal_enabled);
+        assert!(!restored.isolated_voice_enabled);
+        assert!(!restored.voice_enrolled);
     }
 }

@@ -133,6 +133,18 @@ impl WhisperEngine {
         wav_path: &Path,
         model_override: Option<(String, PathBuf)>,
     ) -> Result<String, String> {
+        let samples = load_samples_16k_mono(wav_path)?;
+        self.transcribe_samples(&samples, model_override)
+    }
+
+    /// Same as `transcribe_with_model`, but takes already-loaded 16kHz mono
+    /// samples directly — the hook point for pre-processing (e.g. isolate.rs
+    /// masking out non-primary-speaker audio) between loading and inference.
+    pub fn transcribe_samples(
+        &self,
+        samples: &[f32],
+        model_override: Option<(String, PathBuf)>,
+    ) -> Result<String, String> {
         let model_id = match model_override {
             Some((id, path)) => {
                 self.model_paths.lock().unwrap().insert(id.clone(), path);
@@ -143,7 +155,6 @@ impl WhisperEngine {
 
         self.ensure_context_for(&model_id)?;
 
-        let samples = load_samples_16k_mono(wav_path)?;
         if samples.is_empty() {
             return Err("no audio samples to transcribe".to_string());
         }
@@ -167,7 +178,7 @@ impl WhisperEngine {
         params.set_n_threads(num_cpus());
 
         state
-            .full(params, &samples)
+            .full(params, samples)
             .map_err(|e| format!("whisper inference failed: {e}"))?;
 
         let num_segments = state.full_n_segments().map_err(|e| e.to_string())?;
@@ -188,7 +199,7 @@ fn num_cpus() -> i32 {
 
 /// Reads the mono/stereo 16-bit PCM wav written by `audio.rs`, downmixes to
 /// mono, and resamples to the 16kHz whisper.cpp expects.
-fn load_samples_16k_mono(path: &Path) -> Result<Vec<f32>, String> {
+pub(crate) fn load_samples_16k_mono(path: &Path) -> Result<Vec<f32>, String> {
     let mut reader = hound::WavReader::open(path).map_err(|e| e.to_string())?;
     let spec = reader.spec();
 

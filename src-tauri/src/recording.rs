@@ -116,7 +116,16 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
         model_override.is_some(),
     );
 
-    match state.whisper.transcribe_with_model(wav_path, model_override) {
+    let samples = crate::stt::load_samples_16k_mono(wav_path);
+    let transcribed = match samples {
+        Ok(samples) => {
+            let samples = crate::isolate::apply(app, samples);
+            state.whisper.transcribe_samples(&samples, model_override)
+        }
+        Err(err) => Err(err),
+    };
+
+    match transcribed {
         Ok(text) if !text.is_empty() => {
             // Casing directives ("snake case error response handler") are a
             // cross-cutting syntax command, not gated behind a Mode — they
@@ -264,6 +273,18 @@ pub fn get_copy_only(app: AppHandle) -> bool {
 pub fn set_copy_only(app: AppHandle, enabled: bool) {
     let mut cfg = crate::config::load(&app);
     cfg.copy_only = enabled;
+    let _ = crate::config::save(&app, &cfg);
+}
+
+#[tauri::command]
+pub fn get_isolated_voice_enabled(app: AppHandle) -> bool {
+    crate::config::load(&app).isolated_voice_enabled
+}
+
+#[tauri::command]
+pub fn set_isolated_voice_enabled(app: AppHandle, enabled: bool) {
+    let mut cfg = crate::config::load(&app);
+    cfg.isolated_voice_enabled = enabled;
     let _ = crate::config::save(&app, &cfg);
 }
 
