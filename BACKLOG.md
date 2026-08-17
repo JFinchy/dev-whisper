@@ -296,7 +296,9 @@ build phases.
     developers already use. Not dictation-with-formatting like the rest
     of this list; not worth chasing feature parity with, but worth
     knowing it's what that specific audience segment compares us
-    against.
+    against. Follow-up deep dive (2026-08-17) on Talon specifically —
+    what it actually offers, and which pieces are worth adapting — is in
+    `COMMAND_MODE.md`.
   - **New, previously untracked findings to fold into ROADMAP.md**:
     output-side workflow automation (Notion/webhook/Slack routing for
     transcripts), and a snippet library (spoken-cue text expansion,

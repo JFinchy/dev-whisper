@@ -58,6 +58,14 @@ research-leverage ranking — both now have a full implementation design in
 
 ## Later — redesign & research-gated
 
+- **Command Mode** (Talon-inspired) — a second, opt-in always-listening
+  mode alongside today's push-to-talk dictation: short spoken phrases
+  mapped to actions (keystrokes, shell commands, our own deep-link hooks)
+  instead of formatted text. See `COMMAND_MODE.md` for the full
+  feature-by-feature breakdown with tasks/subtasks — this is bigger than
+  everything else in this file combined, mainly because it needs a new
+  continuous-listening/VAD audio pipeline, not an extension of the
+  existing explicit start/stop one. Not started.
 - **Full Modes UI redesign** to match SuperWhisper: named user-created
   presets (not a fixed Plain/Casual/CLI enum), per-mode shortcuts, a
   categorized app picker, sidebar navigation instead of one long
