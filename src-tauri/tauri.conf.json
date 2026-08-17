@@ -47,6 +47,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "resources/wespeaker_en_voxceleb_resnet34_LM.onnx": "models/wespeaker_en_voxceleb_resnet34_LM.onnx"
+    }
   }
 }

@@ -13,6 +13,7 @@ mod recording;
 mod shortcut;
 mod stt;
 mod syntax;
+mod voice_isolation;
 mod widget;
 
 use std::sync::atomic::AtomicBool;
@@ -42,6 +43,9 @@ use recording::{
     RecordingState,
 };
 use shortcut::{get_shortcut, set_shortcut, PushToTalkState};
+use voice_isolation::{
+    get_voice_enrollment_status, start_voice_enrollment, stop_voice_enrollment, VoiceIsolationState,
+};
 use widget::{get_widget_mode, set_widget_mode, set_widget_size};
 use stt::WhisperEngine;
 
@@ -211,6 +215,9 @@ pub fn run() {
             set_copy_only,
             get_isolated_voice_enabled,
             set_isolated_voice_enabled,
+            start_voice_enrollment,
+            stop_voice_enrollment,
+            get_voice_enrollment_status,
             list_history_entries,
             clear_history,
             delete_history_entry,
@@ -263,7 +270,12 @@ pub fn run() {
                 whisper,
                 is_recording: AtomicBool::new(false),
                 active_app: Mutex::new(None),
+                recording_purpose: Mutex::new(None),
             });
+
+            let voice_isolation = VoiceIsolationState::new();
+            voice_isolation.load_persisted(app.handle());
+            app.manage(voice_isolation);
 
             // Deep-link hooks for external automation (Raycast, Hammerspoon,
             // Alfred, shell scripts): `open devwhisper://toggle-recording`
