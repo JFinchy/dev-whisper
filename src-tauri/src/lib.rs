@@ -9,6 +9,7 @@ mod logging;
 mod models;
 mod modes;
 mod paste;
+mod punctuation;
 mod recording;
 mod shortcut;
 mod stt;
@@ -38,9 +39,9 @@ use models::{download_model, list_models, set_active_model};
 use modes::{get_mode_rules, list_running_apps, remove_mode_rule, set_mode_rule};
 use recording::{
     get_active_input_device, get_copy_only, get_isolated_voice_enabled, get_last_frontmost_app,
-    get_vocabulary, list_input_devices, set_copy_only, set_input_device,
-    set_isolated_voice_enabled, set_vocabulary, toggle_recording, toggle_recording_command,
-    RecordingState,
+    get_press_enter_enabled, get_vocabulary, list_input_devices, set_copy_only, set_input_device,
+    set_isolated_voice_enabled, set_press_enter_enabled, set_vocabulary, toggle_recording,
+    toggle_recording_command, RecordingState,
 };
 use shortcut::{get_shortcut, set_shortcut, PushToTalkState};
 use webhook::{get_webhook_url, send_test_webhook, set_webhook_url};
@@ -213,6 +214,8 @@ pub fn run() {
             set_copy_only,
             get_isolated_voice_enabled,
             set_isolated_voice_enabled,
+            get_press_enter_enabled,
+            set_press_enter_enabled,
             list_history_entries,
             clear_history,
             delete_history_entry,

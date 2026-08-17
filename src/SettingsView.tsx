@@ -967,6 +967,7 @@ const WIDGET_MODE_LABEL: Record<WidgetMode, string> = {
 function GeneralSection() {
   const [autostart, setAutostart] = useState(false);
   const [copyOnly, setCopyOnly] = useState(false);
+  const [pressEnterEnabled, setPressEnterEnabled] = useState(false);
   const [widgetMode, setWidgetModeState] = useState<WidgetMode>("compact");
   const [checked, setChecked] = useState(false);
 
@@ -974,11 +975,13 @@ function GeneralSection() {
     Promise.all([
       invoke<boolean>("get_autostart_enabled"),
       invoke<boolean>("get_copy_only"),
+      invoke<boolean>("get_press_enter_enabled"),
       invoke<WidgetMode>("get_widget_mode"),
     ])
-      .then(([autostartValue, copyOnlyValue, widgetModeValue]) => {
+      .then(([autostartValue, copyOnlyValue, pressEnterValue, widgetModeValue]) => {
         setAutostart(autostartValue);
         setCopyOnly(copyOnlyValue);
+        setPressEnterEnabled(pressEnterValue);
         setWidgetModeState(widgetModeValue);
       })
       .catch((err) => console.error("failed to load general settings:", err))
@@ -998,6 +1001,14 @@ function GeneralSection() {
     invoke("set_copy_only", { enabled }).catch((err) => {
       console.error("set_copy_only failed:", err);
       setCopyOnly(!enabled);
+    });
+  }
+
+  function togglePressEnter(enabled: boolean) {
+    setPressEnterEnabled(enabled);
+    invoke("set_press_enter_enabled", { enabled }).catch((err) => {
+      console.error("set_press_enter_enabled failed:", err);
+      setPressEnterEnabled(!enabled);
     });
   }
 
@@ -1034,6 +1045,17 @@ function GeneralSection() {
               onChange={(e) => toggleCopyOnly(e.target.checked)}
             />
             Copy only — don't auto-paste into the active app
+          </label>
+          <label className="flex items-center gap-1.5 text-xs">
+            <input
+              type="checkbox"
+              className="checkbox checkbox-xs"
+              checked={pressEnterEnabled}
+              disabled={copyOnly}
+              onChange={(e) => togglePressEnter(e.target.checked)}
+            />
+            Say "press enter" to submit — presses Enter after pasting
+            {copyOnly && " (disabled while copy only is on)"}
           </label>
           <label className="flex items-center gap-1.5 text-xs">
             Widget:

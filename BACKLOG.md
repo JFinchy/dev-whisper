@@ -153,6 +153,79 @@ build phases.
     mode label (matching the existing `"casing"`/`"boilerplate"` label
     convention).
 
+- **Smart Formatting / Backtrack parity** (from the 2026-08-17 Wispr Flow
+  docs review —
+  [Smart Formatting & Backtrack](https://docs.wisprflow.ai/articles/5373093536-how-do-i-use-smart-formatting-and-backtrack)).
+  Partially started. Wispr Flow's version is a cloud-processed feature;
+  the parts worth building here are the ones that work as pure
+  deterministic passes (same shape as the already-shipped Syntax &
+  Casing Commands in `syntax.rs`), so they're instant and don't depend on
+  Ollama being up:
+  - ~~**Named punctuation commands**~~ (shipped 2026-08-17) — say
+    "period", "comma", "open paren", "em dash", "new line", etc. and get
+    the literal character instead of the spoken word. `punctuation.rs`:
+    `expand_punctuation(text: &str) -> String`, a word-boundary
+    find/replace pass over a fixed table covering Wispr's list except
+    angle brackets (ambiguous open/close) and bare "at" (too risky a
+    false-positive as a common word). Wired into `recording.rs` in the
+    same pre-LLM stage as casing commands, ahead of everything else.
+    Known rough edge: a leading symbol like `~` doesn't get a space
+    inserted before it when it follows a plain word (context this
+    deterministic pass doesn't have) — documented in a test, not silently
+    wrong.
+  - ~~**Spoken numbered lists**~~ (shipped 2026-08-17) — "one... two..."
+    or "first... second..." becomes a real newline-separated numbered
+    list (`1. ... 2. ...`). Lives in `punctuation.rs` as
+    `expand_lists`, alongside the punctuation table, and runs first in
+    the pipeline (before `expand_punctuation`) so a command word like
+    "period" said right at a list break is still recognized on its own
+    rather than glued to the next item's marker — required teaching
+    `expand_punctuation`'s tokenizer to treat an embedded `\n` as its
+    own hard-delimited token rather than a whitespace separator that
+    silently drops it. Requires at least two markers in strictly
+    consecutive order starting at one/first (a lone "one" is too common
+    a word to treat as a list start) and doesn't capitalize item text
+    or add a lead-in colon the way Wispr's context-aware version does.
+    Known, accepted false positive: an ordinary sentence using both
+    "one" and "two" as plain numbers ("one item for two dollars") also
+    matches — no surrounding-context signal available to rule that out
+    without an LLM in the loop.
+  - ~~**"Press enter"**~~ (shipped 2026-08-17) — a trailing "press enter"
+    (tolerant of Whisper's own trailing sentence punctuation) is stripped
+    by `punctuation::extract_press_enter` before casing/boilerplate/mode
+    ever see it, and a simulated Enter keystroke (`paste::press_enter`,
+    reusing the same `rdev` path as the Cmd+V paste) fires after
+    delivery. Gated behind a new `press_enter_enabled` Settings toggle,
+    default off (an unexpected Enter is a worse failure mode than an
+    unexpected paste) and auto-disabled/greyed-out whenever "copy only"
+    is on, since copy-only's whole point is opting out of synthetic
+    keystrokes. Skipped replicating Wispr's "first-use, ask before
+    enabling" discovery-prompt UX — a plain toggle is enough here. If the
+    entire utterance is just "press enter", nothing is pasted/copied
+    (avoids clobbering the clipboard with an empty string) but Enter
+    still fires and no history entry is logged.
+  - **Backtrack (trigger-word case only)** — new `backtrack.rs`:
+    `try_backtrack(text: &str) -> Option<String>`, a deterministic pass
+    that collapses "X actually Y" -> "Y" and "X, scratch that, Y" -> "Y"
+    for an explicit trigger-word list. This is deliberately narrower than
+    Wispr's version, which also catches natural restatement without a
+    trigger word via full-context LLM judgment — that fuzzier case is
+    already partially covered by the existing "fix filler words, false
+    starts" instruction in `llm.rs`'s refinement prompts (when a mode has
+    LLM refinement on; Plain mode defaults it off). The new deterministic
+    pass exists so the common explicit-trigger-word case works even with
+    Ollama down, same rationale as the boilerplate-generation fallback.
+  - **Explicitly deferred, lower priority**: trailing-period-by-app +
+    "Writing Style" tuning, and context-aware mid-sentence
+    lowercasing/spacing — both cosmetic relative to the above, and the
+    trailing-period one requires the same per-app messaging-app
+    detection list Wispr maintains, which is a lot of surface for a
+    minor casing nicety.
+  - **Explicitly out of scope**: file tagging in Cursor/Windsurf (from
+    the same Wispr page) — belongs with the selected-text/on-screen
+    context work already tracked above under the SuperWhisper gap
+    analysis, not this entry.
+
 - **App-aware modes + LLM refinement** (shipped 2026-08-15) —
   frontmost-app detection (`app_detect.rs`, `NSWorkspace`), a mode
   framework with built-in defaults for common apps (`modes.rs`), a
