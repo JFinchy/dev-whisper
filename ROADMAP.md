@@ -42,6 +42,15 @@ research-leverage ranking — both now have a full implementation design in
    append-only with no way to re-run a past recording through a
    different mode or search it.
 
+## In testing
+
+- **Isolated Voice mode, phase 1** — Settings toggle + energy-gate
+  filtering so background noise doesn't reach Whisper; merged to `main`
+  for real-world testing before phase 2 (voice enrollment +
+  speaker-embedding isolation, so a second person talking can actually be
+  rejected, not just quiet noise) is built. See `BACKLOG.md` for the full
+  design and what phase 2 needs.
+
 ## Next — needs its own design pass before implementation
 
 - **The Local Config Agent** — voice-driven edits to `~/.zshrc`, Neovim
@@ -77,11 +86,6 @@ research-leverage ranking — both now have a full implementation design in
   unresolved (CoreML flagged unstable by the crate's own maintainer).
   Recommended as a validate-first spike on real hardware before building
   any Settings/download UI for it.
-- **Single-speaker voice isolation** — reject background music/other
-  talkers so only the primary user's voice reaches Whisper. Needs its own
-  research/design pass (VAD vs. speaker-embedding vs. source separation)
-  — recommended as its own focused session rather than folded into
-  unrelated work.
 
 ## Future state (from `PRODUCT_SPEC.md` §5, unchanged)
 

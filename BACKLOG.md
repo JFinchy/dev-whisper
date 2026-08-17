@@ -48,6 +48,45 @@ build phases.
 
 ## Feature Requests
 
+- **Isolated Voice mode, phase 1** (in testing, 2026-08-17) — a Settings
+  toggle that filters a recording down to the primary user's voice before
+  Whisper transcribes it. Runs post-capture (once, on the fully-recorded
+  buffer, right before transcription) rather than live/streaming, matching
+  the app's push-to-talk architecture and avoiding the latency floor a
+  continuous-inference approach would need. New `isolate.rs`: an RMS
+  energy gate with hysteresis (separate enter/exit thresholds so it
+  doesn't chatter at the boundary) and ~150ms hangover padding, zero-fills
+  everything outside the detected voiced ranges rather than trimming —
+  keeps the buffer's timeline continuous for whisper.cpp and lets a
+  fully-masked clip degrade into the existing "no speech detected" path.
+  `stt.rs`'s `transcribe_with_model` was split into sample-loading +
+  `transcribe_samples()` to give this a hook point between the two. 7 new
+  unit tests (silence/tone/tone-silence-tone boundary cases, exact-zeroing
+  + length-preservation for masking); full existing suite (76 tests,
+  including the real-whisper-model smoke tests) still green.
+  - **Known limitation of phase 1 as merged**: this is the energy-gate
+    fallback only — it suppresses quiet background noise but cannot
+    distinguish a second human voice at similar volume. Settings copy
+    says so explicitly.
+  - **Phase 2, not yet built**: voice enrollment (record a short sample
+    once) + speaker-embedding cosine-similarity masking, auto-selected
+    over the energy gate once a voice is enrolled. Design already done —
+    `sherpa-onnx` (official k2-fsa Rust crate, Apache-2.0, statically
+    linked — no dylib bundling/signing risk unlike a raw `ort`
+    dependency) plus a bundled `wespeaker_en_voxceleb_resnet34_LM.onnx`
+    (26.5MB, Apache-2.0) speaker-embedding model, CPU inference (no
+    CoreML — unlike Parakeet's full ASR decode, a handful of short-window
+    embedding calls per recording is cheap enough on CPU that chasing
+    CoreML's flagged instability isn't worth it here). Deferred so phase
+    1 could merge and get real-world testing before taking on a new
+    external build dependency and a bundled binary model asset.
+  - **Scope note**: this deliberately revisits the 2026-08-16 SuperWhisper
+    research's call to leave speaker diarization/meeting-notes out of
+    scope. Multi-speaker "meeting mode" (labeling Speaker 1/2/3 segments)
+    is still explicitly not part of this work — single-speaker isolation
+    only. Meeting mode would need its own diarization-model spike as a
+    separate future effort.
+
 - **Output-side workflow automation** (from the 2026-08-17 competitive
   research — MacWhisper routes transcripts to Notion/Zapier/Obsidian/
   n8n/Make.com/webhooks). Not started. Design:
@@ -303,13 +342,3 @@ build phases.
     output-side workflow automation (Notion/webhook/Slack routing for
     transcripts), and a snippet library (spoken-cue text expansion,
     separate from the vocabulary editor).
-
-- **Single-speaker voice isolation** — reject background noise (music,
-  other people talking, kids yelling) so only the primary user's voice
-  reaches Whisper. Candidate approaches: voice activity detection (VAD)
-  tuned against non-speech energy, speaker-embedding-based isolation
-  (enroll the user's voice once, filter against it), or a local
-  source-separation model (Demucs-style) ahead of Whisper. Meaningfully
-  larger scope than the rest of the pipeline — needs its own model,
-  enrollment UX, and a latency budget. Needs a dedicated research/design
-  pass rather than a quick add-on.
