@@ -13,6 +13,7 @@ mod recording;
 mod shortcut;
 mod stt;
 mod syntax;
+mod webhook;
 mod widget;
 
 use std::sync::atomic::AtomicBool;
@@ -42,6 +43,7 @@ use recording::{
     RecordingState,
 };
 use shortcut::{get_shortcut, set_shortcut, PushToTalkState};
+use webhook::{get_webhook_url, send_test_webhook, set_webhook_url};
 use widget::{get_widget_mode, set_widget_mode, set_widget_size};
 use stt::WhisperEngine;
 
@@ -228,6 +230,9 @@ pub fn run() {
             get_widget_mode,
             set_widget_mode,
             set_widget_size,
+            get_webhook_url,
+            set_webhook_url,
+            send_test_webhook,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

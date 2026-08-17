@@ -18,27 +18,20 @@ research-leverage ranking — both now have a full implementation design in
    a coding-agent panel, hook support) — the developer-specific angle
    SuperWhisper itself is now leaning into; local/private is our edge
    over their approach.
-2. **Output-side workflow automation** — a generic configurable webhook
-   fired after each delivered dictation, covering Notion/Slack/n8n/
-   Zapier/Make.com the way MacWhisper's integrations do, without us
-   maintaining a bespoke client per service. Complements the deep-link
-   hooks already shipped, which only cover the *input* side
-   (starting/stopping a recording via script). Off by default — sending
-   dictated text off-device is a deliberate opt-in, not a default.
-3. **Snippet library** — a spoken cue expands to a saved block of text
+2. **Snippet library** — a spoken cue expands to a saved block of text
    (a PR checklist, a calendar link, standard onboarding instructions),
    distinct from the vocabulary editor (which is about recognition
    accuracy, not insertion). Seen on Wispr Flow. Detected the same way
    as the shipped Syntax & Casing Commands / Boilerplate Generation —
    pure, fast, no LLM needed to look up a saved trigger phrase.
-4. **Selected-text/on-screen context feeding LLM refinement** — extends
+3. **Selected-text/on-screen context feeding LLM refinement** — extends
    shipped app-aware refinement and boilerplate generation with real code
    context, not just app identity. VoiceInk already ships this (via
    SelectedTextKit) — validated as achievable, not speculative.
-5. **Realtime streaming transcript display** — partial results shown
+4. **Realtime streaming transcript display** — partial results shown
    while still speaking, not just after release. Real UX upgrade to the
    shipped push-to-talk loop.
-6. **History reprocessing + full-text search** — history is currently
+5. **History reprocessing + full-text search** — history is currently
    append-only with no way to re-run a past recording through a
    different mode or search it.
 

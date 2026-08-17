@@ -79,6 +79,14 @@ pub struct AppConfig {
     /// too so callers don't need filesystem access just to check status.
     #[serde(default)]
     pub voice_enrolled: bool,
+    /// Fires a `POST` with the delivered transcript to this URL after every
+    /// successful paste — a generic primitive covering Notion/Slack/n8n/
+    /// Zapier/Make.com/webhook.site, since all of them accept incoming
+    /// webhooks natively (see `webhook.rs`). `None`/empty disables it.
+    /// Off by default: sending dictated text off-device is a deliberate
+    /// opt-in, matching `copy_only`/autostart/`journal_enabled`.
+    #[serde(default)]
+    pub webhook_url: Option<String>,
 }
 
 fn default_history_retention_days() -> u32 {
@@ -101,6 +109,7 @@ impl Default for AppConfig {
             journal_enabled: false,
             isolated_voice_enabled: false,
             voice_enrolled: false,
+            webhook_url: None,
         }
     }
 }
@@ -190,5 +199,6 @@ mod tests {
         assert!(!restored.journal_enabled);
         assert!(!restored.isolated_voice_enabled);
         assert!(!restored.voice_enrolled);
+        assert!(restored.webhook_url.is_none());
     }
 }

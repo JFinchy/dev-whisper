@@ -109,6 +109,15 @@ built yet.
   / `stop-recording` / `toggle-recording` for Raycast, Hammerspoon,
   Alfred, or plain shell scripts. Start/stop are idempotent, so a script
   doesn't need to track recording state itself.
+- **Output webhook** — a configurable URL gets a JSON `POST`
+  (`timestamp_ms`, `text`, `summary`, `app_name`, `mode`) after every
+  delivered dictation, covering Notion/Slack/n8n/Zapier/Make.com/
+  webhook.site the way MacWhisper's integrations do, without a bespoke
+  client per service. Fires in a background thread so a slow/unreachable
+  endpoint never adds latency to the paste, and failures are logged, not
+  surfaced. Off by default, plus a "Send test event" button in Settings.
+  Complements the deep-link hooks above, which only cover the *input*
+  side.
 
 ## Reliability
 

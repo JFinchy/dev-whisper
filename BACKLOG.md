@@ -87,9 +87,11 @@ build phases.
     only. Meeting mode would need its own diarization-model spike as a
     separate future effort.
 
-- **Output-side workflow automation** (from the 2026-08-17 competitive
-  research — MacWhisper routes transcripts to Notion/Zapier/Obsidian/
-  n8n/Make.com/webhooks). Not started. Design:
+- **Output-side workflow automation** (in testing 2026-08-17, from the
+  2026-08-17 competitive research — MacWhisper routes transcripts to
+  Notion/Zapier/Obsidian/n8n/Make.com/webhooks). Implemented, pending the
+  manual pass in `manual-testing-inbox/output-webhook.md`. Design as
+  implemented:
   - A single generic primitive rather than N bespoke integrations: a
     configurable **webhook URL** (`webhook_url: Option<String>` in
     `AppConfig`) that gets a `POST` with a JSON body

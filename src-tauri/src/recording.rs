@@ -178,11 +178,34 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
 
             match deliver {
                 Ok(()) => {
+                    // Cloned before the moves into `append_entry` below —
+                    // the webhook payload needs its own copies of whatever
+                    // it fires after.
+                    let webhook_app_name = app_name.clone();
+                    let webhook_mode = mode_label.clone();
+
                     // Only log to history what actually reached the user —
                     // a failed paste/copy shouldn't silently show up as
                     // history.
                     let timestamp_ms =
                         crate::history::append_entry(app, &formatted, app_name, Some(mode_label));
+
+                    if let Some(webhook_url) = cfg.webhook_url.clone() {
+                        crate::webhook::send_entry(
+                            webhook_url,
+                            crate::webhook::WebhookPayload {
+                                timestamp_ms,
+                                text: formatted.clone(),
+                                // Known v1 gap: the journal summary (if
+                                // enabled) is generated asynchronously
+                                // below and isn't available yet — see
+                                // BACKLOG.md.
+                                summary: None,
+                                app_name: webhook_app_name,
+                                mode: Some(webhook_mode),
+                            },
+                        );
+                    }
 
                     // Journal summarization happens after the entry is
                     // already saved and the transcript already delivered —
