@@ -1123,11 +1123,144 @@ function VoiceIsolationSection() {
   );
 }
 
+/// Punctuation words that insert a literal character — kept to one
+/// canonical phrase per symbol (`punctuation.rs`'s `COMMANDS` table has
+/// more aliases than are useful to show here, e.g. "full stop" alongside
+/// "period"). Order matches roughly how often each comes up dictating
+/// code/prose, not alphabetical.
+const PUNCTUATION_COMMANDS: [string, string][] = [
+  ["period", "."],
+  ["comma", ","],
+  ["question mark", "?"],
+  ["exclamation point", "!"],
+  ["colon", ":"],
+  ["semicolon", ";"],
+  ["new line", "↵"],
+  ["new paragraph", "↵↵"],
+  ["open paren", "("],
+  ["close paren", ")"],
+  ["dash", "–"],
+  ["em dash", "—"],
+  ["underscore", "_"],
+  ["slash", "/"],
+  ["backslash", "\\"],
+  ["apostrophe", "'"],
+  ["quotation mark", "“ ” (paired)"],
+  ["asterisk", "*"],
+  ["ampersand", "&"],
+  ["at sign", "@"],
+  ["hashtag", "#"],
+  ["plus", "+"],
+  ["minus", "-"],
+  ["equals", "="],
+  ["tilde", "~"],
+  ["percent sign", "%"],
+  ["degree sign", "°"],
+  ["copyright", "©"],
+  ["trademark", "™"],
+];
+
+type VoiceCommandGroup = {
+  title: string;
+  description: string;
+  examples: { say: string; get: string }[];
+};
+
+/// Cross-cutting trigger phrases: work in any app, regardless of Mode, and
+/// resolve instantly without waiting on the LLM (except Boilerplate, which
+/// is the one group that needs Ollama). Kept as one reference list so a
+/// user hearing "why did my dictation turn into a checklist" or "why did
+/// that get pasted in ALL_CAPS" has one place to check rather than having
+/// to ask. Deliberately only lists what's implemented on `main` right now —
+/// Backtrack and the Snippet library land as their own additions to this
+/// same list once merged.
+const VOICE_COMMAND_GROUPS: VoiceCommandGroup[] = [
+  {
+    title: "Casing & syntax",
+    description: "Say a case name, then what to convert. Instant, no LLM involved.",
+    examples: [
+      { say: '"snake case error response handler"', get: "error_response_handler" },
+      { say: '"camel case error response handler"', get: "errorResponseHandler" },
+      { say: '"pascal case error response handler"', get: "ErrorResponseHandler" },
+      { say: '"kebab case error response handler"', get: "error-response-handler" },
+      { say: '"title case error response handler"', get: "Error Response Handler" },
+      { say: '"screaming snake case max retry count"', get: "MAX_RETRY_COUNT" },
+    ],
+  },
+  {
+    title: "Numbered lists",
+    description: 'Count out loud ("one... two... three...", or "first... second...") and it becomes a real list.',
+    examples: [{ say: '"one set up the repo two install deps three run tests"', get: "1. set up the repo\n2. install deps\n3. run tests" }],
+  },
+  {
+    title: "Boilerplate generation",
+    description: 'Say one of these, then describe what to generate. Sent to your local LLM instead of pasted as text — needs Ollama running.',
+    examples: [
+      {
+        say: '"generate boilerplate for a React component called UserCard with name and avatar props"',
+        get: "the generated component, pasted directly",
+      },
+    ],
+  },
+  {
+    title: "Press enter",
+    description: 'Say this at the end to send Enter after pasting. Off by default — enable it in General above.',
+    examples: [{ say: '"looks good press enter"', get: 'pastes "looks good", then Enter' }],
+  },
+  {
+    title: "Append clipboard",
+    description: 'Say this at the end to append whatever you last copied — a stack trace, a URL, a snippet — without reading it aloud.',
+    examples: [{ say: '"here\'s the error append clipboard"', get: "here's the error <clipboard contents>" }],
+  },
+];
+
+function VoiceCommandsSection() {
+  return (
+    <div className="mb-4 border-b border-base-content/10 pb-3">
+      <label className="mb-1 block text-xs font-medium opacity-70">Voice Commands</label>
+      <p className="mb-2 text-xs opacity-60">
+        Trigger phrases recognized in any app, in any Mode — if dictation ever came out looking unexpectedly
+        transformed, check here first.
+      </p>
+      <div className="flex flex-col gap-2.5">
+        {VOICE_COMMAND_GROUPS.map((group) => (
+          <div key={group.title}>
+            <p className="text-xs font-medium">{group.title}</p>
+            <p className="mb-1 text-xs opacity-60">{group.description}</p>
+            <div className="flex flex-col gap-0.5">
+              {group.examples.map((ex) => (
+                <p key={ex.say} className="text-xs">
+                  <code className="opacity-80">{ex.say}</code>
+                  <span className="opacity-50"> {"→"} </span>
+                  <span className="opacity-80">{ex.get}</span>
+                </p>
+              ))}
+            </div>
+          </div>
+        ))}
+        <div>
+          <p className="text-xs font-medium">Punctuation & symbols</p>
+          <p className="mb-1 text-xs opacity-60">Say the word, get the character — works mid-sentence, not just at the end.</p>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+            {PUNCTUATION_COMMANDS.map(([word, symbol]) => (
+              <div key={word} className="flex items-center justify-between text-xs">
+                <code className="opacity-80">{word}</code>
+                <span className="opacity-60">{symbol}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsView() {
   return (
     <main className="h-screen overflow-y-auto bg-base-300 px-5 py-4 text-base-content">
       <h1 className="mb-4 text-base font-semibold">Settings</h1>
       <GeneralSection />
+      <VoiceCommandsSection />
       <DeviceSection />
       <ShortcutSection />
       <ModelsSection />

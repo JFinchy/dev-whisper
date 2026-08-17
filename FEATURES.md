@@ -63,6 +63,11 @@ built yet.
   automatic markdown-fence stripping (small models often wrap code in
   fences despite being told not to). Falls back to normal dictation if
   Ollama is unreachable, so a down LLM never eats your speech.
+- **Append clipboard** — end a dictation with "append clipboard" (or
+  "paste clipboard"/"insert clipboard") and whatever's currently on the
+  system clipboard gets appended to what you said, so a copied stack
+  trace, URL, or code snippet doesn't have to be read aloud. Appended raw,
+  after mode formatting/LLM refinement, so it's pasted verbatim.
 
 ## History
 
@@ -90,6 +95,11 @@ built yet.
 - **Settings window** (520px wide) covering device, shortcut, models,
   app modes, LLM, vocabulary, history, an in-app log viewer, and general
   preferences, all in one place.
+- **In-app Voice Commands reference** — every cross-cutting trigger
+  phrase (casing, punctuation, numbered lists, boilerplate, press enter,
+  append clipboard) documented right in Settings with a say/get example,
+  so unexpected output ("why did that get pasted in ALL_CAPS") has an
+  obvious place to check instead of needing to ask.
 - **In-app log viewer** — an in-memory ring buffer capturing what used to
   be terminal-only debug output (device lifecycle, mode/model resolution,
   LLM results), so you can see what happened without launching from a

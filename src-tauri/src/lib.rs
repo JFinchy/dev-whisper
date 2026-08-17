@@ -1,6 +1,7 @@
 mod app_detect;
 mod audio;
 mod boilerplate;
+mod clipboard;
 mod config;
 mod history;
 mod isolate;

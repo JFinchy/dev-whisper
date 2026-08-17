@@ -155,6 +155,14 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
                 (text, false)
             };
 
+            // "Append clipboard": stripped the same way as "press enter"
+            // above (and checked after it, so "...append clipboard press
+            // enter" strips the later-spoken phrase first). Always on,
+            // unlike "press enter" — the trigger phrases are multi-word and
+            // deliberate, not something said by accident the way a bare
+            // Enter keystroke risk would warrant an opt-in.
+            let (text, should_append_clipboard) = crate::clipboard::try_extract_trigger(&text);
+
             // Casing directives ("snake case error response handler") are a
             // cross-cutting syntax command, not gated behind a Mode — they
             // apply no matter which app/mode is active, and skip both
@@ -196,6 +204,24 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
                     formatted
                 };
                 (formatted, format!("{:?}", settings.mode))
+            };
+
+            // Applied uniformly after whichever branch above resolved
+            // `formatted` — clipboard content is appended raw, not run
+            // through mode formatting or LLM refinement, the same way a
+            // snippet body would be. A trigger with nothing on the
+            // clipboard (or a non-text clipboard) leaves `formatted`
+            // unchanged rather than pasting a Rust error string.
+            let formatted = if should_append_clipboard {
+                match crate::clipboard::read_clipboard_text() {
+                    Some(clip) => crate::clipboard::append(&formatted, &clip),
+                    None => {
+                        crate::applog!("clipboard: append triggered but clipboard was empty or unreadable");
+                        formatted
+                    }
+                }
+            } else {
+                formatted
             };
 
             // A fully-consumed "press enter"-only utterance formats down
