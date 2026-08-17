@@ -8,6 +8,7 @@ mod logging;
 mod models;
 mod modes;
 mod paste;
+mod punctuation;
 mod recording;
 mod shortcut;
 mod stt;

@@ -118,6 +118,14 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
 
     match state.whisper.transcribe_with_model(wav_path, model_override) {
         Ok(text) if !text.is_empty() => {
+            // Named punctuation commands ("period", "open paren", "new
+            // line") are expanded first, ahead of everything else — like
+            // casing commands below, they're cross-cutting rather than
+            // mode-gated, and downstream steps (casing extraction, LLM
+            // refinement) all work better against already-punctuated text
+            // than against the literal spoken words.
+            let text = crate::punctuation::expand_punctuation(&text);
+
             // Casing directives ("snake case error response handler") are a
             // cross-cutting syntax command, not gated behind a Mode — they
             // apply no matter which app/mode is active, and skip both

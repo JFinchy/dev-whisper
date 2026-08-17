@@ -112,6 +112,62 @@ build phases.
     mode label (matching the existing `"casing"`/`"boilerplate"` label
     convention).
 
+- **Smart Formatting / Backtrack parity** (from the 2026-08-17 Wispr Flow
+  docs review —
+  [Smart Formatting & Backtrack](https://docs.wisprflow.ai/articles/5373093536-how-do-i-use-smart-formatting-and-backtrack)).
+  Partially started. Wispr Flow's version is a cloud-processed feature;
+  the parts worth building here are the ones that work as pure
+  deterministic passes (same shape as the already-shipped Syntax &
+  Casing Commands in `syntax.rs`), so they're instant and don't depend on
+  Ollama being up:
+  - ~~**Named punctuation commands**~~ (shipped 2026-08-17) — say
+    "period", "comma", "open paren", "em dash", "new line", etc. and get
+    the literal character instead of the spoken word. `punctuation.rs`:
+    `expand_punctuation(text: &str) -> String`, a word-boundary
+    find/replace pass over a fixed table covering Wispr's list except
+    angle brackets (ambiguous open/close) and bare "at" (too risky a
+    false-positive as a common word). Wired into `recording.rs` in the
+    same pre-LLM stage as casing commands, ahead of everything else.
+    Known rough edge: a leading symbol like `~` doesn't get a space
+    inserted before it when it follows a plain word (context this
+    deterministic pass doesn't have) — documented in a test, not silently
+    wrong.
+  - **Spoken numbered lists** — "one... two..." or "first... second..."
+    at clause boundaries becomes a real numbered list (`1. ... 2. ...`
+    with line breaks). Likely lives in `punctuation.rs` alongside the
+    punctuation table since it's the same class of deterministic
+    text-shape transform.
+  - **"Press enter"** — detect a trailing "press enter" (allowing for
+    trailing punctuation Whisper may have added), strip it from the
+    pasted text, and simulate an Enter keystroke after the paste
+    completes. Reuses the same keystroke-simulation path `recording.rs`
+    already uses for the Cmd+V paste. Desktop-only, matches Wispr's own
+    scoping. Skip replicating Wispr's "first-use, ask before enabling"
+    discovery prompt — a plain Settings toggle (default off, since an
+    unexpected Enter keystroke is a much worse failure mode than an
+    unexpected paste) is enough.
+  - **Backtrack (trigger-word case only)** — new `backtrack.rs`:
+    `try_backtrack(text: &str) -> Option<String>`, a deterministic pass
+    that collapses "X actually Y" -> "Y" and "X, scratch that, Y" -> "Y"
+    for an explicit trigger-word list. This is deliberately narrower than
+    Wispr's version, which also catches natural restatement without a
+    trigger word via full-context LLM judgment — that fuzzier case is
+    already partially covered by the existing "fix filler words, false
+    starts" instruction in `llm.rs`'s refinement prompts (when a mode has
+    LLM refinement on; Plain mode defaults it off). The new deterministic
+    pass exists so the common explicit-trigger-word case works even with
+    Ollama down, same rationale as the boilerplate-generation fallback.
+  - **Explicitly deferred, lower priority**: trailing-period-by-app +
+    "Writing Style" tuning, and context-aware mid-sentence
+    lowercasing/spacing — both cosmetic relative to the above, and the
+    trailing-period one requires the same per-app messaging-app
+    detection list Wispr maintains, which is a lot of surface for a
+    minor casing nicety.
+  - **Explicitly out of scope**: file tagging in Cursor/Windsurf (from
+    the same Wispr page) — belongs with the selected-text/on-screen
+    context work already tracked above under the SuperWhisper gap
+    analysis, not this entry.
+
 - **App-aware modes + LLM refinement** (shipped 2026-08-15) —
   frontmost-app detection (`app_detect.rs`, `NSWorkspace`), a mode
   framework with built-in defaults for common apps (`modes.rs`), a
