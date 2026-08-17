@@ -1043,12 +1043,16 @@ const WIDGET_MODE_LABEL: Record<WidgetMode, string> = {
 
 function DeliverySection() {
   const [copyOnly, setCopyOnly] = useState(false);
+  const [pressEnterEnabled, setPressEnterEnabled] = useState(false);
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
-    invoke<boolean>("get_copy_only")
-      .then(setCopyOnly)
-      .catch((err) => console.error("get_copy_only failed:", err))
+    Promise.all([invoke<boolean>("get_copy_only"), invoke<boolean>("get_press_enter_enabled")])
+      .then(([copyOnlyValue, pressEnterValue]) => {
+        setCopyOnly(copyOnlyValue);
+        setPressEnterEnabled(pressEnterValue);
+      })
+      .catch((err) => console.error("failed to load delivery settings:", err))
       .finally(() => setChecked(true));
   }, []);
 
@@ -1060,21 +1064,42 @@ function DeliverySection() {
     });
   }
 
+  function togglePressEnter(enabled: boolean) {
+    setPressEnterEnabled(enabled);
+    invoke("set_press_enter_enabled", { enabled }).catch((err) => {
+      console.error("set_press_enter_enabled failed:", err);
+      setPressEnterEnabled(!enabled);
+    });
+  }
+
   return (
     <div className="mb-4 border-b border-base-content/10 pb-3">
       <label className="mb-1 block text-xs font-medium opacity-70">Delivery</label>
       {!checked ? (
         <span className="loading loading-spinner loading-xs" />
       ) : (
-        <label className="flex items-center gap-1.5 text-xs">
-          <input
-            type="checkbox"
-            className="checkbox checkbox-xs"
-            checked={copyOnly}
-            onChange={(e) => toggleCopyOnly(e.target.checked)}
-          />
-          Copy only — don't auto-paste into the active app
-        </label>
+        <div className="flex flex-col gap-2">
+          <label className="flex items-center gap-1.5 text-xs">
+            <input
+              type="checkbox"
+              className="checkbox checkbox-xs"
+              checked={copyOnly}
+              onChange={(e) => toggleCopyOnly(e.target.checked)}
+            />
+            Copy only — don't auto-paste into the active app
+          </label>
+          <label className="flex items-center gap-1.5 text-xs">
+            <input
+              type="checkbox"
+              className="checkbox checkbox-xs"
+              checked={pressEnterEnabled}
+              disabled={copyOnly}
+              onChange={(e) => togglePressEnter(e.target.checked)}
+            />
+            Say "press enter" to submit — presses Enter after pasting
+            {copyOnly && " (disabled while copy only is on)"}
+          </label>
+        </div>
       )}
     </div>
   );

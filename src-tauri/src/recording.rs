@@ -140,6 +140,34 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
 
     match transcribed {
         Ok(text) if !text.is_empty() => {
+            // Spoken numbered lists ("one... two...") are expanded before
+            // punctuation commands — it needs to see the raw marker words
+            // ("one", "two") before anything else touches them, and it
+            // hands back a real newline-separated list for the
+            // punctuation pass (and everything downstream) to treat as
+            // ordinary already-formatted text.
+            let text = crate::punctuation::expand_lists(&text);
+
+            // Named punctuation commands ("period", "open paren", "new
+            // line") are expanded next, ahead of everything else — like
+            // casing commands below, they're cross-cutting rather than
+            // mode-gated, and downstream steps (casing extraction, LLM
+            // refinement) all work better against already-punctuated text
+            // than against the literal spoken words.
+            let text = crate::punctuation::expand_punctuation(&text);
+
+            // "Press enter": stripped before casing/boilerplate/mode so
+            // none of those see the trailing control phrase as content.
+            // Gated behind a Settings toggle (default off) — an
+            // unexpected Enter keystroke is a worse failure mode than an
+            // unexpected paste, so unlike the other punctuation commands
+            // above this one needs an explicit opt-in.
+            let (text, should_press_enter) = if cfg.press_enter_enabled {
+                crate::punctuation::extract_press_enter(&text)
+            } else {
+                (text, false)
+            };
+
             // Casing directives ("snake case error response handler") are a
             // cross-cutting syntax command, not gated behind a Mode — they
             // apply no matter which app/mode is active, and skip both
@@ -183,7 +211,13 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
                 (formatted, format!("{:?}", settings.mode))
             };
 
-            let deliver = if cfg.copy_only {
+            // A fully-consumed "press enter"-only utterance formats down
+            // to an empty string — nothing to paste/copy in that case
+            // (would otherwise silently overwrite the clipboard with
+            // nothing), but Enter still needs to fire below.
+            let deliver = if formatted.is_empty() {
+                Ok(())
+            } else if cfg.copy_only {
                 crate::paste::copy_text(&formatted)
             } else {
                 paste_text(&formatted)
@@ -191,6 +225,17 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
 
             match deliver {
                 Ok(()) => {
+                    // Copy-only means the user opted out of synthetic
+                    // keystrokes entirely (that's the point of the mode,
+                    // and why it doesn't need Accessibility permission),
+                    // so "press enter" is skipped rather than sending one
+                    // anyway.
+                    if should_press_enter && !cfg.copy_only {
+                        if let Err(err) = crate::paste::press_enter() {
+                            crate::applog!("press_enter: failed to simulate Enter: {err}");
+                        }
+                    }
+
                     // Cloned before the moves into `append_entry` below —
                     // the webhook payload needs its own copies of whatever
                     // it fires after.
@@ -199,11 +244,20 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
 
                     // Only log to history what actually reached the user —
                     // a failed paste/copy shouldn't silently show up as
-                    // history.
-                    let timestamp_ms =
-                        crate::history::append_entry(app, &formatted, app_name, Some(mode_label));
+                    // history, and neither should an empty "press enter
+                    // only" utterance with nothing to show.
+                    let timestamp_ms = if !formatted.is_empty() {
+                        Some(crate::history::append_entry(app, &formatted, app_name, Some(mode_label)))
+                    } else {
+                        None
+                    };
 
-                    if let Some(webhook_url) = cfg.webhook_url.clone() {
+                    // Mirrors the history-logging condition above — an
+                    // empty "press enter only" utterance has no real
+                    // transcript to send downstream either.
+                    if let (Some(webhook_url), Some(timestamp_ms)) =
+                        (cfg.webhook_url.clone(), timestamp_ms)
+                    {
                         crate::webhook::send_entry(
                             webhook_url,
                             crate::webhook::WebhookPayload {
@@ -224,7 +278,7 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
                     // already saved and the transcript already delivered —
                     // a slow/unreachable Ollama call here should never add
                     // latency to the thing the user is actually waiting on.
-                    if cfg.journal_enabled {
+                    if let (true, Some(timestamp_ms)) = (cfg.journal_enabled, timestamp_ms) {
                         let journal_app = app.clone();
                         let journal_text = formatted.clone();
                         let journal_model = cfg.llm_model.clone();
@@ -335,6 +389,18 @@ pub fn set_next_mode_override(mode: Option<modes::Mode>, state: tauri::State<Rec
 #[tauri::command]
 pub fn get_next_mode_override(state: tauri::State<RecordingState>) -> Option<modes::Mode> {
     *state.mode_override.lock().unwrap()
+}
+
+#[tauri::command]
+pub fn get_press_enter_enabled(app: AppHandle) -> bool {
+    crate::config::load(&app).press_enter_enabled
+}
+
+#[tauri::command]
+pub fn set_press_enter_enabled(app: AppHandle, enabled: bool) {
+    let mut cfg = crate::config::load(&app);
+    cfg.press_enter_enabled = enabled;
+    let _ = crate::config::save(&app, &cfg);
 }
 
 #[derive(serde::Serialize)]
