@@ -5,6 +5,7 @@ mod boilerplate;
 mod config;
 mod file_tagging;
 mod history;
+mod insights;
 mod isolate;
 mod llm;
 mod logging;
@@ -38,6 +39,7 @@ use history::{
     clear_history, delete_history_entry, get_history_retention_days, get_journal_enabled,
     list_history_entries, set_history_retention_days, set_journal_enabled,
 };
+use insights::get_insights;
 use llm::{get_llm_model, list_llm_catalog, list_ollama_models, pull_llm_model, set_llm_model};
 use logging::{clear_logs, get_logs};
 use models::{download_model, list_models, set_active_model};
@@ -258,6 +260,7 @@ pub fn run() {
             send_test_webhook,
             get_snippets,
             set_snippets,
+            get_insights,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

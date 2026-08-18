@@ -23,6 +23,30 @@ pub struct HistoryEntry {
     /// the entry predates this field).
     #[serde(default)]
     pub summary: Option<String>,
+    /// Recording length, read from the wav header (see
+    /// `stt::wav_duration_ms`) — feeds the words-per-minute stat in
+    /// Insights. `None` for entries predating this field, or if the wav
+    /// header couldn't be read; never fatal to logging the entry itself.
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    /// Which pre-LLM deterministic passes actually fired on this dictation
+    /// — "lists", "punctuation", "backtrack", "press_enter" (see
+    /// `recording::transcribe_and_paste`). Casing/snippet/boilerplate
+    /// aren't repeated here since `mode` already names those. Feeds the
+    /// Insights feature-adoption checklist ("have you tried Backtrack?").
+    #[serde(default)]
+    pub features_used: Vec<String>,
+    /// Word count of what was actually *spoken* (post punctuation/list/
+    /// backtrack expansion, pre snippet/casing/boilerplate substitution) —
+    /// deliberately not derived from `text` at read time, since `text` is
+    /// the *delivered* content: for a snippet or boilerplate dictation
+    /// that can be many more/fewer words than what the user said (a
+    /// two-word snippet trigger expanding to a multi-line checklist would
+    /// wildly inflate a words-per-minute stat computed off `text` alone).
+    /// `None` for entries predating this field — Insights falls back to
+    /// counting `text` for those, the best available approximation.
+    #[serde(default)]
+    pub spoken_words: Option<u32>,
 }
 
 fn history_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -66,7 +90,15 @@ fn write_all(app: &AppHandle, entries: &[HistoryEntry]) -> Result<(), String> {
 /// Returns the timestamp it stored the entry under, so a caller that wants
 /// to fill in `summary` afterward (see `set_entry_summary`) has a key to
 /// find it again without re-reading the whole file first.
-pub fn append_entry(app: &AppHandle, text: &str, app_name: Option<String>, mode: Option<String>) -> u64 {
+pub fn append_entry(
+    app: &AppHandle,
+    text: &str,
+    app_name: Option<String>,
+    mode: Option<String>,
+    duration_ms: Option<u64>,
+    features_used: Vec<String>,
+    spoken_words: Option<u32>,
+) -> u64 {
     let timestamp_ms = now_ms();
     let Ok(path) = history_path(app) else {
         return timestamp_ms;
@@ -77,6 +109,9 @@ pub fn append_entry(app: &AppHandle, text: &str, app_name: Option<String>, mode:
         app_name,
         mode,
         summary: None,
+        duration_ms,
+        features_used,
+        spoken_words,
     };
     let Ok(line) = serde_json::to_string(&entry) else {
         return timestamp_ms;
@@ -104,6 +139,14 @@ pub fn set_entry_summary(app: &AppHandle, timestamp_ms: u64, summary: String) {
     if write_all(app, &entries).is_ok() {
         let _ = app.emit("history-updated", ());
     }
+}
+
+/// All retained entries, oldest first, uncapped — unlike
+/// `list_history_entries`, which truncates to `MAX_ENTRIES_RETURNED` for
+/// the History list UI. Insights aggregation (total words, streaks, app
+/// usage) needs the real count, not just the most recent page of it.
+pub fn all_entries(app: &AppHandle) -> Vec<HistoryEntry> {
+    read_all(app)
 }
 
 /// Deletes entries older than the configured retention window. Called at
