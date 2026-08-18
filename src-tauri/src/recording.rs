@@ -8,6 +8,16 @@ use crate::modes;
 use crate::paste::paste_text;
 use crate::stt::WhisperEngine;
 
+/// What the shared `AudioHandle`/`is_recording` pair is currently being used
+/// for. Dictation and voice enrollment (`voice_isolation.rs`) both drive the
+/// same underlying recording primitive; without this, a hotkey press mid-
+/// enrollment would hit `toggle_recording`'s `fetch_xor` and misfire
+/// `transcribe_and_paste` on the enrollment clip.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RecordingPurpose {
+    Enrollment,
+}
+
 pub struct RecordingState {
     pub audio: AudioHandle,
     pub whisper: WhisperEngine,
@@ -25,6 +35,10 @@ pub struct RecordingState {
     /// pick for the frontmost app, and is consumed (cleared) the moment a
     /// dictation uses it, so it never silently applies to a second one.
     pub mode_override: Mutex<Option<modes::Mode>>,
+    /// `Some(Enrollment)` while `voice_isolation.rs` owns the shared
+    /// recording primitive — see `RecordingPurpose`. `None` means dictation
+    /// (the default/normal case) owns it.
+    pub recording_purpose: Mutex<Option<RecordingPurpose>>,
 }
 
 /// Swaps the tray icon between its default template look and a red-dot
@@ -51,6 +65,10 @@ fn set_tray_recording_indicator(app: &AppHandle, recording: bool) {
 /// both drive the same start/stop lifecycle.
 pub fn toggle_recording(app: &AppHandle) {
     let state = app.state::<RecordingState>();
+    if state.recording_purpose.lock().unwrap().is_some() {
+        crate::applog!("recording: toggle ignored, the recorder is in use for voice enrollment");
+        return;
+    }
     let was_recording = state.is_recording.fetch_xor(true, Ordering::SeqCst);
 
     if was_recording {

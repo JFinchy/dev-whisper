@@ -48,38 +48,60 @@ build phases.
 
 ## Feature Requests
 
-- **Isolated Voice mode, phase 1** (in testing, 2026-08-17) — a Settings
-  toggle that filters a recording down to the primary user's voice before
-  Whisper transcribes it. Runs post-capture (once, on the fully-recorded
-  buffer, right before transcription) rather than live/streaming, matching
-  the app's push-to-talk architecture and avoiding the latency floor a
-  continuous-inference approach would need. New `isolate.rs`: an RMS
-  energy gate with hysteresis (separate enter/exit thresholds so it
-  doesn't chatter at the boundary) and ~150ms hangover padding, zero-fills
-  everything outside the detected voiced ranges rather than trimming —
-  keeps the buffer's timeline continuous for whisper.cpp and lets a
-  fully-masked clip degrade into the existing "no speech detected" path.
-  `stt.rs`'s `transcribe_with_model` was split into sample-loading +
-  `transcribe_samples()` to give this a hook point between the two. 7 new
-  unit tests (silence/tone/tone-silence-tone boundary cases, exact-zeroing
-  + length-preservation for masking); full existing suite (76 tests,
-  including the real-whisper-model smoke tests) still green.
-  - **Known limitation of phase 1 as merged**: this is the energy-gate
-    fallback only — it suppresses quiet background noise but cannot
-    distinguish a second human voice at similar volume. Settings copy
-    says so explicitly.
-  - **Phase 2, not yet built**: voice enrollment (record a short sample
-    once) + speaker-embedding cosine-similarity masking, auto-selected
-    over the energy gate once a voice is enrolled. Design already done —
-    `sherpa-onnx` (official k2-fsa Rust crate, Apache-2.0, statically
-    linked — no dylib bundling/signing risk unlike a raw `ort`
+- **Isolated Voice mode** (phase 2 built, in testing, 2026-08-17) — a
+  Settings toggle that filters a recording down to the primary user's
+  voice before Whisper transcribes it. Runs post-capture (once, on the
+  fully-recorded buffer, right before transcription) rather than
+  live/streaming, matching the app's push-to-talk architecture and
+  avoiding the latency floor a continuous-inference approach would need.
+  New `isolate.rs`: an RMS energy gate with hysteresis (separate
+  enter/exit thresholds so it doesn't chatter at the boundary) and
+  ~150ms hangover padding, zero-fills everything outside the detected
+  voiced ranges rather than trimming — keeps the buffer's timeline
+  continuous for whisper.cpp and lets a fully-masked clip degrade into
+  the existing "no speech detected" path. `stt.rs`'s
+  `transcribe_with_model` was split into sample-loading +
+  `transcribe_samples()` to give this a hook point between the two.
+  - **Phase 1 (merged, energy-gate only)**: 7 unit tests
+    (silence/tone/tone-silence-tone boundary cases, exact-zeroing +
+    length-preservation for masking).
+  - **Phase 2 (built 2026-08-17)**: voice enrollment + speaker-embedding
+    cosine-similarity masking, auto-selected over the energy gate once a
+    voice is enrolled. Added `sherpa-onnx = "1.13.5"` (official k2-fsa
+    Rust crate, Apache-2.0, statically linked — confirmed it resolves
+    and builds clean, no dylib bundling/signing risk unlike a raw `ort`
     dependency) plus a bundled `wespeaker_en_voxceleb_resnet34_LM.onnx`
-    (26.5MB, Apache-2.0) speaker-embedding model, CPU inference (no
-    CoreML — unlike Parakeet's full ASR decode, a handful of short-window
-    embedding calls per recording is cheap enough on CPU that chasing
-    CoreML's flagged instability isn't worth it here). Deferred so phase
-    1 could merge and get real-world testing before taking on a new
-    external build dependency and a bundled binary model asset.
+    (25.3MB, Apache-2.0, downloaded from the k2-fsa/sherpa-onnx GitHub
+    release and confirmed live) speaker-embedding model as a Tauri
+    `resources` entry, CPU inference (no CoreML — cheap enough on CPU
+    that chasing CoreML's flagged instability, per the Parakeet entry
+    below, isn't worth it here). New `voice_isolation.rs`:
+    `start_voice_enrollment`/`stop_voice_enrollment`/
+    `get_voice_enrollment_status` commands, reusing the same
+    `AudioHandle` dictation uses, guarded by a new
+    `RecordingPurpose` mutex on `RecordingState` so a hotkey press
+    mid-enrollment can't misfire `transcribe_and_paste` on the
+    enrollment clip. Enrollment requires ≥3s of actual detected speech
+    (via the phase-1 energy gate) before it'll compute an embedding;
+    persists to `voice_profile.json` (own file, mirrors `history.rs`'s
+    pattern), tagged with a `model_id` so a future embedding-model swap
+    can force re-enrollment instead of silently comparing incompatible
+    vectors. `isolate::apply`'s embedding path scores each voiced range
+    (widening short ones with context first) via cosine similarity
+    against the enrolled profile (starting threshold 0.5, needs
+    empirical tuning during manual verification) and fails open — a
+    scoring hiccup keeps the segment rather than silently dropping real
+    speech. Settings UI now shows enrollment status + Enroll/Re-enroll/
+    Stop controls, reusing `ModelsSection`'s `listen()` event pattern.
+    9 new unit tests (cosine-similarity accept/reject cases,
+    `widen_for_scoring` bounds) plus one gated real-model smoke test
+    (loads the actual bundled `.onnx`, asserts a 256-dim embedding on a
+    synthetic tone — passed). Full suite: 86 tests green, `tsc --noEmit`
+    and `bun run build` both clean.
+  - **Not yet done**: manual end-to-end verification — needs a live mic
+    and a second real/played voice, not something automated tests alone
+    can check. See `manual-testing-inbox/isolated-voice.md` for the
+    checklist.
   - **Scope note**: this deliberately revisits the 2026-08-16 SuperWhisper
     research's call to leave speaker diarization/meeting-notes out of
     scope. Multi-speaker "meeting mode" (labeling Speaker 1/2/3 segments)

@@ -13,7 +13,7 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 /// memory (tens to hundreds of MB depending on model size).
 const MAX_WARM_CONTEXTS: usize = 3;
 
-const WHISPER_SAMPLE_RATE: u32 = 16_000;
+pub(crate) const WHISPER_SAMPLE_RATE: u32 = 16_000;
 
 /// Default developer-jargon vocabulary, used to seed a fresh config (and as
 /// a fallback if the persisted list is ever empty). Biases Whisper toward

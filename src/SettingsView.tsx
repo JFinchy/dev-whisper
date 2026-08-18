@@ -95,6 +95,11 @@ type ModelStatus = {
   active: boolean;
 };
 
+type EnrollmentStatus = {
+  enrolled: boolean;
+  enrolled_at_ms: number | null;
+};
+
 function prettyCode(code: string): string {
   if (code.startsWith("Key")) return code.slice(3);
   if (code.startsWith("Digit")) return code.slice(5);
@@ -1313,12 +1318,39 @@ function GeneralSection() {
 function VoiceIsolationSection() {
   const [enabled, setEnabled] = useState(false);
   const [checked, setChecked] = useState(false);
+  const [status, setStatus] = useState<EnrollmentStatus | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function refreshStatus() {
+    invoke<EnrollmentStatus>("get_voice_enrollment_status")
+      .then(setStatus)
+      .catch((err) => console.error("get_voice_enrollment_status failed:", err));
+  }
 
   useEffect(() => {
     invoke<boolean>("get_isolated_voice_enabled")
       .then(setEnabled)
       .catch((err) => console.error("get_isolated_voice_enabled failed:", err))
       .finally(() => setChecked(true));
+    refreshStatus();
+
+    const unlistenStarted = listen("enrollment-started", () => setRecording(true));
+    const unlistenDone = listen("enrollment-complete", () => {
+      setRecording(false);
+      setError(null);
+      refreshStatus();
+    });
+    const unlistenError = listen<string>("enrollment-error", (e) => {
+      setRecording(false);
+      setError(e.payload);
+    });
+
+    return () => {
+      unlistenStarted.then((f) => f());
+      unlistenDone.then((f) => f());
+      unlistenError.then((f) => f());
+    };
   }, []);
 
   function toggleEnabled(next: boolean) {
@@ -1326,6 +1358,20 @@ function VoiceIsolationSection() {
     invoke("set_isolated_voice_enabled", { enabled: next }).catch((err) => {
       console.error("set_isolated_voice_enabled failed:", err);
       setEnabled(!next);
+    });
+  }
+
+  function startEnrollment() {
+    setError(null);
+    invoke("start_voice_enrollment")
+      .then(() => setRecording(true))
+      .catch((err) => setError(String(err)));
+  }
+
+  function stopEnrollment() {
+    invoke("stop_voice_enrollment").catch((err) => {
+      console.error("stop_voice_enrollment failed:", err);
+      setRecording(false);
     });
   }
 
@@ -1343,13 +1389,46 @@ function VoiceIsolationSection() {
               checked={enabled}
               onChange={(e) => toggleEnabled(e.target.checked)}
             />
-            Isolated Voice — filter out background noise before transcribing
+            Isolated Voice — filter out other speakers/background noise before transcribing
           </label>
+
+          <div className="flex items-center justify-between rounded-md bg-base-100 px-2.5 py-1.5 text-xs">
+            <div>
+              <div className="font-medium">{status?.enrolled ? "Voice enrolled" : "Not enrolled"}</div>
+              {status?.enrolled && status.enrolled_at_ms && (
+                <div className="opacity-50">
+                  {new Date(status.enrolled_at_ms).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </div>
+              )}
+            </div>
+            {recording ? (
+              <button className="btn btn-xs btn-error" onClick={stopEnrollment}>
+                Stop
+              </button>
+            ) : (
+              <button className="btn btn-xs" onClick={startEnrollment}>
+                {status?.enrolled ? "Re-enroll" : "Enroll voice"}
+              </button>
+            )}
+          </div>
+
+          {recording && (
+            <p className="text-xs opacity-60">
+              Recording — speak naturally for a few seconds, then press Stop.
+            </p>
+          )}
+
           <p className="text-xs opacity-60">
-            Not enrolled: this only suppresses quiet background noise, not a
-            second person talking at similar volume. Voice enrollment for
-            stronger speaker-based isolation is coming soon.
+            {status?.enrolled
+              ? "Enrolled: recordings are matched against your enrolled voice, rejecting other speakers."
+              : "Not enrolled: this only suppresses quiet background noise, not a second person talking at similar volume. Enroll your voice above for stronger speaker-based isolation."}
           </p>
+
+          {error && <p className="text-xs text-error">{error}</p>}
         </div>
       )}
     </div>

@@ -18,6 +18,7 @@ mod snippets;
 mod stt;
 mod syntax;
 mod theme;
+mod voice_isolation;
 mod webhook;
 mod widget;
 
@@ -51,6 +52,9 @@ use recording::{
 use shortcut::{get_shortcut, set_shortcut, PushToTalkState};
 use snippets::{get_snippets, set_snippets};
 use theme::{get_theme, set_theme};
+use voice_isolation::{
+    get_voice_enrollment_status, start_voice_enrollment, stop_voice_enrollment, VoiceIsolationState,
+};
 use webhook::{get_webhook_url, send_test_webhook, set_webhook_url};
 use widget::{get_widget_mode, set_widget_mode, set_widget_size};
 use stt::WhisperEngine;
@@ -229,6 +233,9 @@ pub fn run() {
             set_theme,
             get_press_enter_enabled,
             set_press_enter_enabled,
+            start_voice_enrollment,
+            stop_voice_enrollment,
+            get_voice_enrollment_status,
             list_history_entries,
             clear_history,
             delete_history_entry,
@@ -287,7 +294,12 @@ pub fn run() {
                 is_recording: AtomicBool::new(false),
                 active_app: Mutex::new(None),
                 mode_override: Mutex::new(None),
+                recording_purpose: Mutex::new(None),
             });
+
+            let voice_isolation = VoiceIsolationState::new();
+            voice_isolation.load_persisted(app.handle());
+            app.manage(voice_isolation);
 
             // Deep-link hooks for external automation (Raycast, Hammerspoon,
             // Alfred, shell scripts): `open devwhisper://toggle-recording`

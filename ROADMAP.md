@@ -37,12 +37,15 @@ research-leverage ranking — both now have a full implementation design in
 
 ## In testing
 
-- **Isolated Voice mode, phase 1** — Settings toggle + energy-gate
-  filtering so background noise doesn't reach Whisper; merged to `main`
-  for real-world testing before phase 2 (voice enrollment +
-  speaker-embedding isolation, so a second person talking can actually be
-  rejected, not just quiet noise) is built. See `BACKLOG.md` for the full
-  design and what phase 2 needs.
+- **Isolated Voice mode** — Settings toggle filtering a recording down to
+  the primary user's voice before Whisper transcribes it. Both phases now
+  built: phase 1's energy-gate background-noise filtering (merged, tested)
+  and phase 2's voice enrollment + speaker-embedding cosine-similarity
+  masking (sherpa-onnx + a bundled WeSpeaker model), which can actually
+  reject a second person talking, not just quiet noise. Needs manual
+  end-to-end verification (real enrollment, background-voice rejection,
+  threshold tuning) before it's considered done. See `BACKLOG.md` for the
+  full design.
 
 ## Next — needs its own design pass before implementation
 
