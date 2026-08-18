@@ -100,7 +100,8 @@ build phases.
     and `bun run build` both clean.
   - **Not yet done**: manual end-to-end verification — needs a live mic
     and a second real/played voice, not something automated tests alone
-    can check. See `MANUAL_TESTS.md` for the checklist.
+    can check. See `manual-testing-inbox/isolated-voice.md` for the
+    checklist.
   - **Scope note**: this deliberately revisits the 2026-08-16 SuperWhisper
     research's call to leave speaker diarization/meeting-notes out of
     scope. Multi-speaker "meeting mode" (labeling Speaker 1/2/3 segments)
