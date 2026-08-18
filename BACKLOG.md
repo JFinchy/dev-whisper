@@ -98,6 +98,11 @@ build phases.
     (loads the actual bundled `.onnx`, asserts a 256-dim embedding on a
     synthetic tone — passed). Full suite: 86 tests green, `tsc --noEmit`
     and `bun run build` both clean.
+    Reference for the approach: [whisper-diarization](https://github.com/MahmoudAshraf97/whisper-diarization)
+    (pyannote + faster-whisper pipeline) — Python/cloud-model stack we
+    won't adopt directly, but useful as a worked example of the
+    embedding-then-cluster mechanics if the cosine-similarity masking
+    design above hits a snag.
   - **Not yet done**: manual end-to-end verification — needs a live mic
     and a second real/played voice, not something automated tests alone
     can check. See `manual-testing-inbox/isolated-voice.md` for the
