@@ -4,6 +4,7 @@ mod backtrack;
 mod boilerplate;
 mod clipboard;
 mod config;
+mod doubletap;
 mod file_tagging;
 mod history;
 mod isolate;
@@ -35,6 +36,7 @@ use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState as PressState};
 
 use audio::AudioHandle;
+use doubletap::{get_double_tap_enabled, set_double_tap_enabled, DoubleTapState};
 use history::{
     clear_history, delete_history_entry, get_history_retention_days, get_journal_enabled,
     list_history_entries, reprocess_history_text, search_history_entries,
@@ -215,6 +217,8 @@ pub fn run() {
             set_input_device,
             get_shortcut,
             set_shortcut,
+            get_double_tap_enabled,
+            set_double_tap_enabled,
             list_models,
             download_model,
             set_active_model,
@@ -279,6 +283,11 @@ pub fn run() {
             app.manage(PushToTalkState {
                 current: Mutex::new(shortcut_cfg),
             });
+
+            app.manage(DoubleTapState::new(saved_config.double_tap_fn_enabled));
+            if saved_config.double_tap_fn_enabled {
+                doubletap::ensure_listener_started(app.handle());
+            }
 
             let audio = AudioHandle::spawn();
             audio.set_device(saved_config.input_device.clone());

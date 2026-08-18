@@ -309,6 +309,41 @@ build phases.
     `history::update_history_entry_text` persists a Replace, clearing the
     old journal summary since it described text that's no longer there.
 
+- **Double-tap Fn to start/stop recording** (in testing, 2026-08-18, from
+  direct user request) — an opt-in alternative trigger alongside the
+  existing push-to-talk hotkey, not a replacement. Toggling recording
+  (start on one double-tap, stop on the next) rather than
+  double-tap-and-hold, matching macOS's own "press Fn twice" dictation
+  gesture and how Raycast/Alfred-style double-tap hotkeys behave.
+  - **Why a new capture mechanism was needed**: the existing shortcut
+    (`shortcut.rs`) goes through `tauri-plugin-global-shortcut` (Carbon's
+    `RegisterEventHotKey`), which requires a real modifier (Cmd/Ctrl/Alt/
+    Shift) + key code and fires one press/release for a single registered
+    combo — it can't bind to a bare modifier key like Fn, and has no way
+    to detect a tap-tap pattern. Fn key state only shows up through raw
+    global input monitoring. New `doubletap.rs` uses `rdev::listen()` for
+    this (already a dependency — `paste.rs` uses `rdev::simulate()` for
+    the synthetic paste keystroke) rather than adding a new crate.
+    Listen-only on macOS (`CGEventTapOptionListenOnly`), so it observes
+    without consuming — Fn's normal OS behavior is unaffected — but needs
+    Input Monitoring permission, a separate TCC grant from the
+    Accessibility permission `paste.rs` needs.
+  - **Listener lifecycle**: `rdev::listen` blocks forever with no clean
+    shutdown API, so rather than starting/stopping an OS-level tap on
+    every Settings toggle, the background thread spawns at most once per
+    process (`std::sync::Once`) — lazily, the first time the feature is
+    turned on, or eagerly at launch if it was already on. Disabling the
+    feature just flips an `AtomicBool` the callback checks, making it a
+    no-op rather than tearing down the tap.
+  - 4 unit tests on the double-tap timing window (400ms) as a pure
+    function, extracted from the `rdev` callback the same way
+    `history::entry_matches` was pulled out of `search_history_entries` —
+    testable without a real event loop or `AppHandle`.
+  - **Not yet done**: manual verification on real hardware — `rdev`'s Fn
+    key mapping and the Input Monitoring permission prompt can't be
+    exercised by an automated test. See
+    `manual-testing-inbox/double-tap-fn.md`.
+
 - **App-aware modes + LLM refinement** (shipped 2026-08-15) —
   frontmost-app detection (`app_detect.rs`, `NSWorkspace`), a mode
   framework with built-in defaults for common apps (`modes.rs`), a

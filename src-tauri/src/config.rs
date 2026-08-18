@@ -106,6 +106,14 @@ pub struct AppConfig {
     /// user has to populate before the feature does anything.
     #[serde(default = "crate::snippets::default_snippets")]
     pub snippets: Vec<crate::snippets::Snippet>,
+    /// When true, double-tapping the Fn/Globe key toggles recording, as an
+    /// alternative to the modifier+key push-to-talk shortcut above — see
+    /// `doubletap.rs`. Off by default: unlike the registered hotkey, this
+    /// needs a global raw-input listener (macOS Input Monitoring
+    /// permission), which shouldn't be requested unless the user actually
+    /// wants the feature.
+    #[serde(default)]
+    pub double_tap_fn_enabled: bool,
 }
 
 fn default_history_retention_days() -> u32 {
@@ -132,6 +140,7 @@ impl Default for AppConfig {
             theme: crate::theme::Theme::default(),
             press_enter_enabled: false,
             snippets: crate::snippets::default_snippets(),
+            double_tap_fn_enabled: false,
         }
     }
 }
@@ -225,5 +234,6 @@ mod tests {
         assert_eq!(restored.theme, crate::theme::Theme::default());
         assert!(!restored.press_enter_enabled);
         assert_eq!(restored.snippets, crate::snippets::default_snippets());
+        assert!(!restored.double_tap_fn_enabled);
     }
 }

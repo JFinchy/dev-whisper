@@ -10,6 +10,11 @@ built yet.
 - **Push-to-talk global hotkey**, configurable from Settings, persists
   across restarts. Uses Carbon's `RegisterEventHotKey` so it works without
   Accessibility permission — only pasting the result needs that.
+- **Double-tap Fn to start/stop recording** — an opt-in alternative to the
+  hotkey above, matching macOS's own "press Fn twice" dictation gesture.
+  Off by default (needs macOS's Input Monitoring permission, a separate
+  grant from Accessibility); runs alongside the hotkey rather than
+  replacing it.
 - **Local speech-to-text** via whisper.cpp with Metal acceleration.
   Tiny/Base/Small (English) models selectable and downloadable from
   Settings, with per-model download progress.

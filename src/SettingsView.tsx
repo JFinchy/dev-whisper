@@ -121,12 +121,27 @@ function ShortcutSection() {
   const [shortcut, setShortcut] = useState<ShortcutConfig | null>(null);
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [doubleTapEnabled, setDoubleTapEnabled] = useState(false);
+  const [doubleTapChecked, setDoubleTapChecked] = useState(false);
 
   useEffect(() => {
     invoke<ShortcutConfig>("get_shortcut")
       .then(setShortcut)
       .catch((err) => console.error("get_shortcut failed:", err));
+
+    invoke<boolean>("get_double_tap_enabled")
+      .then(setDoubleTapEnabled)
+      .catch((err) => console.error("get_double_tap_enabled failed:", err))
+      .finally(() => setDoubleTapChecked(true));
   }, []);
+
+  function toggleDoubleTap(enabled: boolean) {
+    setDoubleTapEnabled(enabled);
+    invoke("set_double_tap_enabled", { enabled }).catch((err) => {
+      console.error("set_double_tap_enabled failed:", err);
+      setDoubleTapEnabled(!enabled);
+    });
+  }
 
   useEffect(() => {
     if (!listening) return;
@@ -170,6 +185,22 @@ function ShortcutSection() {
         </button>
       </div>
       {error && <p className="mt-1 text-xs text-error">{error}</p>}
+      {doubleTapChecked && (
+        <label className="mt-2 flex items-center gap-1.5 text-xs opacity-80">
+          <input
+            type="checkbox"
+            className="checkbox checkbox-xs"
+            checked={doubleTapEnabled}
+            onChange={(e) => toggleDoubleTap(e.target.checked)}
+          />
+          Double-tap Fn to start/stop recording (in addition to the key above)
+        </label>
+      )}
+      {doubleTapEnabled && (
+        <p className="mt-1 text-xs opacity-60">
+          Needs macOS's Input Monitoring permission — System Settings → Privacy &amp; Security → Input Monitoring.
+        </p>
+      )}
     </div>
   );
 }
