@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactElement } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { applyTheme, THEME_ORDER, THEME_LABEL, THEMES, type ThemeId } from "./theme";
+import { VOCAB_BOOKS } from "./vocabularyBooks";
 
 function IconMic() {
   return (
@@ -75,6 +76,15 @@ function IconPalette() {
       <circle cx="7.5" cy="10.5" r="1.1" fill="currentColor" stroke="none" />
       <circle cx="12" cy="7.5" r="1.1" fill="currentColor" stroke="none" />
       <circle cx="16.5" cy="10.5" r="1.1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+function IconInfo() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 10.5v6" />
+      <circle cx="12" cy="7.5" r="0.9" fill="currentColor" stroke="none" />
     </svg>
   );
 }
@@ -515,6 +525,40 @@ function AppModesSection() {
   );
 }
 
+function VocabularyBooksSection({ terms, onAdopt }: { terms: string[]; onAdopt: (words: string[]) => void }) {
+  const termSet = new Set(terms);
+
+  return (
+    <div className="mb-4 border-b border-base-content/10 pb-3">
+      <label className="mb-1 block text-xs font-medium opacity-70">Vocabulary books</label>
+      <p className="mb-2 text-xs opacity-50">
+        Curated term bundles you can adopt in one click — each one merges into the list below,
+        so you can prune anything you don't need afterward.
+      </p>
+      <div className="dw-book-grid">
+        {VOCAB_BOOKS.map((book) => {
+          const newWords = book.words.filter((w) => !termSet.has(w));
+          const adopted = newWords.length === 0;
+          return (
+            <button
+              key={book.id}
+              type="button"
+              className={`dw-book-card ${adopted ? "adopted" : ""}`}
+              onClick={() => onAdopt(newWords)}
+              disabled={adopted}
+            >
+              <span className="dw-book-title">{book.label}</span>
+              <span className="dw-book-meta">
+                {adopted ? `Adopted · ${book.words.length} words` : `${book.words.length} words — ${book.description}`}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function VocabularySection() {
   const [terms, setTerms] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
@@ -546,45 +590,53 @@ function VocabularySection() {
     save(terms.filter((t) => t !== term));
   }
 
+  function adoptBook(newWords: string[]) {
+    if (newWords.length === 0) return;
+    save([...terms, ...newWords]);
+  }
+
   return (
-    <div className="mb-4 border-t border-base-content/10 pt-3">
-      <label className="mb-1 block text-xs font-medium opacity-70">Vocabulary</label>
-      {loading ? (
-        <span className="loading loading-spinner loading-xs" />
-      ) : (
-        <>
-          <div className="mb-1.5 flex flex-wrap gap-1">
-            {terms.map((term) => (
-              <span key={term} className="badge badge-sm gap-1">
-                {term}
-                <button
-                  className="opacity-60 hover:opacity-100"
-                  onClick={() => removeTerm(term)}
-                  aria-label={`Remove ${term}`}
-                >
-                  ✕
-                </button>
-              </span>
-            ))}
-            {terms.length === 0 && <p className="text-xs opacity-60">No terms yet.</p>}
-          </div>
-          <div className="flex gap-1.5">
-            <input
-              className="input input-sm flex-1"
-              placeholder="Add a term (e.g. kubectl)"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") addTerm();
-              }}
-            />
-            <button className="btn btn-sm" onClick={addTerm}>
-              Add
-            </button>
-          </div>
-        </>
-      )}
-    </div>
+    <>
+      {loading ? null : <VocabularyBooksSection terms={terms} onAdopt={adoptBook} />}
+      <div className="mb-4 border-t border-base-content/10 pt-3">
+        <label className="mb-1 block text-xs font-medium opacity-70">Vocabulary</label>
+        {loading ? (
+          <span className="loading loading-spinner loading-xs" />
+        ) : (
+          <>
+            <div className="mb-1.5 flex flex-wrap gap-1">
+              {terms.map((term) => (
+                <span key={term} className="badge badge-sm gap-1">
+                  {term}
+                  <button
+                    className="opacity-60 hover:opacity-100"
+                    onClick={() => removeTerm(term)}
+                    aria-label={`Remove ${term}`}
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
+              {terms.length === 0 && <p className="text-xs opacity-60">No terms yet.</p>}
+            </div>
+            <div className="flex gap-1.5">
+              <input
+                className="input input-sm flex-1"
+                placeholder="Add a term (e.g. kubectl)"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") addTerm();
+                }}
+              />
+              <button className="btn btn-sm" onClick={addTerm}>
+                Add
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -1247,6 +1299,85 @@ function ThemeSection({ theme, onChange }: { theme: ThemeId; onChange: (id: Them
   );
 }
 
+type LayoutId = "sidebar" | "chain";
+const LAYOUT_LABEL: Record<LayoutId, string> = { sidebar: "Signal", chain: "Signal Chain" };
+const LAYOUT_DESCRIPTION: Record<LayoutId, string> = {
+  sidebar: "Left sidebar, one page of content at a time",
+  chain: "Horizontal pipeline — click a stage to expand it",
+};
+
+function LayoutSection({ layout, onChange }: { layout: LayoutId; onChange: (id: LayoutId) => void }) {
+  return (
+    <div className="mb-4">
+      <label className="mb-1 block text-xs font-medium opacity-70">Layout</label>
+      <div className="flex flex-col gap-1.5">
+        {(["sidebar", "chain"] as LayoutId[]).map((id) => (
+          <button
+            key={id}
+            type="button"
+            className={`dw-theme-row ${layout === id ? "active" : ""}`}
+            onClick={() => onChange(id)}
+          >
+            <span className="flex flex-col items-start gap-0.5">
+              <span>{LAYOUT_LABEL[id]}</span>
+              <span className="text-[10px] font-normal opacity-60">{LAYOUT_DESCRIPTION[id]}</span>
+            </span>
+            {layout === id && <span>✓</span>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const ABOUT_ENTRIES: { title: string; body: string }[] = [
+  {
+    title: "How dictation works",
+    body: "Hold the push-to-talk shortcut (or click-and-hold the widget) and speak. When you release, Dev Whisper transcribes locally with Whisper, applies your active Mode's formatting, and pastes the result into whatever's focused — no cloud round-trip unless you've turned on LLM refinement or a webhook.",
+  },
+  {
+    title: "Voice Isolation",
+    body: "Filters recordings down to your voice before transcription, so background noise or other people talking don't end up in the transcript. Works out of the box with an energy-based fallback; enroll your voice in Voice for stronger speaker-based isolation.",
+  },
+  {
+    title: "Vocabulary",
+    body: "Terms you add bias Whisper's recognition toward your jargon — tool names, library names, anything Whisper would otherwise mishear. Vocabulary books let you adopt a curated bundle (Frontend, Backend, Full-Stack, Product) in one click, then prune anything you don't need.",
+  },
+  {
+    title: "Snippets",
+    body: "Spoken trigger phrases that expand into saved blocks of text — say a snippet's trigger and it's pasted in full, instead of dictating the same boilerplate every time.",
+  },
+  {
+    title: "Modes",
+    body: 'Plain, Casual, or CLI formatting, applied automatically based on which app is frontmost, or overridden for a single dictation from the widget\'s hover flyout. CLI mode turns "git commit update readme" into git commit -m "update readme", for example.',
+  },
+  {
+    title: "LLM refinement",
+    body: "An optional local pass through Ollama that cleans up a transcript further — only runs for modes with it explicitly enabled, since it's an extra background call.",
+  },
+  {
+    title: "History",
+    body: "Every delivered transcript is logged, searchable, and auto-purged after your configured retention window. Turn on the work journal to get a one-line LLM-generated summary attached to each entry.",
+  },
+  {
+    title: "Integrations",
+    body: "Copy-only mode skips the simulated paste keystroke entirely (and the Accessibility permission it needs). The output webhook fires a POST with the delivered transcript to any URL that accepts incoming webhooks — Notion, Slack, n8n, Zapier, Make.com, or your own endpoint.",
+  },
+];
+
+function AboutSection() {
+  return (
+    <div>
+      {ABOUT_ENTRIES.map((entry) => (
+        <div key={entry.title} className="dw-about-entry">
+          <h3>{entry.title}</h3>
+          <p>{entry.body}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function GeneralSection() {
   const [autostart, setAutostart] = useState(false);
   const [widgetMode, setWidgetModeState] = useState<WidgetMode>("compact");
@@ -1444,6 +1575,7 @@ type PageId =
   | "history"
   | "integrations"
   | "appearance"
+  | "about"
   | "advanced";
 
 const NAV: { id: PageId; label: string; icon: () => ReactElement }[] = [
@@ -1458,6 +1590,7 @@ const NAV: { id: PageId; label: string; icon: () => ReactElement }[] = [
 
 const FOOTER_NAV: { id: PageId; label: string; icon: () => ReactElement }[] = [
   { id: "appearance", label: "Appearance", icon: IconPalette },
+  { id: "about", label: "About", icon: IconInfo },
   { id: "advanced", label: "Advanced", icon: IconGear },
 ];
 
@@ -1470,6 +1603,7 @@ const PAGE_TITLE: Record<PageId, string> = {
   history: "History",
   integrations: "Integrations — delivery & webhook",
   appearance: "Appearance",
+  about: "About — features & how it works",
   advanced: "Advanced",
 };
 
@@ -1492,32 +1626,8 @@ function NavItem({
   );
 }
 
-function SettingsView() {
-  const [theme, setThemeState] = useState<ThemeId>("terminal");
+function SidebarLayout({ appearance }: { appearance: ReactElement }) {
   const [page, setPage] = useState<PageId>("dictation");
-
-  useEffect(() => {
-    invoke<ThemeId>("get_theme")
-      .then((t) => {
-        setThemeState(t);
-        applyTheme(t);
-      })
-      .catch((err) => console.error("get_theme failed:", err));
-
-    const unlisten = listen<ThemeId>("theme-changed", (e) => {
-      setThemeState(e.payload);
-      applyTheme(e.payload);
-    });
-    return () => {
-      unlisten.then((f) => f());
-    };
-  }, []);
-
-  function changeTheme(next: ThemeId) {
-    setThemeState(next);
-    applyTheme(next);
-    invoke("set_theme", { theme: next }).catch((err) => console.error("set_theme failed:", err));
-  }
 
   return (
     <main className="dw-shell h-screen">
@@ -1579,12 +1689,172 @@ function SettingsView() {
               <WebhookSection />
             </>
           )}
-          {page === "appearance" && <ThemeSection theme={theme} onChange={changeTheme} />}
+          {page === "appearance" && appearance}
+          {page === "about" && <AboutSection />}
           {page === "advanced" && <LogsSection />}
         </div>
       </div>
     </main>
   );
+}
+
+type NodeId = "input" | "recognition" | "mode" | "refinement" | "output";
+type ActiveNode = NodeId | "app" | null;
+
+const CHAIN: { id: NodeId; label: string; icon: () => ReactElement }[] = [
+  { id: "input", label: "Input", icon: IconMic },
+  { id: "recognition", label: "Recognition", icon: IconWave },
+  { id: "mode", label: "Mode", icon: IconWindow },
+  { id: "refinement", label: "Refinement", icon: IconCpu },
+  { id: "output", label: "Output", icon: IconPlug },
+];
+
+const NODE_DRAWER_TITLE: Record<NodeId, string> = {
+  input: "Input — microphone & shortcut",
+  recognition: "Recognition — Whisper model, voice isolation, vocabulary",
+  mode: "Mode — app-aware formatting rules",
+  refinement: "Refinement — local LLM (Ollama)",
+  output: "Output — delivery, webhook, history",
+};
+
+function ChainNode({
+  label,
+  icon,
+  active,
+  onClick,
+}: {
+  label: string;
+  icon: ReactElement;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" className={`dw-chain-node ${active ? "active" : ""}`} onClick={onClick}>
+      <span className="dw-icon">{icon}</span>
+      <span className="dw-label">{label}</span>
+    </button>
+  );
+}
+
+function ChainLayout({ appearance }: { appearance: ReactElement }) {
+  const [active, setActive] = useState<ActiveNode>("input");
+
+  function toggle(id: ActiveNode) {
+    setActive((current) => (current === id ? null : id));
+  }
+
+  return (
+    <main className="dw-shell h-screen overflow-y-auto">
+      <div className="dw-titlebar">
+        <h1>Dev Whisper — signal chain</h1>
+      </div>
+
+      <div className="dw-chain-row">
+        {CHAIN.map((node) => (
+          <div key={node.id} className="contents">
+            <ChainNode
+              label={node.label}
+              icon={node.icon()}
+              active={active === node.id}
+              onClick={() => toggle(node.id)}
+            />
+            {node.id !== "output" && <div className="dw-chain-link" />}
+          </div>
+        ))}
+        <div className="dw-chain-app-gap" />
+        <ChainNode label="App" icon={<IconGear />} active={active === "app"} onClick={() => toggle("app")} />
+      </div>
+
+      {active && (
+        <div className="dw-drawer">
+          <p className="dw-drawer-title">
+            {active === "app" ? "App — general, appearance & advanced" : NODE_DRAWER_TITLE[active]}
+          </p>
+          {active === "input" && (
+            <>
+              <DeviceSection />
+              <ShortcutSection />
+            </>
+          )}
+          {active === "recognition" && (
+            <>
+              <ModelsSection />
+              <VoiceIsolationSection />
+              <VocabularySection />
+              <SnippetsSection />
+            </>
+          )}
+          {active === "mode" && <AppModesSection />}
+          {active === "refinement" && <LlmSection />}
+          {active === "output" && (
+            <>
+              <DeliverySection />
+              <WebhookSection />
+              <HistorySection />
+            </>
+          )}
+          {active === "app" && (
+            <>
+              <GeneralSection />
+              {appearance}
+              <div className="mb-4 border-t border-base-content/10 pt-3">
+                <AboutSection />
+              </div>
+              <LogsSection />
+            </>
+          )}
+        </div>
+      )}
+    </main>
+  );
+}
+
+function SettingsView() {
+  const [theme, setThemeState] = useState<ThemeId>("terminal");
+  const [layout, setLayoutState] = useState<LayoutId>("sidebar");
+
+  useEffect(() => {
+    invoke<ThemeId>("get_theme")
+      .then((t) => {
+        setThemeState(t);
+        applyTheme(t);
+      })
+      .catch((err) => console.error("get_theme failed:", err));
+
+    invoke<LayoutId>("get_layout")
+      .then(setLayoutState)
+      .catch((err) => console.error("get_layout failed:", err));
+
+    const unlistenTheme = listen<ThemeId>("theme-changed", (e) => {
+      setThemeState(e.payload);
+      applyTheme(e.payload);
+    });
+    const unlistenLayout = listen<LayoutId>("layout-changed", (e) => setLayoutState(e.payload));
+    return () => {
+      unlistenTheme.then((f) => f());
+      unlistenLayout.then((f) => f());
+    };
+  }, []);
+
+  function changeTheme(next: ThemeId) {
+    setThemeState(next);
+    applyTheme(next);
+    invoke("set_theme", { theme: next }).catch((err) => console.error("set_theme failed:", err));
+  }
+
+  function changeLayout(next: LayoutId) {
+    setLayoutState(next);
+    invoke("set_layout", { layout: next }).catch((err) => console.error("set_layout failed:", err));
+  }
+
+  const appearance = (
+    <>
+      <ThemeSection theme={theme} onChange={changeTheme} />
+      <LayoutSection layout={layout} onChange={changeLayout} />
+    </>
+  );
+
+  return layout === "chain" ? <ChainLayout appearance={appearance} /> : <SidebarLayout appearance={appearance} />;
 }
 
 export default SettingsView;

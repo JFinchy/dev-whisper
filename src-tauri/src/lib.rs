@@ -51,7 +51,7 @@ use recording::{
 };
 use shortcut::{get_shortcut, set_shortcut, PushToTalkState};
 use snippets::{get_snippets, set_snippets};
-use theme::{get_theme, set_theme};
+use theme::{get_layout, get_theme, set_layout, set_theme};
 use voice_isolation::{
     get_voice_enrollment_status, start_voice_enrollment, stop_voice_enrollment, VoiceIsolationState,
 };
@@ -231,6 +231,8 @@ pub fn run() {
             get_next_mode_override,
             get_theme,
             set_theme,
+            get_layout,
+            set_layout,
             get_press_enter_enabled,
             set_press_enter_enabled,
             start_voice_enrollment,

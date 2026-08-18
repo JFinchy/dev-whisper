@@ -106,6 +106,10 @@ pub struct AppConfig {
     /// user has to populate before the feature does anything.
     #[serde(default = "crate::snippets::default_snippets")]
     pub snippets: Vec<crate::snippets::Snippet>,
+    /// Settings window navigation shape (sidebar vs. signal-chain pipeline)
+    /// — see `theme::Layout`. Defaults to Sidebar.
+    #[serde(default)]
+    pub layout: crate::theme::Layout,
 }
 
 fn default_history_retention_days() -> u32 {
@@ -132,6 +136,7 @@ impl Default for AppConfig {
             theme: crate::theme::Theme::default(),
             press_enter_enabled: false,
             snippets: crate::snippets::default_snippets(),
+            layout: crate::theme::Layout::default(),
         }
     }
 }
@@ -225,5 +230,6 @@ mod tests {
         assert_eq!(restored.theme, crate::theme::Theme::default());
         assert!(!restored.press_enter_enabled);
         assert_eq!(restored.snippets, crate::snippets::default_snippets());
+        assert_eq!(restored.layout, crate::theme::Layout::default());
     }
 }
