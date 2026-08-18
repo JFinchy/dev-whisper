@@ -124,43 +124,45 @@ build phases.
     that's exposed beyond Tauri's IPC, which it currently isn't) or this
     can be revisited if it turns out to matter in practice.
 
-- **Snippet library** (from the 2026-08-17 competitive research — Wispr
-  Flow: a spoken cue expands to a saved block of text, e.g. "PR
-  Checklist" or "Environment Setup"). Not started. Distinct from the
-  vocabulary editor, which is about recognition *accuracy*, not
-  insertion. Design, following the same shape as the already-shipped
-  Syntax & Casing Commands (`syntax.rs`) and Boilerplate Generation
-  (`boilerplate.rs`) — a pure, fast, pre-LLM detection step in the
-  transcript pipeline:
-  - New config: `snippets: Vec<Snippet>` where
-    `Snippet { trigger: String, body: String }`, user-managed from a new
-    Settings section (same add/edit/delete pattern as the Vocabulary
-    editor or Mode Rules).
-  - New `snippets.rs`: `try_expand(text: &str, snippets: &[Snippet]) ->
-    Option<String>` — case-insensitive match of the *entire* trimmed
-    transcript against a configured trigger (not a prefix match like
-    casing commands, since a trigger like "standup template" is meant to
-    be spoken as a complete, deliberate cue, not a directive with content
-    trailing it). Returns the saved body verbatim on a match.
-  - Wired into `recording.rs`'s `transcribe_and_paste` **before** the
-    casing-command check — a snippet match is the most explicit,
-    intentional signal of the three pre-LLM checks (a literal saved
-    macro the user defined themselves), so it should win over a
-    coincidental overlap with a casing directive or boilerplate phrase.
-    Skips mode formatting and LLM refinement entirely, same reasoning as
-    casing commands: the output is already fully resolved.
-  - Still logged to history for consistency, tagged with a `"snippet"`
-    mode label (matching the existing `"casing"`/`"boilerplate"` label
-    convention).
+- ~~**Snippet library**~~ (shipped 2026-08-17, from the 2026-08-17
+  competitive research — Wispr Flow: a spoken cue expands to a saved
+  block of text, e.g. "PR Checklist" or "Environment Setup"). Distinct
+  from the vocabulary editor, which is about recognition *accuracy*, not
+  insertion. `snippets.rs`: `Snippet { trigger, body }`,
+  `try_expand(text, snippets) -> Option<String>` — case-insensitive match
+  of the *entire* trimmed transcript against a configured trigger (not a
+  prefix match like casing commands, since a trigger like "standup
+  update" is meant to be spoken as a complete, deliberate cue, not a
+  directive with content trailing it), tolerant of Whisper's own trailing
+  sentence punctuation. Ships with four ready-to-use dev defaults (PR
+  checklist, standup update, bug report template, commit message
+  template) via `default_snippets()` rather than an empty list, same
+  reasoning as `stt::default_vocabulary()` — useful out of the box.
+  Wired into `recording.rs`'s `transcribe_and_paste` **before** the
+  casing-command check — a snippet match is the most explicit,
+  intentional signal of the pre-LLM checks (a literal saved macro the
+  user, or a shipped default, defined), so it wins over a coincidental
+  overlap with a casing directive or boilerplate phrase. Skips mode
+  formatting and LLM refinement entirely, same reasoning as casing
+  commands: the output is already fully resolved. Logged to history
+  tagged with a `"snippet"` mode label (matching the existing
+  `"casing"`/`"boilerplate"` label convention). Settings gets a new
+  Snippets section (`SnippetsSection` in `SettingsView.tsx`) with
+  click-to-edit-in-place and delete, persisted via a single
+  full-list-replace `set_snippets` command (simpler than a keyed
+  add/update/remove trio, since a snippet's trigger — its only natural
+  key — is itself user-editable).
 
 - **Smart Formatting / Backtrack parity** (from the 2026-08-17 Wispr Flow
   docs review —
   [Smart Formatting & Backtrack](https://docs.wisprflow.ai/articles/5373093536-how-do-i-use-smart-formatting-and-backtrack)).
-  Partially started. Wispr Flow's version is a cloud-processed feature;
-  the parts worth building here are the ones that work as pure
-  deterministic passes (same shape as the already-shipped Syntax &
-  Casing Commands in `syntax.rs`), so they're instant and don't depend on
-  Ollama being up:
+  All four deterministic sub-features shipped 2026-08-17 (named
+  punctuation, spoken lists, "press enter", Backtrack). Wispr Flow's
+  version is a cloud-processed feature; the parts worth building here
+  were the ones that work as pure deterministic passes (same shape as
+  the already-shipped Syntax & Casing Commands in `syntax.rs`), so
+  they're instant and don't depend on Ollama being up. What's left is
+  explicitly deferred or out of scope, see below:
   - ~~**Named punctuation commands**~~ (shipped 2026-08-17) — say
     "period", "comma", "open paren", "em dash", "new line", etc. and get
     the literal character instead of the spoken word. `punctuation.rs`:
@@ -204,27 +206,57 @@ build phases.
     entire utterance is just "press enter", nothing is pasted/copied
     (avoids clobbering the clipboard with an empty string) but Enter
     still fires and no history entry is logged.
-  - **Backtrack (trigger-word case only)** — new `backtrack.rs`:
-    `try_backtrack(text: &str) -> Option<String>`, a deterministic pass
-    that collapses "X actually Y" -> "Y" and "X, scratch that, Y" -> "Y"
-    for an explicit trigger-word list. This is deliberately narrower than
-    Wispr's version, which also catches natural restatement without a
-    trigger word via full-context LLM judgment — that fuzzier case is
+  - ~~**Backtrack (trigger-word case only)**~~ (shipped 2026-08-17) —
+    `backtrack.rs`: `try_backtrack(text: &str) -> String`, a deterministic
+    pass that collapses "X, actually Y" -> "Y" and "X scratch that Y" ->
+    "Y". Runs after `expand_punctuation` in `recording.rs`, since the
+    "actually" trigger needs a literal preceding comma to fire — bare
+    "actually" is far too common a word in ordinary speech ("I actually
+    enjoyed it") to treat as a correction cue on its own; requiring the
+    comma (a real spoken pause, whether from an explicit "comma" command
+    or Whisper's own punctuation) cuts most of that false-positive rate.
+    Known residual risk: a hedge like "well, actually, I think it's fine"
+    still has the comma and will still misfire — not eliminated, just
+    reduced. "scratch that" needs no such gate, it's unambiguous on its
+    own. Deliberately narrower than Wispr's version in another way too:
+    on a match it discards the *entire* prefix rather than doing Wispr's
+    partial word-level diff (their own "at 2 actually 3" example keeps
+    "at" and only swaps the number; ours produces just "3"). The
+    no-trigger-word natural-restatement case Wispr also catches (via
+    full-context LLM judgment) stays out of scope, same as before —
     already partially covered by the existing "fix filler words, false
-    starts" instruction in `llm.rs`'s refinement prompts (when a mode has
-    LLM refinement on; Plain mode defaults it off). The new deterministic
-    pass exists so the common explicit-trigger-word case works even with
-    Ollama down, same rationale as the boilerplate-generation fallback.
+    starts" instruction in `llm.rs`'s refinement prompts when a mode has
+    LLM refinement on (Plain mode defaults it off).
   - **Explicitly deferred, lower priority**: trailing-period-by-app +
     "Writing Style" tuning, and context-aware mid-sentence
     lowercasing/spacing — both cosmetic relative to the above, and the
     trailing-period one requires the same per-app messaging-app
     detection list Wispr maintains, which is a lot of surface for a
     minor casing nicety.
-  - **Explicitly out of scope**: file tagging in Cursor/Windsurf (from
-    the same Wispr page) — belongs with the selected-text/on-screen
-    context work already tracked above under the SuperWhisper gap
-    analysis, not this entry.
+  - **Explicitly out of scope**: file tagging in Cursor/Windsurf itself
+    (from the same Wispr page) — those are windowed editors we have no
+    hook into (no project file index, no UI-native reference chip the
+    way Wispr can insert), unlike the terminal-agent version below.
+    Belongs with the selected-text/on-screen context work already
+    tracked above under the SuperWhisper gap analysis if ever picked up.
+
+- ~~**File tagging for terminal coding agents**~~ (shipped 2026-08-17,
+  requested directly rather than sourced from a competitor) —
+  `file_tagging.rs`: `tag_file_references(text: &str) -> String`, tags
+  any bare-filename-shaped token (identifier + `.` + a whitelisted
+  extension) with a leading `@`, wired into `modes::format_as_cli`'s
+  fallback branch (CLI mode, and only for text that didn't already match
+  a literal shell directive like `git commit` — tagging inside an actual
+  commit message would corrupt it). Works for Claude Code, OpenCode, and
+  Gemini CLI without needing our own project file index, since all three
+  already parse a literal `@path` typed into their prompt and do their
+  own fuzzy file resolution from there — unlike the Cursor/Windsurf case
+  above, no app-level hook needed. Known limits: bare filenames only, no
+  paths (a spoken "src slash lib dot rs" doesn't reliably glue into one
+  taggable token through the existing punctuation pipeline, which has no
+  "dot" command); and no project awareness, so it tags anything
+  file-*shaped*, real or not — same as if you'd mistyped an `@mention`
+  by hand.
 
 - **App-aware modes + LLM refinement** (shipped 2026-08-15) —
   frontmost-app detection (`app_detect.rs`, `NSWorkspace`), a mode

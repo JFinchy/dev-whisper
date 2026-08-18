@@ -1,7 +1,9 @@
 mod app_detect;
 mod audio;
+mod backtrack;
 mod boilerplate;
 mod config;
+mod file_tagging;
 mod history;
 mod isolate;
 mod llm;
@@ -12,6 +14,7 @@ mod paste;
 mod punctuation;
 mod recording;
 mod shortcut;
+mod snippets;
 mod stt;
 mod syntax;
 mod theme;
@@ -46,6 +49,7 @@ use recording::{
     RecordingState,
 };
 use shortcut::{get_shortcut, set_shortcut, PushToTalkState};
+use snippets::{get_snippets, set_snippets};
 use theme::{get_theme, set_theme};
 use webhook::{get_webhook_url, send_test_webhook, set_webhook_url};
 use widget::{get_widget_mode, set_widget_mode, set_widget_size};
@@ -245,6 +249,8 @@ pub fn run() {
             get_webhook_url,
             set_webhook_url,
             send_test_webhook,
+            get_snippets,
+            set_snippets,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
