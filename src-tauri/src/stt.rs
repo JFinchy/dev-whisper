@@ -213,6 +213,20 @@ pub(crate) fn load_samples_16k_mono(path: &Path) -> Result<Vec<f32>, String> {
     Ok(resample_linear(&mono, spec.sample_rate, WHISPER_SAMPLE_RATE))
 }
 
+/// Reads just the wav header (no sample decoding) to get a recording's
+/// length — used by `recording.rs` to compute words-per-minute for
+/// Insights. `None` on a malformed/unreadable file, same tolerance as the
+/// rest of the pipeline treats a bad wav (never worth failing the paste
+/// over a stat).
+pub(crate) fn wav_duration_ms(path: &Path) -> Option<u64> {
+    let reader = hound::WavReader::open(path).ok()?;
+    let spec = reader.spec();
+    if spec.sample_rate == 0 {
+        return None;
+    }
+    Some(reader.duration() as u64 * 1000 / spec.sample_rate as u64)
+}
+
 fn downmix(samples: &[f32], channels: u16) -> Vec<f32> {
     if channels <= 1 {
         return samples.to_vec();
@@ -379,6 +393,21 @@ mod tests {
         let input = vec![1.0, 0.0, 0.5];
         let output = downmix(&input, 2);
         assert_eq!(output.len(), 2);
+    }
+
+    #[test]
+    fn wav_duration_ms_reads_a_one_second_tone() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("dw-wav-duration-test-{}.wav", std::process::id()));
+        write_test_tone(&path);
+        let duration = wav_duration_ms(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(duration, 1000);
+    }
+
+    #[test]
+    fn wav_duration_ms_none_for_missing_file() {
+        assert!(wav_duration_ms(Path::new("/nonexistent/not-a-real.wav")).is_none());
     }
 
     fn write_test_tone(path: &Path) {

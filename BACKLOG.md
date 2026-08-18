@@ -48,6 +48,57 @@ build phases.
 
 ## Feature Requests
 
+- **Insights section** (shipped 2026-08-18, loosely modeled on Wispr
+  Flow's "Your usage" tab, adapted for a local single-user app) — a new
+  Settings page (`InsightsSection` in `SettingsView.tsx`) with total
+  words dictated, a "smart formatting applied" count (punctuation/lists/
+  casing/snippets/Backtrack), words-per-minute, per-app usage breakdown,
+  and a streak calendar heatmap. Two of Flow's cards don't have an honest
+  local equivalent and were deliberately adapted rather than copied:
+  - WPM drops Flow's "Top 0.1%" population percentile (no userbase to
+    rank against locally) in favor of a real per-device average compared
+    against this device's own personal best, shown as a semicircle gauge
+    (arc length is exact for a fixed-radius sweep, not approximated).
+  - "Fixes made by Flow" (their cloud-LLM correction count) becomes
+    "smart formatting applied" — a count of dictations where a
+    deterministic pass actually fired, not implying an LLM judged
+    anything.
+  - New, not in Flow's version: a **feature-adoption checklist**
+    ("Getting the most out of Dev Whisper") scoring how many of six
+    trackable features (Vocabulary customization, Snippets, punctuation
+    commands, Backtrack, casing commands, per-app Modes) have actually
+    been *used*, not just configured — each unused one gets a one-line
+    suggestion. Most of the app's power is opt-in dictation-time
+    commands a user can easily forget exist; this surfaces the gap.
+  - New `insights.rs`: pure aggregation over `Vec<HistoryEntry>` +
+    `AppConfig`, no Tauri dependency in the core `compute()` function —
+    same shape as `punctuation.rs`/`snippets.rs`, fully unit tested
+    (streak math, WPM, adoption scoring, calendar-day conversion)
+    without a real app handle. Calendar-day labeling for the heatmap uses
+    a hand-rolled `civil_from_days` (Howard Hinnant's algorithm, pure
+    integer math) rather than pulling in `chrono`/`time` as a new direct
+    dependency for one feature. UTC-bucketed, not local-midnight — Rust's
+    std doesn't know the local UTC offset without an extra crate, so a
+    streak can occasionally be off by one dictation right at a day
+    boundary; accepted as close enough for a streak indicator.
+  - `HistoryEntry` gained three new fields to make this possible:
+    `duration_ms` (read from the wav header via new `stt::wav_duration_ms`,
+    a cheap header-only read — not full sample decoding), `features_used`
+    (which of the pass-through deterministic passes — lists/punctuation/
+    backtrack/press_enter — actually changed the text, tracked via
+    before/after comparison in `recording.rs`), and `spoken_words`
+    (word count of what was actually *said*, captured before snippet/
+    casing/boilerplate substitution — deliberately not derived from the
+    delivered `text` field, since a two-word snippet trigger expanding to
+    a multi-line checklist would otherwise wildly inflate WPM). All three
+    are `#[serde(default)]`/`Option`, with fallbacks for pre-existing
+    history entries that predate them.
+  - Not visually verified in the running app — no native macOS window
+    automation available in this session (only browser automation
+    tooling), so this shipped on `cargo test`/`tsc --noEmit` passing
+    clean rather than an eyes-on check in `bun run tauri dev`. Worth a
+    manual look before calling it fully done.
+
 - **Isolated Voice mode** (phase 2 built, in testing, 2026-08-17) — a
   Settings toggle that filters a recording down to the primary user's
   voice before Whisper transcribes it. Runs post-capture (once, on the
