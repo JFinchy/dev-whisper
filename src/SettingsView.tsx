@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactElement } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { applyTheme, THEME_ORDER, THEME_LABEL, THEMES, type ThemeId } from "./theme";
+import { VOCAB_BOOKS } from "./vocabularyBooks";
 
 function IconMic() {
   return (
@@ -33,6 +34,14 @@ function IconCpu() {
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
       <rect x="6" y="6" width="12" height="12" rx="2" />
       <path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3" />
+    </svg>
+  );
+}
+function IconChart() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M4 20V10M12 20V4M20 20v-7" strokeLinecap="round" />
+      <path d="M3 20h18" strokeLinecap="round" />
     </svg>
   );
 }
@@ -75,6 +84,15 @@ function IconPalette() {
       <circle cx="7.5" cy="10.5" r="1.1" fill="currentColor" stroke="none" />
       <circle cx="12" cy="7.5" r="1.1" fill="currentColor" stroke="none" />
       <circle cx="16.5" cy="10.5" r="1.1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+function IconInfo() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 10.5v6" />
+      <circle cx="12" cy="7.5" r="0.9" fill="currentColor" stroke="none" />
     </svg>
   );
 }
@@ -546,6 +564,40 @@ function AppModesSection() {
   );
 }
 
+function VocabularyBooksSection({ terms, onAdopt }: { terms: string[]; onAdopt: (words: string[]) => void }) {
+  const termSet = new Set(terms);
+
+  return (
+    <div className="mb-4 border-b border-base-content/10 pb-3">
+      <label className="mb-1 block text-xs font-medium opacity-70">Vocabulary books</label>
+      <p className="mb-2 text-xs opacity-50">
+        Curated term bundles you can adopt in one click — each one merges into the list below,
+        so you can prune anything you don't need afterward.
+      </p>
+      <div className="dw-book-grid">
+        {VOCAB_BOOKS.map((book) => {
+          const newWords = book.words.filter((w) => !termSet.has(w));
+          const adopted = newWords.length === 0;
+          return (
+            <button
+              key={book.id}
+              type="button"
+              className={`dw-book-card ${adopted ? "adopted" : ""}`}
+              onClick={() => onAdopt(newWords)}
+              disabled={adopted}
+            >
+              <span className="dw-book-title">{book.label}</span>
+              <span className="dw-book-meta">
+                {adopted ? `Adopted · ${book.words.length} words` : `${book.words.length} words — ${book.description}`}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function VocabularySection() {
   const [terms, setTerms] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
@@ -577,45 +629,53 @@ function VocabularySection() {
     save(terms.filter((t) => t !== term));
   }
 
+  function adoptBook(newWords: string[]) {
+    if (newWords.length === 0) return;
+    save([...terms, ...newWords]);
+  }
+
   return (
-    <div className="mb-4 border-t border-base-content/10 pt-3">
-      <label className="mb-1 block text-xs font-medium opacity-70">Vocabulary</label>
-      {loading ? (
-        <span className="loading loading-spinner loading-xs" />
-      ) : (
-        <>
-          <div className="mb-1.5 flex flex-wrap gap-1">
-            {terms.map((term) => (
-              <span key={term} className="badge badge-sm gap-1">
-                {term}
-                <button
-                  className="opacity-60 hover:opacity-100"
-                  onClick={() => removeTerm(term)}
-                  aria-label={`Remove ${term}`}
-                >
-                  ✕
-                </button>
-              </span>
-            ))}
-            {terms.length === 0 && <p className="text-xs opacity-60">No terms yet.</p>}
-          </div>
-          <div className="flex gap-1.5">
-            <input
-              className="input input-sm flex-1"
-              placeholder="Add a term (e.g. kubectl)"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") addTerm();
-              }}
-            />
-            <button className="btn btn-sm" onClick={addTerm}>
-              Add
-            </button>
-          </div>
-        </>
-      )}
-    </div>
+    <>
+      {loading ? null : <VocabularyBooksSection terms={terms} onAdopt={adoptBook} />}
+      <div className="mb-4 border-t border-base-content/10 pt-3">
+        <label className="mb-1 block text-xs font-medium opacity-70">Vocabulary</label>
+        {loading ? (
+          <span className="loading loading-spinner loading-xs" />
+        ) : (
+          <>
+            <div className="mb-1.5 flex flex-wrap gap-1">
+              {terms.map((term) => (
+                <span key={term} className="badge badge-sm gap-1">
+                  {term}
+                  <button
+                    className="opacity-60 hover:opacity-100"
+                    onClick={() => removeTerm(term)}
+                    aria-label={`Remove ${term}`}
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
+              {terms.length === 0 && <p className="text-xs opacity-60">No terms yet.</p>}
+            </div>
+            <div className="flex gap-1.5">
+              <input
+                className="input input-sm flex-1"
+                placeholder="Add a term (e.g. kubectl)"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") addTerm();
+                }}
+              />
+              <button className="btn btn-sm" onClick={addTerm}>
+                Add
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -1425,6 +1485,85 @@ function ThemeSection({ theme, onChange }: { theme: ThemeId; onChange: (id: Them
   );
 }
 
+type LayoutId = "sidebar" | "chain";
+const LAYOUT_LABEL: Record<LayoutId, string> = { sidebar: "Signal", chain: "Signal Chain" };
+const LAYOUT_DESCRIPTION: Record<LayoutId, string> = {
+  sidebar: "Left sidebar, one page of content at a time",
+  chain: "Horizontal pipeline — click a stage to expand it",
+};
+
+function LayoutSection({ layout, onChange }: { layout: LayoutId; onChange: (id: LayoutId) => void }) {
+  return (
+    <div className="mb-4">
+      <label className="mb-1 block text-xs font-medium opacity-70">Layout</label>
+      <div className="flex flex-col gap-1.5">
+        {(["sidebar", "chain"] as LayoutId[]).map((id) => (
+          <button
+            key={id}
+            type="button"
+            className={`dw-theme-row ${layout === id ? "active" : ""}`}
+            onClick={() => onChange(id)}
+          >
+            <span className="flex flex-col items-start gap-0.5">
+              <span>{LAYOUT_LABEL[id]}</span>
+              <span className="text-[10px] font-normal opacity-60">{LAYOUT_DESCRIPTION[id]}</span>
+            </span>
+            {layout === id && <span>✓</span>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const ABOUT_ENTRIES: { title: string; body: string }[] = [
+  {
+    title: "How dictation works",
+    body: "Hold the push-to-talk shortcut (or click-and-hold the widget) and speak. When you release, Dev Whisper transcribes locally with Whisper, applies your active Mode's formatting, and pastes the result into whatever's focused — no cloud round-trip unless you've turned on LLM refinement or a webhook.",
+  },
+  {
+    title: "Voice Isolation",
+    body: "Filters recordings down to your voice before transcription, so background noise or other people talking don't end up in the transcript. Works out of the box with an energy-based fallback; enroll your voice in Voice for stronger speaker-based isolation.",
+  },
+  {
+    title: "Vocabulary",
+    body: "Terms you add bias Whisper's recognition toward your jargon — tool names, library names, anything Whisper would otherwise mishear. Vocabulary books let you adopt a curated bundle (Frontend, Backend, Full-Stack, Product) in one click, then prune anything you don't need.",
+  },
+  {
+    title: "Snippets",
+    body: "Spoken trigger phrases that expand into saved blocks of text — say a snippet's trigger and it's pasted in full, instead of dictating the same boilerplate every time.",
+  },
+  {
+    title: "Modes",
+    body: 'Plain, Casual, or CLI formatting, applied automatically based on which app is frontmost, or overridden for a single dictation from the widget\'s hover flyout. CLI mode turns "git commit update readme" into git commit -m "update readme", for example.',
+  },
+  {
+    title: "LLM refinement",
+    body: "An optional local pass through Ollama that cleans up a transcript further — only runs for modes with it explicitly enabled, since it's an extra background call.",
+  },
+  {
+    title: "History",
+    body: "Every delivered transcript is logged, searchable, and auto-purged after your configured retention window. Turn on the work journal to get a one-line LLM-generated summary attached to each entry.",
+  },
+  {
+    title: "Integrations",
+    body: "Copy-only mode skips the simulated paste keystroke entirely (and the Accessibility permission it needs). The output webhook fires a POST with the delivered transcript to any URL that accepts incoming webhooks — Notion, Slack, n8n, Zapier, Make.com, or your own endpoint.",
+  },
+];
+
+function AboutSection() {
+  return (
+    <div>
+      {ABOUT_ENTRIES.map((entry) => (
+        <div key={entry.title} className="dw-about-entry">
+          <h3>{entry.title}</h3>
+          <p>{entry.body}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function GeneralSection() {
   const [autostart, setAutostart] = useState(false);
   const [widgetMode, setWidgetModeState] = useState<WidgetMode>("compact");
@@ -1756,15 +1895,322 @@ function VoiceCommandsSection() {
   );
 }
 
+type AppUsage = { app_name: string; dictations: number; percent: number };
+
+type StreakInfo = {
+  current_days: number;
+  longest_days: number;
+  daily_counts: Record<string, number>;
+};
+
+type AdoptionItem = { key: string; label: string; done: boolean; suggestion: string };
+
+type AdoptionInfo = { score_percent: number; items: AdoptionItem[] };
+
+type InsightsPayload = {
+  total_dictations: number;
+  total_words: number;
+  smart_formatting_count: number;
+  avg_words_per_minute: number | null;
+  personal_best_wpm: number | null;
+  app_usage: AppUsage[];
+  streak: StreakInfo;
+  adoption: AdoptionInfo;
+};
+
+function StatCard({
+  value,
+  label,
+  children,
+}: {
+  value: ReactElement | string;
+  label: string;
+  children?: ReactElement;
+}) {
+  return (
+    <div className="flex flex-col rounded-lg border border-base-content/10 bg-base-100 p-3">
+      <div className="text-[26px] font-semibold leading-none">{value}</div>
+      <div className="mt-1.5 text-[10px] font-semibold uppercase tracking-wide opacity-50">{label}</div>
+      {children && <div className="mt-2.5 border-t border-base-content/10 pt-2.5">{children}</div>}
+    </div>
+  );
+}
+
+/// Semicircle gauge showing average pace as a fraction of this device's
+/// personal-best WPM — deliberately not a percentile against other users
+/// (Flow's "Top 0.1%"), since a local single-user app has no population
+/// to rank against. Arc length is proportional to angle for a fixed
+/// radius, so `circumference * ratio` is an exact (not approximated)
+/// fill for the swept angle.
+function WpmGauge({ ratio }: { ratio: number }) {
+  const clamped = Math.max(0, Math.min(1, ratio));
+  const radius = 42;
+  const circumference = Math.PI * radius;
+  return (
+    <svg width="100" height="56" viewBox="0 0 100 56">
+      <path
+        d="M8,50 A42,42 0 0 1 92,50"
+        fill="none"
+        stroke="currentColor"
+        strokeOpacity="0.12"
+        strokeWidth="8"
+        strokeLinecap="round"
+      />
+      <path
+        d="M8,50 A42,42 0 0 1 92,50"
+        fill="none"
+        stroke="#2f9e6e"
+        strokeWidth="8"
+        strokeLinecap="round"
+        strokeDasharray={`${circumference * clamped} ${circumference}`}
+      />
+    </svg>
+  );
+}
+
+const HEATMAP_WEEKS = 18;
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_LABELS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+function isoDateUTC(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+type HeatmapCell = { key: string; count: number; isFuture: boolean; monthLabel: string | null };
+
+// Trailing `HEATMAP_WEEKS` weeks (Sun-start columns) ending at the current
+// week, matching the backend's UTC-calendar-day bucketing (see
+// `insights::civil_from_days`) rather than local time, so a cell's date
+// key always lines up with what the backend counted it under.
+function buildHeatmapWeeks(dailyCounts: Record<string, number>): HeatmapCell[][] {
+  const now = new Date();
+  const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const todayKey = isoDateUTC(todayUTC);
+  const todayDow = todayUTC.getUTCDay();
+
+  const gridStart = new Date(todayUTC);
+  gridStart.setUTCDate(gridStart.getUTCDate() - todayDow - (HEATMAP_WEEKS - 1) * 7);
+
+  const weeks: HeatmapCell[][] = [];
+  let lastMonth = -1;
+  const cursor = new Date(gridStart);
+  for (let w = 0; w < HEATMAP_WEEKS; w++) {
+    const week: HeatmapCell[] = [];
+    for (let d = 0; d < 7; d++) {
+      const key = isoDateUTC(cursor);
+      const month = cursor.getUTCMonth();
+      let monthLabel: string | null = null;
+      if (d === 0 && month !== lastMonth) {
+        monthLabel = MONTH_LABELS[month];
+        lastMonth = month;
+      }
+      week.push({ key, count: dailyCounts[key] ?? 0, isFuture: key > todayKey, monthLabel });
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    weeks.push(week);
+  }
+  return weeks;
+}
+
+function heatmapLevel(count: number): number {
+  if (count <= 0) return 0;
+  if (count === 1) return 1;
+  if (count <= 3) return 2;
+  return 3;
+}
+
+const HEATMAP_LEVEL_BG = [
+  "var(--dw-border, #2a2d32)",
+  "#1c4f3a",
+  "#237050",
+  "#2f9e6e",
+];
+
+function InsightsSection() {
+  const [data, setData] = useState<InsightsPayload | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  function refresh() {
+    invoke<InsightsPayload>("get_insights")
+      .then(setData)
+      .catch((err) => console.error("get_insights failed:", err))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    refresh();
+    // New dictations (and journal summaries) fire this same event History
+    // already listens to — Insights is just another read-only view over
+    // the same underlying data.
+    const unlisten = listen("history-updated", refresh);
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="mb-4">
+        <span className="loading loading-spinner loading-xs" />
+      </div>
+    );
+  }
+  if (!data) return null;
+
+  const weeks = buildHeatmapWeeks(data.streak.daily_counts);
+  const wpmRatio =
+    data.avg_words_per_minute && data.personal_best_wpm ? data.avg_words_per_minute / data.personal_best_wpm : 0;
+
+  return (
+    <div className="mb-4 flex flex-col gap-3">
+      <div className="grid grid-cols-3 gap-3">
+        <StatCard value={data.total_words.toLocaleString()} label="Total words dictated" />
+        <StatCard value={String(data.smart_formatting_count)} label="Smart formatting applied">
+          <p className="text-xs opacity-70">
+            Punctuation commands, lists, casing, snippets, and Backtrack corrections.
+          </p>
+        </StatCard>
+        {data.avg_words_per_minute ? (
+          <StatCard value={`${Math.round(data.avg_words_per_minute)}`} label="Words per minute">
+            <div className="flex items-center justify-between gap-2">
+              <WpmGauge ratio={wpmRatio} />
+              <p className="text-right text-xs opacity-70">
+                Personal best
+                <br />
+                <span className="font-semibold opacity-100">
+                  {data.personal_best_wpm ? Math.round(data.personal_best_wpm) : "—"} WPM
+                </span>
+              </p>
+            </div>
+          </StatCard>
+        ) : (
+          <StatCard value="—" label="Words per minute">
+            <p className="text-xs opacity-70">Not enough data yet — this fills in after a few more dictations.</p>
+          </StatCard>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-base-content/10 bg-base-100 p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <label className="text-xs font-medium opacity-70">App usage</label>
+          <span className="text-[10px] font-medium uppercase tracking-wide opacity-50">
+            {data.app_usage.length} app{data.app_usage.length === 1 ? "" : "s"} used
+          </span>
+        </div>
+        {data.app_usage.length === 0 ? (
+          <p className="text-xs opacity-60">No dictations logged yet.</p>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            {data.app_usage.map((app) => (
+              <div key={app.app_name} className="flex items-center gap-2">
+                <span className="w-28 shrink-0 truncate text-xs">{app.app_name}</span>
+                <div className="h-2 flex-1 overflow-hidden rounded-full bg-base-300">
+                  <div
+                    className="h-full rounded-full bg-primary"
+                    style={{ width: `${Math.max(app.percent, 2)}%` }}
+                  />
+                </div>
+                <span className="w-16 shrink-0 text-right text-xs tabular-nums opacity-70">
+                  {app.dictations} · {Math.round(app.percent)}%
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-base-content/10 bg-base-100 p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <label className="text-xs font-medium opacity-70">
+            {data.streak.current_days} day{data.streak.current_days === 1 ? "" : "s"} streak
+          </label>
+          <span className="text-[10px] font-medium uppercase tracking-wide opacity-50">
+            Longest streak · {data.streak.longest_days} day{data.streak.longest_days === 1 ? "" : "s"}
+          </span>
+        </div>
+        <div className="overflow-x-auto">
+          <div className="inline-flex flex-col gap-1">
+            <div className="flex gap-[3px] pl-8">
+              {weeks.map((week, i) => (
+                <div key={i} className="w-[13px] shrink-0 text-[9px] opacity-50">
+                  {week[0].monthLabel ?? ""}
+                </div>
+              ))}
+            </div>
+            {WEEKDAY_LABELS.map((label, dow) => (
+              <div key={label} className="flex items-center gap-[3px]">
+                <span className="w-6 shrink-0 text-[9px] opacity-50">{dow % 2 === 1 ? label : ""}</span>
+                {weeks.map((week, i) => {
+                  const cell = week[dow];
+                  return (
+                    <div
+                      key={i}
+                      title={cell.isFuture ? undefined : `${cell.key}: ${cell.count}`}
+                      className="h-[13px] w-[13px] shrink-0 rounded-[3px]"
+                      style={{
+                        background: cell.isFuture ? "transparent" : HEATMAP_LEVEL_BG[heatmapLevel(cell.count)],
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="mt-2 flex items-center justify-end gap-1 text-[9px] opacity-50">
+          <span>Less</span>
+          {HEATMAP_LEVEL_BG.map((bg, i) => (
+            <div key={i} className="h-[10px] w-[10px] rounded-[2px]" style={{ background: bg }} />
+          ))}
+          <span>More</span>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-base-content/10 bg-base-100 p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <label className="text-xs font-medium opacity-70">Getting the most out of Dev Whisper</label>
+          <span className="text-[10px] font-medium uppercase tracking-wide opacity-50">
+            {data.adoption.score_percent}% of features used
+          </span>
+        </div>
+        <div className="flex flex-col gap-2">
+          {data.adoption.items.map((item) => (
+            <div key={item.key} className="flex items-start gap-2">
+              <span
+                className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] ${
+                  item.done ? "bg-primary text-primary-content" : "bg-base-300 opacity-60"
+                }`}
+              >
+                {item.done ? "✓" : ""}
+              </span>
+              <div>
+                <div className="text-xs font-medium">{item.label}</div>
+                {!item.done && <p className="text-xs opacity-60">{item.suggestion}</p>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type PageId =
   | "dictation"
   | "voice"
   | "vocabulary"
   | "modes"
   | "llm"
+  | "insights"
   | "history"
   | "integrations"
   | "appearance"
+  | "about"
   | "advanced";
 
 const NAV: { id: PageId; label: string; icon: () => ReactElement }[] = [
@@ -1773,12 +2219,14 @@ const NAV: { id: PageId; label: string; icon: () => ReactElement }[] = [
   { id: "vocabulary", label: "Vocabulary", icon: IconBook },
   { id: "modes", label: "Modes", icon: IconWindow },
   { id: "llm", label: "LLM", icon: IconCpu },
+  { id: "insights", label: "Insights", icon: IconChart },
   { id: "history", label: "History", icon: IconClock },
   { id: "integrations", label: "Integrations", icon: IconPlug },
 ];
 
 const FOOTER_NAV: { id: PageId; label: string; icon: () => ReactElement }[] = [
   { id: "appearance", label: "Appearance", icon: IconPalette },
+  { id: "about", label: "About", icon: IconInfo },
   { id: "advanced", label: "Advanced", icon: IconGear },
 ];
 
@@ -1788,9 +2236,11 @@ const PAGE_TITLE: Record<PageId, string> = {
   vocabulary: "Vocabulary",
   modes: "Modes — app-aware formatting rules",
   llm: "LLM — local refinement (Ollama)",
+  insights: "Insights — usage & feature adoption",
   history: "History",
   integrations: "Integrations — delivery & webhook",
   appearance: "Appearance",
+  about: "About — features & how it works",
   advanced: "Advanced",
 };
 
@@ -1813,32 +2263,8 @@ function NavItem({
   );
 }
 
-function SettingsView() {
-  const [theme, setThemeState] = useState<ThemeId>("terminal");
+function SidebarLayout({ appearance }: { appearance: ReactElement }) {
   const [page, setPage] = useState<PageId>("dictation");
-
-  useEffect(() => {
-    invoke<ThemeId>("get_theme")
-      .then((t) => {
-        setThemeState(t);
-        applyTheme(t);
-      })
-      .catch((err) => console.error("get_theme failed:", err));
-
-    const unlisten = listen<ThemeId>("theme-changed", (e) => {
-      setThemeState(e.payload);
-      applyTheme(e.payload);
-    });
-    return () => {
-      unlisten.then((f) => f());
-    };
-  }, []);
-
-  function changeTheme(next: ThemeId) {
-    setThemeState(next);
-    applyTheme(next);
-    invoke("set_theme", { theme: next }).catch((err) => console.error("set_theme failed:", err));
-  }
 
   return (
     <main className="dw-shell h-screen">
@@ -1894,6 +2320,7 @@ function SettingsView() {
           )}
           {page === "modes" && <AppModesSection />}
           {page === "llm" && <LlmSection />}
+          {page === "insights" && <InsightsSection />}
           {page === "history" && <HistorySection />}
           {page === "integrations" && (
             <>
@@ -1901,12 +2328,175 @@ function SettingsView() {
               <WebhookSection />
             </>
           )}
-          {page === "appearance" && <ThemeSection theme={theme} onChange={changeTheme} />}
+          {page === "appearance" && appearance}
+          {page === "about" && <AboutSection />}
           {page === "advanced" && <LogsSection />}
         </div>
       </div>
     </main>
   );
+}
+
+type NodeId = "input" | "recognition" | "mode" | "refinement" | "output";
+type ActiveNode = NodeId | "app" | null;
+
+const CHAIN: { id: NodeId; label: string; icon: () => ReactElement }[] = [
+  { id: "input", label: "Input", icon: IconMic },
+  { id: "recognition", label: "Recognition", icon: IconWave },
+  { id: "mode", label: "Mode", icon: IconWindow },
+  { id: "refinement", label: "Refinement", icon: IconCpu },
+  { id: "output", label: "Output", icon: IconPlug },
+];
+
+const NODE_DRAWER_TITLE: Record<NodeId, string> = {
+  input: "Input — microphone & shortcut",
+  recognition: "Recognition — Whisper model, voice isolation, vocabulary",
+  mode: "Mode — app-aware formatting rules",
+  refinement: "Refinement — local LLM (Ollama)",
+  output: "Output — delivery, webhook, history & insights",
+};
+
+function ChainNode({
+  label,
+  icon,
+  active,
+  onClick,
+}: {
+  label: string;
+  icon: ReactElement;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" className={`dw-chain-node ${active ? "active" : ""}`} onClick={onClick}>
+      <span className="dw-icon">{icon}</span>
+      <span className="dw-label">{label}</span>
+    </button>
+  );
+}
+
+function ChainLayout({ appearance }: { appearance: ReactElement }) {
+  const [active, setActive] = useState<ActiveNode>("input");
+
+  function toggle(id: ActiveNode) {
+    setActive((current) => (current === id ? null : id));
+  }
+
+  return (
+    <main className="dw-shell h-screen overflow-y-auto">
+      <div className="dw-titlebar">
+        <h1>Dev Whisper — signal chain</h1>
+      </div>
+
+      <div className="dw-chain-row">
+        {CHAIN.map((node) => (
+          <div key={node.id} className="contents">
+            <ChainNode
+              label={node.label}
+              icon={node.icon()}
+              active={active === node.id}
+              onClick={() => toggle(node.id)}
+            />
+            {node.id !== "output" && <div className="dw-chain-link" />}
+          </div>
+        ))}
+        <div className="dw-chain-app-gap" />
+        <ChainNode label="App" icon={<IconGear />} active={active === "app"} onClick={() => toggle("app")} />
+      </div>
+
+      {active && (
+        <div className="dw-drawer">
+          <p className="dw-drawer-title">
+            {active === "app" ? "App — general, appearance & advanced" : NODE_DRAWER_TITLE[active]}
+          </p>
+          {active === "input" && (
+            <>
+              <DeviceSection />
+              <ShortcutSection />
+            </>
+          )}
+          {active === "recognition" && (
+            <>
+              <ModelsSection />
+              <VoiceIsolationSection />
+              <VocabularySection />
+              <SnippetsSection />
+            </>
+          )}
+          {active === "mode" && <AppModesSection />}
+          {active === "refinement" && <LlmSection />}
+          {active === "output" && (
+            <>
+              <DeliverySection />
+              <WebhookSection />
+              <HistorySection />
+              <div className="mb-4 border-t border-base-content/10 pt-3">
+                <InsightsSection />
+              </div>
+            </>
+          )}
+          {active === "app" && (
+            <>
+              <GeneralSection />
+              {appearance}
+              <div className="mb-4 border-t border-base-content/10 pt-3">
+                <AboutSection />
+              </div>
+              <LogsSection />
+            </>
+          )}
+        </div>
+      )}
+    </main>
+  );
+}
+
+function SettingsView() {
+  const [theme, setThemeState] = useState<ThemeId>("terminal");
+  const [layout, setLayoutState] = useState<LayoutId>("sidebar");
+
+  useEffect(() => {
+    invoke<ThemeId>("get_theme")
+      .then((t) => {
+        setThemeState(t);
+        applyTheme(t);
+      })
+      .catch((err) => console.error("get_theme failed:", err));
+
+    invoke<LayoutId>("get_layout")
+      .then(setLayoutState)
+      .catch((err) => console.error("get_layout failed:", err));
+
+    const unlistenTheme = listen<ThemeId>("theme-changed", (e) => {
+      setThemeState(e.payload);
+      applyTheme(e.payload);
+    });
+    const unlistenLayout = listen<LayoutId>("layout-changed", (e) => setLayoutState(e.payload));
+    return () => {
+      unlistenTheme.then((f) => f());
+      unlistenLayout.then((f) => f());
+    };
+  }, []);
+
+  function changeTheme(next: ThemeId) {
+    setThemeState(next);
+    applyTheme(next);
+    invoke("set_theme", { theme: next }).catch((err) => console.error("set_theme failed:", err));
+  }
+
+  function changeLayout(next: LayoutId) {
+    setLayoutState(next);
+    invoke("set_layout", { layout: next }).catch((err) => console.error("set_layout failed:", err));
+  }
+
+  const appearance = (
+    <>
+      <ThemeSection theme={theme} onChange={changeTheme} />
+      <LayoutSection layout={layout} onChange={changeLayout} />
+    </>
+  );
+
+  return layout === "chain" ? <ChainLayout appearance={appearance} /> : <SidebarLayout appearance={appearance} />;
 }
 
 export default SettingsView;

@@ -116,6 +116,105 @@ body,
   letter-spacing: -0.01em;
 }
 
+/* ---------- Settings: Signal Chain layout (alternate to the sidebar) ---------- */
+.dw-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--dw-border);
+}
+
+.dw-titlebar h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.dw-chain-row {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 22px 22px 6px;
+  overflow-x: auto;
+}
+
+.dw-chain-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 108px;
+  flex-shrink: 0;
+  padding: 13px 8px;
+  border-radius: 11px;
+  border: 1px solid var(--dw-border);
+  background: var(--dw-card);
+  color: var(--dw-muted);
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 0.12s ease;
+}
+
+.dw-chain-node:hover {
+  color: var(--dw-fg);
+}
+
+.dw-chain-node.active {
+  border-color: var(--dw-accent);
+  color: var(--dw-fg);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dw-accent) 20%, transparent);
+}
+
+.dw-chain-node .dw-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--dw-bg);
+  border: 1px solid var(--dw-border);
+  color: var(--dw-accent);
+}
+
+.dw-chain-node .dw-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dw-chain-link {
+  flex: 1;
+  min-width: 12px;
+  height: 2px;
+  background: var(--dw-border);
+}
+
+.dw-chain-app-gap {
+  width: 22px;
+  flex-shrink: 0;
+}
+
+.dw-drawer {
+  margin: 12px 22px 22px;
+  padding: 18px 20px;
+  border-radius: 12px;
+  border: 1px solid var(--dw-border);
+  background: var(--dw-card);
+}
+
+.dw-drawer .dw-drawer-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--dw-accent);
+  margin: 0 0 14px;
+}
+
 /* Theme picker rows on the Appearance page */
 .dw-theme-row {
   display: flex;
@@ -144,6 +243,76 @@ body,
   height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+/* Vocabulary books — curated term bundles on the Vocabulary page */
+.dw-book-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.dw-book-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--dw-border);
+  background: var(--dw-bg);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.dw-book-card:hover {
+  border-color: var(--dw-accent);
+}
+
+.dw-book-card .dw-book-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--dw-fg);
+}
+
+.dw-book-card .dw-book-meta {
+  font-size: 11px;
+  color: var(--dw-muted);
+}
+
+.dw-book-card.adopted {
+  border-color: var(--dw-accent);
+}
+
+.dw-book-card.adopted .dw-book-meta {
+  color: var(--dw-accent);
+}
+
+/* About / Learn More page */
+.dw-about-entry {
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--dw-border);
+}
+
+.dw-about-entry:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.dw-about-entry h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--dw-fg);
+}
+
+.dw-about-entry p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--dw-muted);
 }
 
 /* ---------- Widget: quick-actions hover flyout ---------- */

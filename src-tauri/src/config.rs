@@ -114,6 +114,10 @@ pub struct AppConfig {
     /// wants the feature.
     #[serde(default)]
     pub double_tap_fn_enabled: bool,
+    /// Settings window navigation shape (sidebar vs. signal-chain pipeline)
+    /// — see `theme::Layout`. Defaults to Sidebar.
+    #[serde(default)]
+    pub layout: crate::theme::Layout,
 }
 
 fn default_history_retention_days() -> u32 {
@@ -141,6 +145,7 @@ impl Default for AppConfig {
             press_enter_enabled: false,
             snippets: crate::snippets::default_snippets(),
             double_tap_fn_enabled: false,
+            layout: crate::theme::Layout::default(),
         }
     }
 }
@@ -235,5 +240,6 @@ mod tests {
         assert!(!restored.press_enter_enabled);
         assert_eq!(restored.snippets, crate::snippets::default_snippets());
         assert!(!restored.double_tap_fn_enabled);
+        assert_eq!(restored.layout, crate::theme::Layout::default());
     }
 }

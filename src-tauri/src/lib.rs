@@ -7,6 +7,7 @@ mod config;
 mod doubletap;
 mod file_tagging;
 mod history;
+mod insights;
 mod isolate;
 mod llm;
 mod logging;
@@ -42,6 +43,7 @@ use history::{
     list_history_entries, reprocess_history_text, search_history_entries,
     set_history_retention_days, set_journal_enabled, update_history_entry_text,
 };
+use insights::get_insights;
 use llm::{get_llm_model, list_llm_catalog, list_ollama_models, pull_llm_model, set_llm_model};
 use logging::{clear_logs, get_logs};
 use models::{download_model, list_models, set_active_model};
@@ -55,7 +57,7 @@ use recording::{
 };
 use shortcut::{get_shortcut, set_shortcut, PushToTalkState};
 use snippets::{get_snippets, set_snippets};
-use theme::{get_theme, set_theme};
+use theme::{get_layout, get_theme, set_layout, set_theme};
 use voice_isolation::{
     get_voice_enrollment_status, start_voice_enrollment, stop_voice_enrollment, VoiceIsolationState,
 };
@@ -237,6 +239,8 @@ pub fn run() {
             get_next_mode_override,
             get_theme,
             set_theme,
+            get_layout,
+            set_layout,
             get_press_enter_enabled,
             set_press_enter_enabled,
             start_voice_enrollment,
@@ -267,6 +271,7 @@ pub fn run() {
             send_test_webhook,
             get_snippets,
             set_snippets,
+            get_insights,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

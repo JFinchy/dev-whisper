@@ -147,6 +147,10 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
         model_override.is_some(),
     );
 
+    // Read once, up front, from the wav header (not the decoded/resampled
+    // samples above) — feeds the words-per-minute stat in Insights.
+    let duration_ms = crate::stt::wav_duration_ms(wav_path);
+
     let samples = crate::stt::load_samples_16k_mono(wav_path);
     let transcribed = match samples {
         Ok(samples) => {
@@ -158,13 +162,24 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
 
     match transcribed {
         Ok(text) if !text.is_empty() => {
+            // Tracks which of the passes below actually changed the text
+            // (as opposed to running as a no-op pass-through), for the
+            // Insights feature-adoption checklist — "have you tried
+            // Backtrack?" needs to know whether it's ever fired, not just
+            // that the function was called on every dictation.
+            let mut features_used: Vec<String> = Vec::new();
+
             // Spoken numbered lists ("one... two...") are expanded before
             // punctuation commands — it needs to see the raw marker words
             // ("one", "two") before anything else touches them, and it
             // hands back a real newline-separated list for the
             // punctuation pass (and everything downstream) to treat as
             // ordinary already-formatted text.
+            let before_lists = text.clone();
             let text = crate::punctuation::expand_lists(&text);
+            if text != before_lists {
+                features_used.push("lists".to_string());
+            }
 
             // Named punctuation commands ("period", "open paren", "new
             // line") are expanded next, ahead of everything else — like
@@ -172,7 +187,11 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
             // mode-gated, and downstream steps (casing extraction, LLM
             // refinement) all work better against already-punctuated text
             // than against the literal spoken words.
+            let before_punct = text.clone();
             let text = crate::punctuation::expand_punctuation(&text);
+            if text != before_punct {
+                features_used.push("punctuation".to_string());
+            }
 
             // Backtrack ("...at two, actually three") collapses a
             // self-correction down to just the corrected tail. Runs after
@@ -180,7 +199,11 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
             // requires a literal preceding comma, which only exists once
             // a spoken "comma" (or Whisper's own natural comma insertion)
             // has already been resolved to the character.
+            let before_backtrack = text.clone();
             let text = crate::backtrack::try_backtrack(&text);
+            if text != before_backtrack {
+                features_used.push("backtrack".to_string());
+            }
 
             // "Press enter": stripped before casing/boilerplate/mode so
             // none of those see the trailing control phrase as content.
@@ -193,6 +216,15 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
             } else {
                 (text, false)
             };
+            if should_press_enter {
+                features_used.push("press_enter".to_string());
+            }
+
+            // Word count of what was actually spoken, captured here (post
+            // punctuation/backtrack/press-enter, pre snippet/casing/
+            // boilerplate) rather than derived from `formatted` below —
+            // see the doc comment on `HistoryEntry::spoken_words` for why.
+            let spoken_words = Some(text.split_whitespace().count() as u32);
 
             // "Append clipboard": stripped the same way as "press enter"
             // above (and checked after it, so "...append clipboard press
@@ -312,7 +344,15 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
                     // history, and neither should an empty "press enter
                     // only" utterance with nothing to show.
                     let timestamp_ms = if !formatted.is_empty() {
-                        Some(crate::history::append_entry(app, &formatted, app_name, Some(mode_label)))
+                        Some(crate::history::append_entry(
+                            app,
+                            &formatted,
+                            app_name,
+                            Some(mode_label),
+                            duration_ms,
+                            features_used,
+                            spoken_words,
+                        ))
                     } else {
                         None
                     };
