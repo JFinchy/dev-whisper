@@ -32,7 +32,8 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState as PressStat
 use audio::AudioHandle;
 use history::{
     clear_history, delete_history_entry, get_history_retention_days, get_journal_enabled,
-    list_history_entries, set_history_retention_days, set_journal_enabled,
+    list_history_entries, reprocess_history_text, search_history_entries,
+    set_history_retention_days, set_journal_enabled, update_history_entry_text,
 };
 use llm::{get_llm_model, list_llm_catalog, list_ollama_models, pull_llm_model, set_llm_model};
 use logging::{clear_logs, get_logs};
@@ -218,6 +219,9 @@ pub fn run() {
             get_press_enter_enabled,
             set_press_enter_enabled,
             list_history_entries,
+            search_history_entries,
+            reprocess_history_text,
+            update_history_entry_text,
             clear_history,
             delete_history_entry,
             get_history_retention_days,

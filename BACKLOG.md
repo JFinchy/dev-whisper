@@ -226,6 +226,30 @@ build phases.
     context work already tracked above under the SuperWhisper gap
     analysis, not this entry.
 
+- **History reprocessing + full-text search** (in testing 2026-08-17, from
+  the 2026-08-16 SuperWhisper gap analysis) — history was append-only with
+  no way to search it or re-run a past entry through a different mode.
+  - **Full-text search**: `history::search_history_entries` — a linear
+    case-insensitive substring scan across transcript text, journal
+    summary, and app name, over the *entire* retained history (not just
+    the 200-entry cap `list_history_entries` normally returns). No real
+    index — history is bounded by the retention window (365 days max), so
+    even a busy user's file is at most a few thousand short lines; an
+    index would be solving a problem this app doesn't have yet. Wired into
+    the History section's existing list via a search box: empty query
+    falls back to the normal recent-first `list_history_entries` view.
+  - **Reprocessing**: `history::reprocess_history_text` re-runs a past
+    entry's *text* through `modes::apply_mode` for a different Mode, and
+    optionally `llm::refine`. Deliberately does **not** re-transcribe from
+    audio — the raw recording is a transient temp file
+    (`audio::write_wav`), never retained past the original transcription,
+    so persisting audio long-term would be a real privacy/storage-scope
+    decision this entry isn't taking on. The Settings UI shows the
+    reprocessed result as a preview (mode picker + "Refine with LLM"
+    checkbox + Run), with Copy and Replace actions —
+    `history::update_history_entry_text` persists a Replace, clearing the
+    old journal summary since it described text that's no longer there.
+
 - **App-aware modes + LLM refinement** (shipped 2026-08-15) —
   frontmost-app detection (`app_detect.rs`, `NSWorkspace`), a mode
   framework with built-in defaults for common apps (`modes.rs`), a
@@ -304,9 +328,9 @@ build phases.
     4. Selected-text/on-screen context feeding LLM refinement — extends
        the shipped app-aware refinement and boilerplate generation with
        real code context, not just app identity.
-    5. History reprocessing + full-text search — history is currently
-       append-only with no way to re-run a past recording through a
-       different mode or search it.
+    5. ~~History reprocessing + full-text search~~ (shipped 2026-08-17) —
+       see the "History reprocessing + full-text search" Feature Request
+       entry below for the design and what it does/doesn't cover.
   - **Explicitly skipped as out of scope**: cloud/BYOK AI models
     (contradicts local-only premise), cross-platform support (macOS-only
     by design), enterprise/SOC2/billing features, speaker diarization +

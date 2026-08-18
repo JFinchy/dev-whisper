@@ -31,9 +31,6 @@ research-leverage ranking — both now have a full implementation design in
 4. **Realtime streaming transcript display** — partial results shown
    while still speaking, not just after release. Real UX upgrade to the
    shipped push-to-talk loop.
-5. **History reprocessing + full-text search** — history is currently
-   append-only with no way to re-run a past recording through a
-   different mode or search it.
 
 ## In testing
 

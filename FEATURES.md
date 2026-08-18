@@ -82,6 +82,15 @@ built yet.
   latency. Skips dictations under 6 words (not worth summarizing) and
   falls back to just the raw transcript if Ollama is unreachable.
 - **Per-entry copy/delete** in the History settings section.
+- **Full-text search** — a search box filters the entire retained history
+  (not just the most recent 200 entries the list view normally loads), by
+  transcript text, journal summary, or app name.
+- **Reprocessing** — re-run a past transcript's *text* through a different
+  Mode (and optionally the LLM refinement pass) without re-recording.
+  Doesn't re-transcribe from audio — the raw recording is a transient temp
+  file, never retained — so this reformats the saved text, the same
+  formatting/refinement a live dictation goes through. Preview the result,
+  then copy it or replace the stored entry with it.
 
 ## Widget & Settings UI
 

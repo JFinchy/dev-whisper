@@ -126,6 +126,78 @@ pub fn list_history_entries(app: AppHandle) -> Vec<HistoryEntry> {
     entries
 }
 
+/// Full-text search across the *entire* retained history, not just the
+/// most recent `MAX_ENTRIES_RETURNED` — the whole point is reaching back
+/// further than the normal list view shows. A linear case-insensitive
+/// substring scan rather than a real index: history is bounded by the
+/// retention window (365 days max), so even a busy user's file is at most
+/// a few thousand short lines — an index would be solving a problem this
+/// app doesn't have yet.
+#[tauri::command]
+pub fn search_history_entries(app: AppHandle, query: String) -> Vec<HistoryEntry> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return list_history_entries(app);
+    }
+
+    let mut entries: Vec<HistoryEntry> =
+        read_all(&app).into_iter().filter(|e| entry_matches(e, &query)).collect();
+    entries.reverse(); // most recent first
+    entries.truncate(MAX_ENTRIES_RETURNED);
+    entries
+}
+
+/// Pulled out of `search_history_entries` so the matching logic is
+/// testable without a real `AppHandle` — `query_lower` is expected to
+/// already be lowercased and non-empty (the caller handles the "empty
+/// query = show everything" case before this ever runs).
+fn entry_matches(entry: &HistoryEntry, query_lower: &str) -> bool {
+    entry.text.to_lowercase().contains(query_lower)
+        || entry.summary.as_deref().is_some_and(|s| s.to_lowercase().contains(query_lower))
+        || entry.app_name.as_deref().is_some_and(|a| a.to_lowercase().contains(query_lower))
+}
+
+/// Re-runs `text` through a different Mode's formatting (and, if
+/// requested, LLM refinement) without touching the stored entry — the
+/// caller decides whether to just copy the result or persist it via
+/// `update_history_entry_text`. Doesn't re-transcribe from audio: the raw
+/// recording is a transient temp file (see `audio::write_wav`), never
+/// retained past the original transcription, so "reprocessing" here means
+/// re-formatting the saved transcript, not re-running Whisper.
+#[tauri::command]
+pub fn reprocess_history_text(
+    app: AppHandle,
+    text: String,
+    mode: crate::modes::Mode,
+    use_llm_refinement: bool,
+) -> Result<String, String> {
+    let formatted = crate::modes::apply_mode(mode, &text);
+    if use_llm_refinement {
+        let cfg = config::load(&app);
+        crate::llm::refine(mode, &formatted, &cfg.llm_model)
+    } else {
+        Ok(formatted)
+    }
+}
+
+/// Overwrites a stored entry's text in place — used to persist the result
+/// of `reprocess_history_text` rather than leaving it as a one-off copy.
+/// Clears any existing journal summary, since it was written for the old
+/// text and would otherwise silently describe content that's no longer
+/// there.
+#[tauri::command]
+pub fn update_history_entry_text(app: AppHandle, timestamp_ms: u64, text: String) {
+    let mut entries = read_all(&app);
+    let Some(entry) = entries.iter_mut().find(|e| e.timestamp_ms == timestamp_ms) else {
+        return;
+    };
+    entry.text = text;
+    entry.summary = None;
+    if write_all(&app, &entries).is_ok() {
+        let _ = app.emit("history-updated", ());
+    }
+}
+
 #[tauri::command]
 pub fn clear_history(app: AppHandle) {
     let _ = write_all(&app, &[]);
@@ -164,4 +236,52 @@ pub fn set_history_retention_days(app: AppHandle, days: u32) {
     cfg.history_retention_days = days;
     let _ = config::save(&app, &cfg);
     purge_old_entries(&app, days);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(text: &str, app_name: Option<&str>, summary: Option<&str>) -> HistoryEntry {
+        HistoryEntry {
+            timestamp_ms: 0,
+            text: text.to_string(),
+            app_name: app_name.map(str::to_string),
+            mode: None,
+            summary: summary.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn matches_on_text() {
+        let e = entry("call the CLIENT at three", None, None);
+        assert!(entry_matches(&e, "client")); // entry text gets lowercased even though the query already is
+        assert!(!entry_matches(&e, "invoice"));
+    }
+
+    #[test]
+    fn matches_on_summary() {
+        let e = entry("fixed the bug in the parser", None, Some("Fix parser bug"));
+        assert!(entry_matches(&e, "parser bug"));
+    }
+
+    #[test]
+    fn matches_on_app_name() {
+        let e = entry("some text", Some("Terminal"), None);
+        assert!(entry_matches(&e, "terminal"));
+    }
+
+    #[test]
+    fn does_not_match_when_summary_and_app_name_are_absent() {
+        let e = entry("some text", None, None);
+        assert!(!entry_matches(&e, "missing"));
+    }
+
+    #[test]
+    fn empty_query_never_reaches_entry_matches_but_would_match_everything_if_it_did() {
+        // Documents the assumption entry_matches relies on: callers filter
+        // out the empty-query case themselves (see search_history_entries).
+        let e = entry("anything", None, None);
+        assert!(entry_matches(&e, ""));
+    }
 }
