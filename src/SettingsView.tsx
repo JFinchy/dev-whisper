@@ -1,6 +1,83 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { applyTheme, THEME_ORDER, THEME_LABEL, THEMES, type ThemeId } from "./theme";
+
+function IconMic() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <path d="M12 18v3" />
+      <path d="M9 21h6" />
+    </svg>
+  );
+}
+function IconWave() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M3 12h2M7 8v8M11 4v16M15 8v8M19 10v4M21 12h0" />
+    </svg>
+  );
+}
+function IconWindow() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 9h18" />
+    </svg>
+  );
+}
+function IconCpu() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+      <path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3" />
+    </svg>
+  );
+}
+function IconPlug() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0V8Z" />
+      <path d="M12 17v4" />
+    </svg>
+  );
+}
+function IconGear() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" />
+    </svg>
+  );
+}
+function IconBook() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5V5.5Z" />
+      <path d="M4 19a2.5 2.5 0 0 1 2.5-2.5H20" />
+    </svg>
+  );
+}
+function IconClock() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 3" />
+    </svg>
+  );
+}
+function IconPalette() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.4-.3-.3-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.3A4.2 4.2 0 0 0 21 12c0-5-4-9-9-9Z" />
+      <circle cx="7.5" cy="10.5" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="7.5" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="16.5" cy="10.5" r="1.1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
 
 type ShortcutConfig = {
   meta: boolean;
@@ -16,6 +93,11 @@ type ModelStatus = {
   size_mb: number;
   downloaded: boolean;
   active: boolean;
+};
+
+type EnrollmentStatus = {
+  enrolled: boolean;
+  enrolled_at_ms: number | null;
 };
 
 function prettyCode(code: string): string {
@@ -149,7 +231,7 @@ function ModelsSection() {
   }
 
   return (
-    <div className="mb-4 border-t border-base-content/10 pt-3">
+    <div className="mb-4">
       <label className="mb-1 block text-xs font-medium opacity-70">Whisper model</label>
       <ul className="flex flex-col gap-1.5">
         {models.map((m) => (
@@ -322,7 +404,7 @@ function AppModesSection() {
   }
 
   return (
-    <div className="mb-4 border-t border-base-content/10 pt-3">
+    <div className="mb-4">
       <label className="mb-1 block text-xs font-medium opacity-70">App modes</label>
 
       {rules.length > 0 && (
@@ -506,6 +588,119 @@ function VocabularySection() {
   );
 }
 
+type Snippet = { trigger: string; body: string };
+
+function SnippetsSection() {
+  const [snippets, setSnippets] = useState<Snippet[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [triggerDraft, setTriggerDraft] = useState("");
+  const [bodyDraft, setBodyDraft] = useState("");
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    invoke<Snippet[]>("get_snippets")
+      .then(setSnippets)
+      .catch((err) => console.error("get_snippets failed:", err))
+      .finally(() => setLoading(false));
+  }, []);
+
+  function save(next: Snippet[]) {
+    setSnippets(next);
+    invoke("set_snippets", { snippets: next }).catch((err) => console.error("set_snippets failed:", err));
+  }
+
+  function startEdit(index: number) {
+    setEditingIndex(index);
+    setTriggerDraft(snippets[index].trigger);
+    setBodyDraft(snippets[index].body);
+  }
+
+  function cancelEdit() {
+    setEditingIndex(null);
+    setTriggerDraft("");
+    setBodyDraft("");
+  }
+
+  function submit() {
+    const trigger = triggerDraft.trim();
+    const body = bodyDraft.trim();
+    if (!trigger || !body) return;
+
+    if (editingIndex !== null) {
+      const next = snippets.slice();
+      next[editingIndex] = { trigger, body };
+      save(next);
+    } else {
+      if (snippets.some((s) => s.trigger.toLowerCase() === trigger.toLowerCase())) return;
+      save([...snippets, { trigger, body }]);
+    }
+    cancelEdit();
+  }
+
+  function removeSnippet(index: number) {
+    save(snippets.filter((_, i) => i !== index));
+    if (editingIndex === index) cancelEdit();
+  }
+
+  return (
+    <div className="mb-4 border-t border-base-content/10 pt-3">
+      <label className="mb-1 block text-xs font-medium opacity-70">Snippets</label>
+      <p className="mb-1.5 text-xs opacity-60">
+        Say a trigger phrase by itself (e.g. "PR checklist") to paste its saved text instead.
+      </p>
+      {loading ? (
+        <span className="loading loading-spinner loading-xs" />
+      ) : (
+        <>
+          <div className="mb-2 flex flex-col gap-1.5">
+            {snippets.map((s, i) => (
+              <div key={i} className="flex items-start justify-between gap-2 rounded bg-base-100 px-2 py-1.5">
+                <button className="flex-1 text-left" onClick={() => startEdit(i)}>
+                  <div className="text-xs font-medium">{s.trigger}</div>
+                  <div className="truncate text-xs opacity-60">{s.body.split("\n")[0]}</div>
+                </button>
+                <button
+                  className="opacity-60 hover:opacity-100"
+                  onClick={() => removeSnippet(i)}
+                  aria-label={`Remove ${s.trigger}`}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            {snippets.length === 0 && <p className="text-xs opacity-60">No snippets yet.</p>}
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <input
+              className="input input-sm"
+              placeholder="Trigger phrase (e.g. standup update)"
+              value={triggerDraft}
+              onChange={(e) => setTriggerDraft(e.target.value)}
+            />
+            <textarea
+              className="textarea textarea-sm"
+              placeholder="Text to paste"
+              rows={3}
+              value={bodyDraft}
+              onChange={(e) => setBodyDraft(e.target.value)}
+            />
+            <div className="flex gap-1.5">
+              <button className="btn btn-sm flex-1" onClick={submit}>
+                {editingIndex !== null ? "Save" : "Add"}
+              </button>
+              {editingIndex !== null && (
+                <button className="btn btn-sm" onClick={cancelEdit}>
+                  Cancel
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 type HistoryEntry = {
   timestamp_ms: number;
   text: string;
@@ -671,7 +866,7 @@ function HistorySection() {
   }
 
   return (
-    <div className="mb-4 border-t border-base-content/10 pt-3">
+    <div className="mb-4">
       <div className="mb-1 flex items-center justify-between">
         <label className="text-xs font-medium opacity-70">History</label>
         <div className="flex items-center gap-1.5">
@@ -1044,7 +1239,7 @@ function LlmSection() {
   }
 
   return (
-    <div className="mb-4 border-t border-base-content/10 pt-3">
+    <div className="mb-4">
       <label className="mb-1 block text-xs font-medium opacity-70">LLM refinement</label>
       {!checked ? (
         <span className="loading loading-spinner loading-xs" />
@@ -1111,37 +1306,20 @@ const WIDGET_MODE_LABEL: Record<WidgetMode, string> = {
   detailed: "Detailed — full status panel",
 };
 
-function GeneralSection() {
-  const [autostart, setAutostart] = useState(false);
+function DeliverySection() {
   const [copyOnly, setCopyOnly] = useState(false);
   const [pressEnterEnabled, setPressEnterEnabled] = useState(false);
-  const [widgetMode, setWidgetModeState] = useState<WidgetMode>("compact");
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
-    Promise.all([
-      invoke<boolean>("get_autostart_enabled"),
-      invoke<boolean>("get_copy_only"),
-      invoke<boolean>("get_press_enter_enabled"),
-      invoke<WidgetMode>("get_widget_mode"),
-    ])
-      .then(([autostartValue, copyOnlyValue, pressEnterValue, widgetModeValue]) => {
-        setAutostart(autostartValue);
+    Promise.all([invoke<boolean>("get_copy_only"), invoke<boolean>("get_press_enter_enabled")])
+      .then(([copyOnlyValue, pressEnterValue]) => {
         setCopyOnly(copyOnlyValue);
         setPressEnterEnabled(pressEnterValue);
-        setWidgetModeState(widgetModeValue);
       })
-      .catch((err) => console.error("failed to load general settings:", err))
+      .catch((err) => console.error("failed to load delivery settings:", err))
       .finally(() => setChecked(true));
   }, []);
-
-  function toggleAutostart(enabled: boolean) {
-    setAutostart(enabled);
-    invoke("set_autostart_enabled", { enabled }).catch((err) => {
-      console.error("set_autostart_enabled failed:", err);
-      setAutostart(!enabled);
-    });
-  }
 
   function toggleCopyOnly(enabled: boolean) {
     setCopyOnly(enabled);
@@ -1156,6 +1334,86 @@ function GeneralSection() {
     invoke("set_press_enter_enabled", { enabled }).catch((err) => {
       console.error("set_press_enter_enabled failed:", err);
       setPressEnterEnabled(!enabled);
+    });
+  }
+
+  return (
+    <div className="mb-4 border-b border-base-content/10 pb-3">
+      <label className="mb-1 block text-xs font-medium opacity-70">Delivery</label>
+      {!checked ? (
+        <span className="loading loading-spinner loading-xs" />
+      ) : (
+        <div className="flex flex-col gap-2">
+          <label className="flex items-center gap-1.5 text-xs">
+            <input
+              type="checkbox"
+              className="checkbox checkbox-xs"
+              checked={copyOnly}
+              onChange={(e) => toggleCopyOnly(e.target.checked)}
+            />
+            Copy only — don't auto-paste into the active app
+          </label>
+          <label className="flex items-center gap-1.5 text-xs">
+            <input
+              type="checkbox"
+              className="checkbox checkbox-xs"
+              checked={pressEnterEnabled}
+              disabled={copyOnly}
+              onChange={(e) => togglePressEnter(e.target.checked)}
+            />
+            Say "press enter" to submit — presses Enter after pasting
+            {copyOnly && " (disabled while copy only is on)"}
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ThemeSection({ theme, onChange }: { theme: ThemeId; onChange: (id: ThemeId) => void }) {
+  return (
+    <div className="mb-4 border-b border-base-content/10 pb-3">
+      <label className="mb-1 block text-xs font-medium opacity-70">Appearance</label>
+      <div className="flex flex-col gap-1.5">
+        {THEME_ORDER.map((id) => (
+          <button
+            key={id}
+            type="button"
+            className={`dw-theme-row ${theme === id ? "active" : ""}`}
+            onClick={() => onChange(id)}
+          >
+            <span className="flex items-center gap-2">
+              <span className="dw-theme-dot" style={{ background: THEMES[id].accent }} />
+              {THEME_LABEL[id]}
+            </span>
+            {theme === id && <span>✓</span>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function GeneralSection() {
+  const [autostart, setAutostart] = useState(false);
+  const [widgetMode, setWidgetModeState] = useState<WidgetMode>("compact");
+  const [checked, setChecked] = useState(false);
+
+  useEffect(() => {
+    Promise.all([invoke<boolean>("get_autostart_enabled"), invoke<WidgetMode>("get_widget_mode")])
+      .then(([autostartValue, widgetModeValue]) => {
+        setAutostart(autostartValue);
+        setWidgetModeState(widgetModeValue);
+      })
+      .catch((err) => console.error("failed to load general settings:", err))
+      .finally(() => setChecked(true));
+  }, []);
+
+  function toggleAutostart(enabled: boolean) {
+    setAutostart(enabled);
+    invoke("set_autostart_enabled", { enabled }).catch((err) => {
+      console.error("set_autostart_enabled failed:", err);
+      setAutostart(!enabled);
     });
   }
 
@@ -1185,26 +1443,6 @@ function GeneralSection() {
             Launch Dev Whisper at login
           </label>
           <label className="flex items-center gap-1.5 text-xs">
-            <input
-              type="checkbox"
-              className="checkbox checkbox-xs"
-              checked={copyOnly}
-              onChange={(e) => toggleCopyOnly(e.target.checked)}
-            />
-            Copy only — don't auto-paste into the active app
-          </label>
-          <label className="flex items-center gap-1.5 text-xs">
-            <input
-              type="checkbox"
-              className="checkbox checkbox-xs"
-              checked={pressEnterEnabled}
-              disabled={copyOnly}
-              onChange={(e) => togglePressEnter(e.target.checked)}
-            />
-            Say "press enter" to submit — presses Enter after pasting
-            {copyOnly && " (disabled while copy only is on)"}
-          </label>
-          <label className="flex items-center gap-1.5 text-xs">
             Widget:
             <select
               className="select select-xs flex-1"
@@ -1227,12 +1465,39 @@ function GeneralSection() {
 function VoiceIsolationSection() {
   const [enabled, setEnabled] = useState(false);
   const [checked, setChecked] = useState(false);
+  const [status, setStatus] = useState<EnrollmentStatus | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function refreshStatus() {
+    invoke<EnrollmentStatus>("get_voice_enrollment_status")
+      .then(setStatus)
+      .catch((err) => console.error("get_voice_enrollment_status failed:", err));
+  }
 
   useEffect(() => {
     invoke<boolean>("get_isolated_voice_enabled")
       .then(setEnabled)
       .catch((err) => console.error("get_isolated_voice_enabled failed:", err))
       .finally(() => setChecked(true));
+    refreshStatus();
+
+    const unlistenStarted = listen("enrollment-started", () => setRecording(true));
+    const unlistenDone = listen("enrollment-complete", () => {
+      setRecording(false);
+      setError(null);
+      refreshStatus();
+    });
+    const unlistenError = listen<string>("enrollment-error", (e) => {
+      setRecording(false);
+      setError(e.payload);
+    });
+
+    return () => {
+      unlistenStarted.then((f) => f());
+      unlistenDone.then((f) => f());
+      unlistenError.then((f) => f());
+    };
   }, []);
 
   function toggleEnabled(next: boolean) {
@@ -1243,8 +1508,22 @@ function VoiceIsolationSection() {
     });
   }
 
+  function startEnrollment() {
+    setError(null);
+    invoke("start_voice_enrollment")
+      .then(() => setRecording(true))
+      .catch((err) => setError(String(err)));
+  }
+
+  function stopEnrollment() {
+    invoke("stop_voice_enrollment").catch((err) => {
+      console.error("stop_voice_enrollment failed:", err);
+      setRecording(false);
+    });
+  }
+
   return (
-    <div className="mb-4 border-b border-base-content/10 pb-3">
+    <div className="mb-4 border-t border-base-content/10 pt-3">
       <label className="mb-1 block text-xs font-medium opacity-70">Voice Isolation</label>
       {!checked ? (
         <span className="loading loading-spinner loading-xs" />
@@ -1257,13 +1536,46 @@ function VoiceIsolationSection() {
               checked={enabled}
               onChange={(e) => toggleEnabled(e.target.checked)}
             />
-            Isolated Voice — filter out background noise before transcribing
+            Isolated Voice — filter out other speakers/background noise before transcribing
           </label>
+
+          <div className="flex items-center justify-between rounded-md bg-base-100 px-2.5 py-1.5 text-xs">
+            <div>
+              <div className="font-medium">{status?.enrolled ? "Voice enrolled" : "Not enrolled"}</div>
+              {status?.enrolled && status.enrolled_at_ms && (
+                <div className="opacity-50">
+                  {new Date(status.enrolled_at_ms).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </div>
+              )}
+            </div>
+            {recording ? (
+              <button className="btn btn-xs btn-error" onClick={stopEnrollment}>
+                Stop
+              </button>
+            ) : (
+              <button className="btn btn-xs" onClick={startEnrollment}>
+                {status?.enrolled ? "Re-enroll" : "Enroll voice"}
+              </button>
+            )}
+          </div>
+
+          {recording && (
+            <p className="text-xs opacity-60">
+              Recording — speak naturally for a few seconds, then press Stop.
+            </p>
+          )}
+
           <p className="text-xs opacity-60">
-            Not enrolled: this only suppresses quiet background noise, not a
-            second person talking at similar volume. Voice enrollment for
-            stronger speaker-based isolation is coming soon.
+            {status?.enrolled
+              ? "Enrolled: recordings are matched against your enrolled voice, rejecting other speakers."
+              : "Not enrolled: this only suppresses quiet background noise, not a second person talking at similar volume. Enroll your voice above for stronger speaker-based isolation."}
           </p>
+
+          {error && <p className="text-xs text-error">{error}</p>}
         </div>
       )}
     </div>
@@ -1318,9 +1630,7 @@ type VoiceCommandGroup = {
 /// is the one group that needs Ollama). Kept as one reference list so a
 /// user hearing "why did my dictation turn into a checklist" or "why did
 /// that get pasted in ALL_CAPS" has one place to check rather than having
-/// to ask. Deliberately only lists what's implemented on `main` right now —
-/// Backtrack and the Snippet library land as their own additions to this
-/// same list once merged.
+/// to ask.
 const VOICE_COMMAND_GROUPS: VoiceCommandGroup[] = [
   {
     title: "Casing & syntax",
@@ -1340,6 +1650,14 @@ const VOICE_COMMAND_GROUPS: VoiceCommandGroup[] = [
     examples: [{ say: '"one set up the repo two install deps three run tests"', get: "1. set up the repo\n2. install deps\n3. run tests" }],
   },
   {
+    title: "Self-correction (Backtrack)",
+    description: 'Correct yourself mid-dictation instead of stopping and restarting — everything before the trigger is discarded.',
+    examples: [
+      { say: '"call the client at three scratch that four"', get: "four" },
+      { say: '"let\'s do coffee at two, actually three"', get: "three" },
+    ],
+  },
+  {
     title: "Boilerplate generation",
     description: 'Say one of these, then describe what to generate. Sent to your local LLM instead of pasted as text — needs Ollama running.',
     examples: [
@@ -1348,6 +1666,11 @@ const VOICE_COMMAND_GROUPS: VoiceCommandGroup[] = [
         get: "the generated component, pasted directly",
       },
     ],
+  },
+  {
+    title: "Snippets",
+    description: 'Speak a saved trigger phrase on its own and it expands to its full saved body. Manage the list from Vocabulary → Snippets.',
+    examples: [{ say: '"pr checklist"', get: "the saved PR checklist template, pasted directly" }],
   },
   {
     title: "Press enter",
@@ -1402,22 +1725,155 @@ function VoiceCommandsSection() {
   );
 }
 
-function SettingsView() {
+type PageId =
+  | "dictation"
+  | "voice"
+  | "vocabulary"
+  | "modes"
+  | "llm"
+  | "history"
+  | "integrations"
+  | "appearance"
+  | "advanced";
+
+const NAV: { id: PageId; label: string; icon: () => ReactElement }[] = [
+  { id: "dictation", label: "Dictation", icon: IconMic },
+  { id: "voice", label: "Voice", icon: IconWave },
+  { id: "vocabulary", label: "Vocabulary", icon: IconBook },
+  { id: "modes", label: "Modes", icon: IconWindow },
+  { id: "llm", label: "LLM", icon: IconCpu },
+  { id: "history", label: "History", icon: IconClock },
+  { id: "integrations", label: "Integrations", icon: IconPlug },
+];
+
+const FOOTER_NAV: { id: PageId; label: string; icon: () => ReactElement }[] = [
+  { id: "appearance", label: "Appearance", icon: IconPalette },
+  { id: "advanced", label: "Advanced", icon: IconGear },
+];
+
+const PAGE_TITLE: Record<PageId, string> = {
+  dictation: "Dictation",
+  voice: "Voice — Whisper model & isolation",
+  vocabulary: "Vocabulary",
+  modes: "Modes — app-aware formatting rules",
+  llm: "LLM — local refinement (Ollama)",
+  history: "History",
+  integrations: "Integrations — delivery & webhook",
+  appearance: "Appearance",
+  advanced: "Advanced",
+};
+
+function NavItem({
+  label,
+  icon,
+  active,
+  onClick,
+}: {
+  label: string;
+  icon: ReactElement;
+  active: boolean;
+  onClick: () => void;
+}) {
   return (
-    <main className="h-screen overflow-y-auto bg-base-300 px-5 py-4 text-base-content">
-      <h1 className="mb-4 text-base font-semibold">Settings</h1>
-      <GeneralSection />
-      <VoiceCommandsSection />
-      <DeviceSection />
-      <ShortcutSection />
-      <ModelsSection />
-      <VoiceIsolationSection />
-      <AppModesSection />
-      <LlmSection />
-      <VocabularySection />
-      <HistorySection />
-      <WebhookSection />
-      <LogsSection />
+    <button type="button" className={`dw-nav-item ${active ? "active" : ""}`} onClick={onClick}>
+      <span className="dw-icon">{icon}</span>
+      {label}
+    </button>
+  );
+}
+
+function SettingsView() {
+  const [theme, setThemeState] = useState<ThemeId>("terminal");
+  const [page, setPage] = useState<PageId>("dictation");
+
+  useEffect(() => {
+    invoke<ThemeId>("get_theme")
+      .then((t) => {
+        setThemeState(t);
+        applyTheme(t);
+      })
+      .catch((err) => console.error("get_theme failed:", err));
+
+    const unlisten = listen<ThemeId>("theme-changed", (e) => {
+      setThemeState(e.payload);
+      applyTheme(e.payload);
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
+
+  function changeTheme(next: ThemeId) {
+    setThemeState(next);
+    applyTheme(next);
+    invoke("set_theme", { theme: next }).catch((err) => console.error("set_theme failed:", err));
+  }
+
+  return (
+    <main className="dw-shell h-screen">
+      <div className="dw-app-shell">
+        <nav className="dw-sidebar">
+          <div className="dw-brand">
+            <IconMic />
+            Dev Whisper
+          </div>
+          {NAV.map((item) => (
+            <NavItem
+              key={item.id}
+              label={item.label}
+              icon={item.icon()}
+              active={page === item.id}
+              onClick={() => setPage(item.id)}
+            />
+          ))}
+          <div className="dw-sidebar-foot">
+            {FOOTER_NAV.map((item) => (
+              <NavItem
+                key={item.id}
+                label={item.label}
+                icon={item.icon()}
+                active={page === item.id}
+                onClick={() => setPage(item.id)}
+              />
+            ))}
+          </div>
+        </nav>
+
+        <div className="dw-page">
+          <h2 className="dw-page-title">{PAGE_TITLE[page]}</h2>
+          {page === "dictation" && (
+            <>
+              <GeneralSection />
+              <VoiceCommandsSection />
+              <DeviceSection />
+              <ShortcutSection />
+            </>
+          )}
+          {page === "voice" && (
+            <>
+              <ModelsSection />
+              <VoiceIsolationSection />
+            </>
+          )}
+          {page === "vocabulary" && (
+            <>
+              <VocabularySection />
+              <SnippetsSection />
+            </>
+          )}
+          {page === "modes" && <AppModesSection />}
+          {page === "llm" && <LlmSection />}
+          {page === "history" && <HistorySection />}
+          {page === "integrations" && (
+            <>
+              <DeliverySection />
+              <WebhookSection />
+            </>
+          )}
+          {page === "appearance" && <ThemeSection theme={theme} onChange={changeTheme} />}
+          {page === "advanced" && <LogsSection />}
+        </div>
+      </div>
     </main>
   );
 }

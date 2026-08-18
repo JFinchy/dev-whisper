@@ -2,9 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { applyTheme, type ThemeId } from "./theme";
 
 type Phase = "idle" | "recording" | "transcribing" | "refining";
 type WidgetMode = "minimal" | "compact" | "detailed";
+type ModeOverride = "plain" | "casual" | "cli" | null;
+
+const OVERRIDE_LABEL: Record<Exclude<ModeOverride, null>, string> = {
+  plain: "Plain",
+  casual: "Casual",
+  cli: "CLI",
+};
 
 const STATUS_LABEL: Record<Phase, string> = {
   idle: "Ready",
@@ -18,6 +26,12 @@ const COMPACT_BASE_SIZE = { width: 220, height: 60 };
 // is readable instead of being cut off by `truncate` — that silently ate
 // the Accessibility-permission error before this fix.
 const COMPACT_EXPANDED_SIZE = { width: 220, height: 108 };
+// How tall compact grows for the hover flyout (mic mode + a one-off mode
+// override for the next dictation). Grows downward rather than upward —
+// this window has no titlebar to anchor from, and downward reuses the
+// exact resize mechanism COMPACT_EXPANDED_SIZE already relies on instead
+// of introducing new position math.
+const COMPACT_FLYOUT_SIZE = { width: 220, height: 168 };
 
 function WidgetView() {
   const [mode, setMode] = useState<WidgetMode>("compact");
@@ -32,10 +46,27 @@ function WidgetView() {
   const [flashVisible, setFlashVisible] = useState(false);
   const flashTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Quick-actions hover flyout state (compact mode only, for now) — see
+  // the `.dw-fly-*` styles in App.css. `micMode`/`overrideMode` mirror
+  // real backend state (isolated_voice_enabled / the one-shot mode
+  // override), not local-only UI state.
+  const [flyoutHovered, setFlyoutHovered] = useState(false);
+  const [micMode, setMicMode] = useState(false);
+  const [overrideMode, setOverrideMode] = useState<ModeOverride>(null);
+
   useEffect(() => {
     invoke<WidgetMode>("get_widget_mode")
       .then(setMode)
       .catch((err) => console.error("get_widget_mode failed:", err));
+
+    invoke<boolean>("get_isolated_voice_enabled")
+      .then(setMicMode)
+      .catch((err) => console.error("get_isolated_voice_enabled failed:", err));
+
+    invoke<ThemeId>("get_theme")
+      .then(applyTheme)
+      .catch((err) => console.error("get_theme failed:", err));
+    const unlistenTheme = listen<ThemeId>("theme-changed", (e) => applyTheme(e.payload));
 
     function announce(text: string, error: boolean) {
       setMessage(text);
@@ -58,13 +89,19 @@ function WidgetView() {
     const unlistenTranscriptReady = listen<string>("transcript-ready", () => {
       setPhase("idle");
       announce("Pasted", false);
+      // The backend consumes the override the moment it's used (see
+      // recording.rs's `mode_override.take()`) — clear the pill so it
+      // doesn't look like it's still armed for the next dictation.
+      setOverrideMode(null);
     });
     const unlistenTranscriptError = listen<string>("transcript-error", (event) => {
       setPhase("idle");
+      setOverrideMode(null);
       announce(event.payload, true);
     });
 
     return () => {
+      unlistenTheme.then((f) => f());
       unlistenModeChanged.then((f) => f());
       unlistenStart.then((f) => f());
       unlistenStop.then((f) => f());
@@ -77,9 +114,17 @@ function WidgetView() {
 
   useEffect(() => {
     if (mode !== "compact") return;
-    const size = flashVisible && isError ? COMPACT_EXPANDED_SIZE : COMPACT_BASE_SIZE;
+    // The flyout takes priority over the error-expansion size — hovering
+    // to check mic mode mid-error is a rare enough overlap that showing
+    // the flyout (rather than fighting over which one "wins" the window
+    // height) is the simpler, still-correct choice.
+    const size = flyoutHovered
+      ? COMPACT_FLYOUT_SIZE
+      : flashVisible && isError
+        ? COMPACT_EXPANDED_SIZE
+        : COMPACT_BASE_SIZE;
     invoke("set_widget_size", size).catch((err) => console.error("set_widget_size failed:", err));
-  }, [mode, flashVisible, isError]);
+  }, [mode, flashVisible, isError, flyoutHovered]);
 
   function toggleRecording() {
     invoke("toggle_recording_command").catch((err) => console.error("toggle_recording_command failed:", err));
@@ -87,6 +132,25 @@ function WidgetView() {
 
   function openSettings() {
     invoke("open_settings").catch((err) => console.error("open_settings failed:", err));
+  }
+
+  function toggleMicMode(next: boolean) {
+    setMicMode(next);
+    invoke("set_isolated_voice_enabled", { enabled: next }).catch((err) => {
+      console.error("set_isolated_voice_enabled failed:", err);
+      setMicMode(!next);
+    });
+  }
+
+  function pickOverride(next: Exclude<ModeOverride, null>) {
+    // Clicking the already-selected pill clears it back to "auto" rather
+    // than being stuck — this is a one-off nudge for the very next
+    // dictation, not a persistent setting.
+    const nextValue = overrideMode === next ? null : next;
+    setOverrideMode(nextValue);
+    invoke("set_next_mode_override", { mode: nextValue }).catch((err) =>
+      console.error("set_next_mode_override failed:", err),
+    );
   }
 
   function startDrag(e: React.MouseEvent) {
@@ -165,7 +229,13 @@ function WidgetView() {
 
   // Compact
   return (
-    <main className="flex h-screen flex-col justify-center gap-1 rounded-2xl border border-white/10 bg-neutral/90 px-2.5 text-neutral-content backdrop-blur-md">
+    <main
+      className={`flex h-screen flex-col gap-1 rounded-2xl border border-white/10 bg-neutral/90 px-2.5 py-2 text-neutral-content backdrop-blur-md ${
+        flyoutHovered ? "justify-start" : "justify-center"
+      }`}
+      onMouseEnter={() => setFlyoutHovered(true)}
+      onMouseLeave={() => setFlyoutHovered(false)}
+    >
       <div className="flex items-center gap-2">
         {recordButton}
         <span
@@ -184,6 +254,41 @@ function WidgetView() {
           ⚙
         </button>
       </div>
+      {flyoutHovered && (
+        <div className="dw-fly-body">
+          <div className="dw-fly-label">Mic mode</div>
+          <div className="dw-fly-row">
+            <button
+              type="button"
+              className={`dw-fly-btn ${!micMode ? "sel" : ""}`}
+              onClick={() => toggleMicMode(false)}
+            >
+              Standard
+            </button>
+            <button
+              type="button"
+              className={`dw-fly-btn ${micMode ? "sel" : ""}`}
+              onClick={() => toggleMicMode(true)}
+            >
+              Voice Isolation
+            </button>
+          </div>
+          <div className="dw-fly-label">Next dictation</div>
+          <div className="dw-fly-row">
+            {(Object.keys(OVERRIDE_LABEL) as Exclude<ModeOverride, null>[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                className={`dw-fly-btn ${overrideMode === m ? "sel" : ""}`}
+                onClick={() => pickOverride(m)}
+                title={overrideMode === m ? "Click again to use the auto-detected mode" : undefined}
+              >
+                {OVERRIDE_LABEL[m]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </main>
   );
 }

@@ -129,7 +129,13 @@ fn format_as_cli(text: &str) -> String {
         return format!("cd {dir}");
     }
 
-    trimmed.to_string()
+    // Anything that isn't one of the literal shell directives above falls
+    // through to file tagging rather than being pasted verbatim — this is
+    // deliberately *not* run over the branches above (a file mention
+    // inside an actual `git commit` message shouldn't get an `@` stuck on
+    // it). See file_tagging.rs for why this only works for terminal
+    // coding agents (Claude Code, OpenCode, Gemini CLI), not editors.
+    crate::file_tagging::tag_file_references(trimmed)
 }
 
 #[cfg(test)]

@@ -8,6 +8,16 @@ use crate::modes;
 use crate::paste::paste_text;
 use crate::stt::WhisperEngine;
 
+/// What the shared `AudioHandle`/`is_recording` pair is currently being used
+/// for. Dictation and voice enrollment (`voice_isolation.rs`) both drive the
+/// same underlying recording primitive; without this, a hotkey press mid-
+/// enrollment would hit `toggle_recording`'s `fetch_xor` and misfire
+/// `transcribe_and_paste` on the enrollment clip.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RecordingPurpose {
+    Enrollment,
+}
+
 pub struct RecordingState {
     pub audio: AudioHandle,
     pub whisper: WhisperEngine,
@@ -19,6 +29,16 @@ pub struct RecordingState {
     /// clicking a button in the widget, so the widget is always already
     /// frontmost by that point).
     pub active_app: Mutex<Option<AppInfo>>,
+    /// One-shot override for the *next* dictation's formatting mode, set
+    /// from the widget's quick-actions flyout (see WidgetView.tsx). Takes
+    /// priority over whatever `modes::resolve_settings` would otherwise
+    /// pick for the frontmost app, and is consumed (cleared) the moment a
+    /// dictation uses it, so it never silently applies to a second one.
+    pub mode_override: Mutex<Option<modes::Mode>>,
+    /// `Some(Enrollment)` while `voice_isolation.rs` owns the shared
+    /// recording primitive — see `RecordingPurpose`. `None` means dictation
+    /// (the default/normal case) owns it.
+    pub recording_purpose: Mutex<Option<RecordingPurpose>>,
 }
 
 /// Swaps the tray icon between its default template look and a red-dot
@@ -45,6 +65,10 @@ fn set_tray_recording_indicator(app: &AppHandle, recording: bool) {
 /// both drive the same start/stop lifecycle.
 pub fn toggle_recording(app: &AppHandle) {
     let state = app.state::<RecordingState>();
+    if state.recording_purpose.lock().unwrap().is_some() {
+        crate::applog!("recording: toggle ignored, the recorder is in use for voice enrollment");
+        return;
+    }
     let was_recording = state.is_recording.fetch_xor(true, Ordering::SeqCst);
 
     if was_recording {
@@ -104,7 +128,14 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
     // on it. Casing-command detection still happens after, on the
     // resulting text, since that's orthogonal to which model produced it.
     let cfg = crate::config::load(app);
-    let settings = modes::resolve_settings(bundle_id.as_deref(), &cfg.mode_rules);
+    let mut settings = modes::resolve_settings(bundle_id.as_deref(), &cfg.mode_rules);
+    if let Some(override_mode) = state.mode_override.lock().unwrap().take() {
+        crate::applog!(
+            "modes: next-dictation override {override_mode:?} applied over resolved {:?}",
+            settings.mode
+        );
+        settings.mode = override_mode;
+    }
     let model_override = settings.stt_model.as_ref().and_then(|id| {
         crate::models::resolve_model_path(app, id).map(|path| (id.clone(), path))
     });
@@ -143,6 +174,14 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
             // than against the literal spoken words.
             let text = crate::punctuation::expand_punctuation(&text);
 
+            // Backtrack ("...at two, actually three") collapses a
+            // self-correction down to just the corrected tail. Runs after
+            // punctuation expansion, not before — its "actually" trigger
+            // requires a literal preceding comma, which only exists once
+            // a spoken "comma" (or Whisper's own natural comma insertion)
+            // has already been resolved to the character.
+            let text = crate::backtrack::try_backtrack(&text);
+
             // "Press enter": stripped before casing/boilerplate/mode so
             // none of those see the trailing control phrase as content.
             // Gated behind a Settings toggle (default off) — an
@@ -163,12 +202,25 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
             // Enter keystroke risk would warrant an opt-in.
             let (text, should_append_clipboard) = crate::clipboard::try_extract_trigger(&text);
 
+            // Snippets ("pr checklist", "standup update") are the most
+            // explicit, intentional signal of the pre-LLM checks — a
+            // literal saved macro the user (or a shipped default) defined
+            // themselves — so they're checked first, ahead of casing
+            // commands and boilerplate requests, in case of a coincidental
+            // overlap. Like those, skips mode formatting and LLM
+            // refinement entirely: the output is already fully resolved.
+            let (formatted, mode_label) = if let Some(expanded) =
+                crate::snippets::try_expand(&text, &cfg.snippets)
+            {
+                crate::applog!("snippets: trigger matched, transcript={text:?}");
+                (expanded, "snippet".to_string())
+            }
             // Casing directives ("snake case error response handler") are a
             // cross-cutting syntax command, not gated behind a Mode — they
             // apply no matter which app/mode is active, and skip both
             // rule-based formatting and LLM refinement entirely since the
             // mechanical transform already fully resolves the output.
-            let (formatted, mode_label) = if let Some(cased) =
+            else if let Some(cased) =
                 crate::syntax::try_apply_casing_command(&text)
             {
                 crate::applog!("syntax: casing command matched, transcript={text:?} output={cased:?}");
@@ -389,6 +441,19 @@ pub fn set_isolated_voice_enabled(app: AppHandle, enabled: bool) {
     let mut cfg = crate::config::load(&app);
     cfg.isolated_voice_enabled = enabled;
     let _ = crate::config::save(&app, &cfg);
+}
+
+/// Set (or clear, with `None`) the one-shot mode override for the next
+/// dictation — see `RecordingState::mode_override`. Not persisted to
+/// config: this is deliberately session/one-shot state, not a setting.
+#[tauri::command]
+pub fn set_next_mode_override(mode: Option<modes::Mode>, state: tauri::State<RecordingState>) {
+    *state.mode_override.lock().unwrap() = mode;
+}
+
+#[tauri::command]
+pub fn get_next_mode_override(state: tauri::State<RecordingState>) -> Option<modes::Mode> {
+    *state.mode_override.lock().unwrap()
 }
 
 #[tauri::command]

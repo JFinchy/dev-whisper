@@ -1,8 +1,10 @@
 mod app_detect;
 mod audio;
+mod backtrack;
 mod boilerplate;
 mod clipboard;
 mod config;
+mod file_tagging;
 mod history;
 mod isolate;
 mod llm;
@@ -13,8 +15,11 @@ mod paste;
 mod punctuation;
 mod recording;
 mod shortcut;
+mod snippets;
 mod stt;
 mod syntax;
+mod theme;
+mod voice_isolation;
 mod webhook;
 mod widget;
 
@@ -41,11 +46,17 @@ use models::{download_model, list_models, set_active_model};
 use modes::{get_mode_rules, list_running_apps, remove_mode_rule, set_mode_rule};
 use recording::{
     get_active_input_device, get_copy_only, get_isolated_voice_enabled, get_last_frontmost_app,
-    get_press_enter_enabled, get_vocabulary, list_input_devices, set_copy_only, set_input_device,
-    set_isolated_voice_enabled, set_press_enter_enabled, set_vocabulary, toggle_recording,
-    toggle_recording_command, RecordingState,
+    get_next_mode_override, get_press_enter_enabled, get_vocabulary, list_input_devices,
+    set_copy_only, set_input_device, set_isolated_voice_enabled, set_next_mode_override,
+    set_press_enter_enabled, set_vocabulary, toggle_recording, toggle_recording_command,
+    RecordingState,
 };
 use shortcut::{get_shortcut, set_shortcut, PushToTalkState};
+use snippets::{get_snippets, set_snippets};
+use theme::{get_theme, set_theme};
+use voice_isolation::{
+    get_voice_enrollment_status, start_voice_enrollment, stop_voice_enrollment, VoiceIsolationState,
+};
 use webhook::{get_webhook_url, send_test_webhook, set_webhook_url};
 use widget::{get_widget_mode, set_widget_mode, set_widget_size};
 use stt::WhisperEngine;
@@ -113,8 +124,10 @@ fn open_settings(app: tauri::AppHandle) -> tauri::Result<()> {
         tauri::WebviewUrl::App("index.html".into()),
     )
     .title("Dev Whisper Settings")
-    .inner_size(520.0, 680.0)
-    .min_inner_size(460.0, 400.0)
+    // Wide enough for the signal-chain layout (5 nodes + connectors) to
+    // lay out on one row without wrapping — see SettingsView.tsx.
+    .inner_size(880.0, 720.0)
+    .min_inner_size(760.0, 560.0)
     .resizable(true);
 
     // Anchor settings just below the widget instead of both windows
@@ -216,8 +229,15 @@ pub fn run() {
             set_copy_only,
             get_isolated_voice_enabled,
             set_isolated_voice_enabled,
+            set_next_mode_override,
+            get_next_mode_override,
+            get_theme,
+            set_theme,
             get_press_enter_enabled,
             set_press_enter_enabled,
+            start_voice_enrollment,
+            stop_voice_enrollment,
+            get_voice_enrollment_status,
             list_history_entries,
             search_history_entries,
             reprocess_history_text,
@@ -241,6 +261,8 @@ pub fn run() {
             get_webhook_url,
             set_webhook_url,
             send_test_webhook,
+            get_snippets,
+            set_snippets,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -276,7 +298,13 @@ pub fn run() {
                 whisper,
                 is_recording: AtomicBool::new(false),
                 active_app: Mutex::new(None),
+                mode_override: Mutex::new(None),
+                recording_purpose: Mutex::new(None),
             });
+
+            let voice_isolation = VoiceIsolationState::new();
+            voice_isolation.load_persisted(app.handle());
+            app.manage(voice_isolation);
 
             // Deep-link hooks for external automation (Raycast, Hammerspoon,
             // Alfred, shell scripts): `open devwhisper://toggle-recording`

@@ -11,7 +11,9 @@
 //!   must say so; don't let a caller believe this is as strong as the
 //!   enrolled path.
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
+
+use crate::voice_isolation::VoiceIsolationState;
 
 /// ~20ms per window at 16kHz.
 const WINDOW_SIZE: usize = 320;
@@ -24,6 +26,20 @@ const HANGOVER_WINDOWS: usize = 8;
 /// after speech starts/ends doesn't cause the gate to chatter open/closed.
 const ENTER_RMS: f32 = 0.02;
 const EXIT_RMS: f32 = 0.01;
+
+/// A voiced range whose embedding's cosine similarity to the enrolled
+/// profile falls below this gets masked out as "not the primary speaker".
+/// Starting point only — cosine similarity between two same-speaker
+/// WeSpeaker embeddings is typically well above this and different-speaker
+/// pairs well below, but the real threshold needs empirical tuning during
+/// manual verification (see the phase-2 plan).
+const SIMILARITY_THRESHOLD: f32 = 0.5;
+
+/// Below this, a voiced range is too short for a reliable standalone
+/// embedding. It's still masked based on its own boundaries, but the
+/// embedding used to score it is computed over a widened window of
+/// surrounding audio for context.
+const MIN_SCORE_SAMPLES: usize = 8_000; // 0.5s @ 16kHz
 
 /// Returns `[start, end)` sample-index ranges classified as voiced, using
 /// short-window RMS with hysteresis. Also the segmenter the embedding path
@@ -111,6 +127,36 @@ pub(crate) fn mask_unvoiced(samples: &mut [f32], voiced: &[(usize, usize)]) {
     }
 }
 
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let norm_a = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+    dot / (norm_a * norm_b)
+}
+
+/// Widens a too-short range with surrounding (mostly trailing) context,
+/// purely so the embedding extractor has enough audio to work with —
+/// callers still mask based on the original, un-widened range. Extends
+/// forward from `start` first and only pulls the window backward if that
+/// would run past `total_len`, which guarantees the target width is always
+/// reached (short of the whole buffer itself being shorter than it).
+fn widen_for_scoring(range: (usize, usize), total_len: usize) -> (usize, usize) {
+    let (start, end) = range;
+    let target = MIN_SCORE_SAMPLES.min(total_len);
+    if end.saturating_sub(start) >= target {
+        return range;
+    }
+    let new_end = (start + target).min(total_len);
+    let new_start = new_end.saturating_sub(target);
+    (new_start, new_end)
+}
+
 /// No-op passthrough if Isolated Voice is off. Otherwise masks out
 /// non-primary-speaker audio: the embedding path if a voice is enrolled,
 /// else the energy-gate-only heuristic.
@@ -121,11 +167,30 @@ pub fn apply(app: &AppHandle, samples: Vec<f32>) -> Vec<f32> {
     }
 
     let voiced = energy_gate(&samples);
-
-    // Embedding-based scoring (cfg.voice_enrolled) is added in a follow-up
-    // pass once the sherpa-onnx dependency lands — until then, enrolled and
-    // unenrolled users both get the heuristic-only gate.
     let mut samples = samples;
+
+    let vi_state = app.state::<VoiceIsolationState>();
+    let voiced = match vi_state.enrolled_embedding() {
+        Some(enrolled) => voiced
+            .into_iter()
+            .filter(|&range| {
+                let scoring_range = widen_for_scoring(range, samples.len());
+                match vi_state.compute_embedding(app, &samples, std::slice::from_ref(&scoring_range))
+                {
+                    Ok(embedding) => cosine_similarity(&embedding, &enrolled) >= SIMILARITY_THRESHOLD,
+                    // Fail open: an embedding hiccup shouldn't silently
+                    // drop real speech — worst case this segment just falls
+                    // back to the energy-gate's judgment for this clip.
+                    Err(err) => {
+                        crate::applog!("isolate: embedding scoring failed, keeping segment: {err}");
+                        true
+                    }
+                }
+            })
+            .collect(),
+        None => voiced,
+    };
+
     mask_unvoiced(&mut samples, &voiced);
     samples
 }
@@ -201,5 +266,73 @@ mod tests {
         // straight from config — a fresh, unconfigured app should never
         // silently start filtering audio.
         assert!(!crate::config::AppConfig::default().isolated_voice_enabled);
+    }
+
+    #[test]
+    fn cosine_similarity_of_identical_vectors_is_one() {
+        let v = vec![0.4, -0.2, 0.8, 0.1];
+        assert!((cosine_similarity(&v, &v) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cosine_similarity_of_orthogonal_vectors_is_zero() {
+        let a = vec![1.0, 0.0];
+        let b = vec![0.0, 1.0];
+        assert!(cosine_similarity(&a, &b).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cosine_similarity_of_opposite_vectors_is_negative_one() {
+        let a = vec![1.0, 2.0, 3.0];
+        let b = vec![-1.0, -2.0, -3.0];
+        assert!((cosine_similarity(&a, &b) + 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cosine_similarity_of_near_identical_vectors_clears_the_accept_threshold() {
+        // A stand-in for "same speaker, two different clips" — embeddings
+        // won't be bit-identical, but a small perturbation should still
+        // clear SIMILARITY_THRESHOLD.
+        let a = vec![0.5, 0.5, 0.5, 0.5];
+        let b = vec![0.52, 0.48, 0.51, 0.49];
+        assert!(cosine_similarity(&a, &b) >= SIMILARITY_THRESHOLD);
+    }
+
+    #[test]
+    fn cosine_similarity_of_dissimilar_vectors_falls_below_the_accept_threshold() {
+        // A stand-in for "different speaker" — should read as clearly
+        // rejected, not just barely under the threshold.
+        let a = vec![1.0, 0.0, 0.0, 0.0];
+        let b = vec![0.0, 1.0, 0.0, 1.0];
+        assert!(cosine_similarity(&a, &b) < SIMILARITY_THRESHOLD);
+    }
+
+    #[test]
+    fn mismatched_length_vectors_are_treated_as_dissimilar_rather_than_panicking() {
+        let a = vec![1.0, 0.0];
+        let b = vec![1.0, 0.0, 0.0];
+        assert_eq!(cosine_similarity(&a, &b), 0.0);
+    }
+
+    #[test]
+    fn widen_for_scoring_leaves_long_enough_ranges_untouched() {
+        let range = (100, 100 + MIN_SCORE_SAMPLES);
+        assert_eq!(widen_for_scoring(range, 1_000_000), range);
+    }
+
+    #[test]
+    fn widen_for_scoring_pads_short_ranges_up_to_the_minimum_without_exceeding_bounds() {
+        let (start, end) = widen_for_scoring((10, 20), 1_000_000);
+        assert!(end - start >= MIN_SCORE_SAMPLES);
+        assert!(start <= 10);
+        assert!(end >= 20);
+    }
+
+    #[test]
+    fn widen_for_scoring_clamps_to_buffer_bounds_near_the_edges() {
+        let total_len = 5_000;
+        let (start, end) = widen_for_scoring((0, 100), total_len);
+        assert_eq!(start, 0);
+        assert!(end <= total_len);
     }
 }

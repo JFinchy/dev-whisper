@@ -48,38 +48,65 @@ build phases.
 
 ## Feature Requests
 
-- **Isolated Voice mode, phase 1** (in testing, 2026-08-17) — a Settings
-  toggle that filters a recording down to the primary user's voice before
-  Whisper transcribes it. Runs post-capture (once, on the fully-recorded
-  buffer, right before transcription) rather than live/streaming, matching
-  the app's push-to-talk architecture and avoiding the latency floor a
-  continuous-inference approach would need. New `isolate.rs`: an RMS
-  energy gate with hysteresis (separate enter/exit thresholds so it
-  doesn't chatter at the boundary) and ~150ms hangover padding, zero-fills
-  everything outside the detected voiced ranges rather than trimming —
-  keeps the buffer's timeline continuous for whisper.cpp and lets a
-  fully-masked clip degrade into the existing "no speech detected" path.
-  `stt.rs`'s `transcribe_with_model` was split into sample-loading +
-  `transcribe_samples()` to give this a hook point between the two. 7 new
-  unit tests (silence/tone/tone-silence-tone boundary cases, exact-zeroing
-  + length-preservation for masking); full existing suite (76 tests,
-  including the real-whisper-model smoke tests) still green.
-  - **Known limitation of phase 1 as merged**: this is the energy-gate
-    fallback only — it suppresses quiet background noise but cannot
-    distinguish a second human voice at similar volume. Settings copy
-    says so explicitly.
-  - **Phase 2, not yet built**: voice enrollment (record a short sample
-    once) + speaker-embedding cosine-similarity masking, auto-selected
-    over the energy gate once a voice is enrolled. Design already done —
-    `sherpa-onnx` (official k2-fsa Rust crate, Apache-2.0, statically
-    linked — no dylib bundling/signing risk unlike a raw `ort`
+- **Isolated Voice mode** (phase 2 built, in testing, 2026-08-17) — a
+  Settings toggle that filters a recording down to the primary user's
+  voice before Whisper transcribes it. Runs post-capture (once, on the
+  fully-recorded buffer, right before transcription) rather than
+  live/streaming, matching the app's push-to-talk architecture and
+  avoiding the latency floor a continuous-inference approach would need.
+  New `isolate.rs`: an RMS energy gate with hysteresis (separate
+  enter/exit thresholds so it doesn't chatter at the boundary) and
+  ~150ms hangover padding, zero-fills everything outside the detected
+  voiced ranges rather than trimming — keeps the buffer's timeline
+  continuous for whisper.cpp and lets a fully-masked clip degrade into
+  the existing "no speech detected" path. `stt.rs`'s
+  `transcribe_with_model` was split into sample-loading +
+  `transcribe_samples()` to give this a hook point between the two.
+  - **Phase 1 (merged, energy-gate only)**: 7 unit tests
+    (silence/tone/tone-silence-tone boundary cases, exact-zeroing +
+    length-preservation for masking).
+  - **Phase 2 (built 2026-08-17)**: voice enrollment + speaker-embedding
+    cosine-similarity masking, auto-selected over the energy gate once a
+    voice is enrolled. Added `sherpa-onnx = "1.13.5"` (official k2-fsa
+    Rust crate, Apache-2.0, statically linked — confirmed it resolves
+    and builds clean, no dylib bundling/signing risk unlike a raw `ort`
     dependency) plus a bundled `wespeaker_en_voxceleb_resnet34_LM.onnx`
-    (26.5MB, Apache-2.0) speaker-embedding model, CPU inference (no
-    CoreML — unlike Parakeet's full ASR decode, a handful of short-window
-    embedding calls per recording is cheap enough on CPU that chasing
-    CoreML's flagged instability isn't worth it here). Deferred so phase
-    1 could merge and get real-world testing before taking on a new
-    external build dependency and a bundled binary model asset.
+    (25.3MB, Apache-2.0, downloaded from the k2-fsa/sherpa-onnx GitHub
+    release and confirmed live) speaker-embedding model as a Tauri
+    `resources` entry, CPU inference (no CoreML — cheap enough on CPU
+    that chasing CoreML's flagged instability, per the Parakeet entry
+    below, isn't worth it here). New `voice_isolation.rs`:
+    `start_voice_enrollment`/`stop_voice_enrollment`/
+    `get_voice_enrollment_status` commands, reusing the same
+    `AudioHandle` dictation uses, guarded by a new
+    `RecordingPurpose` mutex on `RecordingState` so a hotkey press
+    mid-enrollment can't misfire `transcribe_and_paste` on the
+    enrollment clip. Enrollment requires ≥3s of actual detected speech
+    (via the phase-1 energy gate) before it'll compute an embedding;
+    persists to `voice_profile.json` (own file, mirrors `history.rs`'s
+    pattern), tagged with a `model_id` so a future embedding-model swap
+    can force re-enrollment instead of silently comparing incompatible
+    vectors. `isolate::apply`'s embedding path scores each voiced range
+    (widening short ones with context first) via cosine similarity
+    against the enrolled profile (starting threshold 0.5, needs
+    empirical tuning during manual verification) and fails open — a
+    scoring hiccup keeps the segment rather than silently dropping real
+    speech. Settings UI now shows enrollment status + Enroll/Re-enroll/
+    Stop controls, reusing `ModelsSection`'s `listen()` event pattern.
+    9 new unit tests (cosine-similarity accept/reject cases,
+    `widen_for_scoring` bounds) plus one gated real-model smoke test
+    (loads the actual bundled `.onnx`, asserts a 256-dim embedding on a
+    synthetic tone — passed). Full suite: 86 tests green, `tsc --noEmit`
+    and `bun run build` both clean.
+    Reference for the approach: [whisper-diarization](https://github.com/MahmoudAshraf97/whisper-diarization)
+    (pyannote + faster-whisper pipeline) — Python/cloud-model stack we
+    won't adopt directly, but useful as a worked example of the
+    embedding-then-cluster mechanics if the cosine-similarity masking
+    design above hits a snag.
+  - **Not yet done**: manual end-to-end verification — needs a live mic
+    and a second real/played voice, not something automated tests alone
+    can check. See `manual-testing-inbox/isolated-voice.md` for the
+    checklist.
   - **Scope note**: this deliberately revisits the 2026-08-16 SuperWhisper
     research's call to leave speaker diarization/meeting-notes out of
     scope. Multi-speaker "meeting mode" (labeling Speaker 1/2/3 segments)
@@ -124,43 +151,45 @@ build phases.
     that's exposed beyond Tauri's IPC, which it currently isn't) or this
     can be revisited if it turns out to matter in practice.
 
-- **Snippet library** (from the 2026-08-17 competitive research — Wispr
-  Flow: a spoken cue expands to a saved block of text, e.g. "PR
-  Checklist" or "Environment Setup"). Not started. Distinct from the
-  vocabulary editor, which is about recognition *accuracy*, not
-  insertion. Design, following the same shape as the already-shipped
-  Syntax & Casing Commands (`syntax.rs`) and Boilerplate Generation
-  (`boilerplate.rs`) — a pure, fast, pre-LLM detection step in the
-  transcript pipeline:
-  - New config: `snippets: Vec<Snippet>` where
-    `Snippet { trigger: String, body: String }`, user-managed from a new
-    Settings section (same add/edit/delete pattern as the Vocabulary
-    editor or Mode Rules).
-  - New `snippets.rs`: `try_expand(text: &str, snippets: &[Snippet]) ->
-    Option<String>` — case-insensitive match of the *entire* trimmed
-    transcript against a configured trigger (not a prefix match like
-    casing commands, since a trigger like "standup template" is meant to
-    be spoken as a complete, deliberate cue, not a directive with content
-    trailing it). Returns the saved body verbatim on a match.
-  - Wired into `recording.rs`'s `transcribe_and_paste` **before** the
-    casing-command check — a snippet match is the most explicit,
-    intentional signal of the three pre-LLM checks (a literal saved
-    macro the user defined themselves), so it should win over a
-    coincidental overlap with a casing directive or boilerplate phrase.
-    Skips mode formatting and LLM refinement entirely, same reasoning as
-    casing commands: the output is already fully resolved.
-  - Still logged to history for consistency, tagged with a `"snippet"`
-    mode label (matching the existing `"casing"`/`"boilerplate"` label
-    convention).
+- ~~**Snippet library**~~ (shipped 2026-08-17, from the 2026-08-17
+  competitive research — Wispr Flow: a spoken cue expands to a saved
+  block of text, e.g. "PR Checklist" or "Environment Setup"). Distinct
+  from the vocabulary editor, which is about recognition *accuracy*, not
+  insertion. `snippets.rs`: `Snippet { trigger, body }`,
+  `try_expand(text, snippets) -> Option<String>` — case-insensitive match
+  of the *entire* trimmed transcript against a configured trigger (not a
+  prefix match like casing commands, since a trigger like "standup
+  update" is meant to be spoken as a complete, deliberate cue, not a
+  directive with content trailing it), tolerant of Whisper's own trailing
+  sentence punctuation. Ships with four ready-to-use dev defaults (PR
+  checklist, standup update, bug report template, commit message
+  template) via `default_snippets()` rather than an empty list, same
+  reasoning as `stt::default_vocabulary()` — useful out of the box.
+  Wired into `recording.rs`'s `transcribe_and_paste` **before** the
+  casing-command check — a snippet match is the most explicit,
+  intentional signal of the pre-LLM checks (a literal saved macro the
+  user, or a shipped default, defined), so it wins over a coincidental
+  overlap with a casing directive or boilerplate phrase. Skips mode
+  formatting and LLM refinement entirely, same reasoning as casing
+  commands: the output is already fully resolved. Logged to history
+  tagged with a `"snippet"` mode label (matching the existing
+  `"casing"`/`"boilerplate"` label convention). Settings gets a new
+  Snippets section (`SnippetsSection` in `SettingsView.tsx`) with
+  click-to-edit-in-place and delete, persisted via a single
+  full-list-replace `set_snippets` command (simpler than a keyed
+  add/update/remove trio, since a snippet's trigger — its only natural
+  key — is itself user-editable).
 
 - **Smart Formatting / Backtrack parity** (from the 2026-08-17 Wispr Flow
   docs review —
   [Smart Formatting & Backtrack](https://docs.wisprflow.ai/articles/5373093536-how-do-i-use-smart-formatting-and-backtrack)).
-  Partially started. Wispr Flow's version is a cloud-processed feature;
-  the parts worth building here are the ones that work as pure
-  deterministic passes (same shape as the already-shipped Syntax &
-  Casing Commands in `syntax.rs`), so they're instant and don't depend on
-  Ollama being up:
+  All four deterministic sub-features shipped 2026-08-17 (named
+  punctuation, spoken lists, "press enter", Backtrack). Wispr Flow's
+  version is a cloud-processed feature; the parts worth building here
+  were the ones that work as pure deterministic passes (same shape as
+  the already-shipped Syntax & Casing Commands in `syntax.rs`), so
+  they're instant and don't depend on Ollama being up. What's left is
+  explicitly deferred or out of scope, see below:
   - ~~**Named punctuation commands**~~ (shipped 2026-08-17) — say
     "period", "comma", "open paren", "em dash", "new line", etc. and get
     the literal character instead of the spoken word. `punctuation.rs`:
@@ -204,27 +233,57 @@ build phases.
     entire utterance is just "press enter", nothing is pasted/copied
     (avoids clobbering the clipboard with an empty string) but Enter
     still fires and no history entry is logged.
-  - **Backtrack (trigger-word case only)** — new `backtrack.rs`:
-    `try_backtrack(text: &str) -> Option<String>`, a deterministic pass
-    that collapses "X actually Y" -> "Y" and "X, scratch that, Y" -> "Y"
-    for an explicit trigger-word list. This is deliberately narrower than
-    Wispr's version, which also catches natural restatement without a
-    trigger word via full-context LLM judgment — that fuzzier case is
+  - ~~**Backtrack (trigger-word case only)**~~ (shipped 2026-08-17) —
+    `backtrack.rs`: `try_backtrack(text: &str) -> String`, a deterministic
+    pass that collapses "X, actually Y" -> "Y" and "X scratch that Y" ->
+    "Y". Runs after `expand_punctuation` in `recording.rs`, since the
+    "actually" trigger needs a literal preceding comma to fire — bare
+    "actually" is far too common a word in ordinary speech ("I actually
+    enjoyed it") to treat as a correction cue on its own; requiring the
+    comma (a real spoken pause, whether from an explicit "comma" command
+    or Whisper's own punctuation) cuts most of that false-positive rate.
+    Known residual risk: a hedge like "well, actually, I think it's fine"
+    still has the comma and will still misfire — not eliminated, just
+    reduced. "scratch that" needs no such gate, it's unambiguous on its
+    own. Deliberately narrower than Wispr's version in another way too:
+    on a match it discards the *entire* prefix rather than doing Wispr's
+    partial word-level diff (their own "at 2 actually 3" example keeps
+    "at" and only swaps the number; ours produces just "3"). The
+    no-trigger-word natural-restatement case Wispr also catches (via
+    full-context LLM judgment) stays out of scope, same as before —
     already partially covered by the existing "fix filler words, false
-    starts" instruction in `llm.rs`'s refinement prompts (when a mode has
-    LLM refinement on; Plain mode defaults it off). The new deterministic
-    pass exists so the common explicit-trigger-word case works even with
-    Ollama down, same rationale as the boilerplate-generation fallback.
+    starts" instruction in `llm.rs`'s refinement prompts when a mode has
+    LLM refinement on (Plain mode defaults it off).
   - **Explicitly deferred, lower priority**: trailing-period-by-app +
     "Writing Style" tuning, and context-aware mid-sentence
     lowercasing/spacing — both cosmetic relative to the above, and the
     trailing-period one requires the same per-app messaging-app
     detection list Wispr maintains, which is a lot of surface for a
     minor casing nicety.
-  - **Explicitly out of scope**: file tagging in Cursor/Windsurf (from
-    the same Wispr page) — belongs with the selected-text/on-screen
-    context work already tracked above under the SuperWhisper gap
-    analysis, not this entry.
+  - **Explicitly out of scope**: file tagging in Cursor/Windsurf itself
+    (from the same Wispr page) — those are windowed editors we have no
+    hook into (no project file index, no UI-native reference chip the
+    way Wispr can insert), unlike the terminal-agent version below.
+    Belongs with the selected-text/on-screen context work already
+    tracked above under the SuperWhisper gap analysis if ever picked up.
+
+- ~~**File tagging for terminal coding agents**~~ (shipped 2026-08-17,
+  requested directly rather than sourced from a competitor) —
+  `file_tagging.rs`: `tag_file_references(text: &str) -> String`, tags
+  any bare-filename-shaped token (identifier + `.` + a whitelisted
+  extension) with a leading `@`, wired into `modes::format_as_cli`'s
+  fallback branch (CLI mode, and only for text that didn't already match
+  a literal shell directive like `git commit` — tagging inside an actual
+  commit message would corrupt it). Works for Claude Code, OpenCode, and
+  Gemini CLI without needing our own project file index, since all three
+  already parse a literal `@path` typed into their prompt and do their
+  own fuzzy file resolution from there — unlike the Cursor/Windsurf case
+  above, no app-level hook needed. Known limits: bare filenames only, no
+  paths (a spoken "src slash lib dot rs" doesn't reliably glue into one
+  taggable token through the existing punctuation pipeline, which has no
+  "dot" command); and no project awareness, so it tags anything
+  file-*shaped*, real or not — same as if you'd mistyped an `@mention`
+  by hand.
 
 - **History reprocessing + full-text search** (in testing 2026-08-17, from
   the 2026-08-16 SuperWhisper gap analysis) — history was append-only with

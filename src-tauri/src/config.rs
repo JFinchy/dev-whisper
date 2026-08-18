@@ -87,6 +87,10 @@ pub struct AppConfig {
     /// opt-in, matching `copy_only`/autostart/`journal_enabled`.
     #[serde(default)]
     pub webhook_url: Option<String>,
+    /// Settings window color theme (and the widget's accent color) — see
+    /// `theme.rs`. Defaults to Terminal.
+    #[serde(default)]
+    pub theme: crate::theme::Theme,
     /// When true, a trailing "press enter" in a dictation is stripped and
     /// replaced with a simulated Enter keystroke after paste (see
     /// `punctuation::extract_press_enter`, `paste::press_enter`). Off by
@@ -96,6 +100,12 @@ pub struct AppConfig {
     /// just working out of the box like the other punctuation commands.
     #[serde(default)]
     pub press_enter_enabled: bool,
+    /// Spoken-cue -> saved-text-block expansions (see `snippets.rs`).
+    /// Defaults to `snippets::default_snippets()`, same reasoning as
+    /// `vocabulary` above — useful out of the box, not an empty list a
+    /// user has to populate before the feature does anything.
+    #[serde(default = "crate::snippets::default_snippets")]
+    pub snippets: Vec<crate::snippets::Snippet>,
 }
 
 fn default_history_retention_days() -> u32 {
@@ -119,7 +129,9 @@ impl Default for AppConfig {
             isolated_voice_enabled: false,
             voice_enrolled: false,
             webhook_url: None,
+            theme: crate::theme::Theme::default(),
             press_enter_enabled: false,
+            snippets: crate::snippets::default_snippets(),
         }
     }
 }
@@ -210,6 +222,8 @@ mod tests {
         assert!(!restored.isolated_voice_enabled);
         assert!(!restored.voice_enrolled);
         assert!(restored.webhook_url.is_none());
+        assert_eq!(restored.theme, crate::theme::Theme::default());
         assert!(!restored.press_enter_enabled);
+        assert_eq!(restored.snippets, crate::snippets::default_snippets());
     }
 }
