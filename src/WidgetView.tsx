@@ -33,6 +33,32 @@ const COMPACT_EXPANDED_SIZE = { width: 220, height: 108 };
 // of introducing new position math.
 const COMPACT_FLYOUT_SIZE = { width: 220, height: 168 };
 
+// How many recent level samples the meter shows at once — enough to read
+// as a little waveform rather than a single flickering bar, short enough
+// that the whole strip reacts quickly to a pause or a loud word.
+const LEVEL_BARS = 7;
+const SILENT_LEVELS = Array<number>(LEVEL_BARS).fill(0);
+
+// Small live "is audio actually coming through" indicator, in the spirit
+// of the waveform most other dictation apps show while listening —
+// `levels` is the most recent LEVEL_BARS samples from the backend's
+// `audio-level` event (oldest first), each independently bar-height'd
+// rather than smoothed into one shape, so it visibly reacts to loud vs.
+// quiet speech instead of just pulsing.
+function LevelMeter({ levels, className }: { levels: number[]; className?: string }) {
+  return (
+    <div className={`flex h-full items-center gap-[2px] ${className ?? ""}`}>
+      {levels.map((level, i) => (
+        <span
+          key={i}
+          className="w-[3px] shrink-0 rounded-full bg-error transition-[height] duration-100 ease-out"
+          style={{ height: `${Math.max(level * 100, 15)}%` }}
+        />
+      ))}
+    </div>
+  );
+}
+
 function WidgetView() {
   const [mode, setMode] = useState<WidgetMode>("compact");
   const [phase, setPhase] = useState<Phase>("idle");
@@ -53,6 +79,16 @@ function WidgetView() {
   const [flyoutHovered, setFlyoutHovered] = useState(false);
   const [micMode, setMicMode] = useState(false);
   const [overrideMode, setOverrideMode] = useState<ModeOverride>(null);
+
+  // Rolling window of recent input levels for the live level meter — see
+  // LevelMeter above. Reset to silence whenever recording isn't active, so
+  // a stale "last thing you said was loud" reading doesn't linger once
+  // idle/transcribing.
+  const [levels, setLevels] = useState<number[]>(SILENT_LEVELS);
+
+  useEffect(() => {
+    if (phase !== "recording") setLevels(SILENT_LEVELS);
+  }, [phase]);
 
   useEffect(() => {
     invoke<WidgetMode>("get_widget_mode")
@@ -82,6 +118,9 @@ function WidgetView() {
     const unlistenStart = listen("recording-started", () => setPhase("recording"));
     const unlistenStop = listen("recording-stopped", () => setPhase("transcribing"));
     const unlistenRefining = listen("refining-started", () => setPhase("refining"));
+    const unlistenLevel = listen<number>("audio-level", (e) => {
+      setLevels((prev) => [...prev.slice(1), e.payload]);
+    });
     const unlistenRecordingError = listen<string>("recording-error", (event) => {
       setPhase("idle");
       announce(event.payload, true);
@@ -106,6 +145,7 @@ function WidgetView() {
       unlistenStart.then((f) => f());
       unlistenStop.then((f) => f());
       unlistenRefining.then((f) => f());
+      unlistenLevel.then((f) => f());
       unlistenRecordingError.then((f) => f());
       unlistenTranscriptReady.then((f) => f());
       unlistenTranscriptError.then((f) => f());
@@ -178,9 +218,17 @@ function WidgetView() {
         <span className="loading loading-spinner loading-xs" />
       ) : (
         <span
-          className={`rounded-full transition-colors ${mode === "minimal" ? "h-3.5 w-3.5" : "h-2.5 w-2.5"} ${
-            phase === "recording" ? "bg-error shadow-[0_0_8px] shadow-error" : "bg-neutral-content/40"
-          }`}
+          className={`rounded-full transition-transform duration-100 ${
+            mode === "minimal" ? "h-3.5 w-3.5" : "h-2.5 w-2.5"
+          } ${phase === "recording" ? "bg-error shadow-[0_0_8px] shadow-error" : "bg-neutral-content/40"}`}
+          // Minimal mode has no room for a multi-bar meter, so instead the
+          // dot itself pulses with the latest input level — same "is audio
+          // actually coming through" signal, scaled to fit a 46x46 icon.
+          style={
+            mode === "minimal" && phase === "recording"
+              ? { transform: `scale(${1 + (levels[levels.length - 1] ?? 0) * 0.6})` }
+              : undefined
+          }
         />
       )}
     </button>
@@ -202,12 +250,18 @@ function WidgetView() {
       <main className="flex h-screen flex-col gap-1.5 rounded-2xl border border-white/10 bg-neutral/90 p-2.5 text-neutral-content backdrop-blur-md">
         <div className="flex items-center gap-2">
           {recordButton}
-          <span
-            className="flex-1 cursor-grab truncate text-sm font-medium active:cursor-grabbing"
-            onMouseDown={startDrag}
-          >
-            {STATUS_LABEL[phase]}
-          </span>
+          {phase === "recording" ? (
+            <div className="h-4 flex-1 cursor-grab active:cursor-grabbing" onMouseDown={startDrag}>
+              <LevelMeter levels={levels} />
+            </div>
+          ) : (
+            <span
+              className="flex-1 cursor-grab truncate text-sm font-medium active:cursor-grabbing"
+              onMouseDown={startDrag}
+            >
+              {STATUS_LABEL[phase]}
+            </span>
+          )}
           <button
             className="btn btn-ghost btn-circle h-7 w-7 min-h-0"
             onClick={openSettings}
@@ -238,14 +292,20 @@ function WidgetView() {
     >
       <div className="flex items-center gap-2">
         {recordButton}
-        <span
-          className={`flex-1 cursor-grab text-sm opacity-75 active:cursor-grabbing ${
-            flashing && isError ? "whitespace-normal" : "truncate"
-          }`}
-          onMouseDown={startDrag}
-        >
-          {flashing ? message : STATUS_LABEL[phase]}
-        </span>
+        {phase === "recording" ? (
+          <div className="h-4 flex-1 cursor-grab active:cursor-grabbing" onMouseDown={startDrag}>
+            <LevelMeter levels={levels} />
+          </div>
+        ) : (
+          <span
+            className={`flex-1 cursor-grab text-sm opacity-75 active:cursor-grabbing ${
+              flashing && isError ? "whitespace-normal" : "truncate"
+            }`}
+            onMouseDown={startDrag}
+          >
+            {flashing ? message : STATUS_LABEL[phase]}
+          </span>
+        )}
         <button
           className="btn btn-ghost btn-circle h-7 w-7 min-h-0"
           onClick={openSettings}

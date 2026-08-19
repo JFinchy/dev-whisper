@@ -1,6 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -19,6 +20,13 @@ pub struct AudioHandle {
     /// audio thread so a device picked in Settings takes effect on the next
     /// recording without needing a dedicated command/round-trip.
     selected_device: Arc<Mutex<Option<String>>>,
+    /// Most recent input level (0.0-1.0, see `rms_level`), bit-packed since
+    /// there's no stable `AtomicF32`. Updated on every audio callback,
+    /// polled by `recording.rs`'s level-meter thread at a much lower,
+    /// UI-appropriate rate — decoupled from the callback's own cadence
+    /// rather than emitting an event per callback, which would be far more
+    /// often than any redraw needs.
+    level: Arc<AtomicU32>,
 }
 
 impl AudioHandle {
@@ -26,6 +34,8 @@ impl AudioHandle {
         let (tx, rx) = mpsc::channel::<AudioCommand>();
         let selected_device: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let selected_device_thread = selected_device.clone();
+        let level: Arc<AtomicU32> = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let level_thread = level.clone();
 
         std::thread::spawn(move || {
             let mut active_stream: Option<cpal::Stream> = None;
@@ -46,7 +56,7 @@ impl AudioHandle {
                             "audio: starting capture, requested device = {}",
                             device_name.as_deref().unwrap_or("<system default>")
                         );
-                        match open_with_retry_and_fallback(samples.clone(), device_name.as_deref()) {
+                        match open_with_retry_and_fallback(samples.clone(), level_thread.clone(), device_name.as_deref()) {
                             Ok((stream, rate, chans, resolved_name)) => {
                                 sample_rate = rate;
                                 channels = chans;
@@ -79,6 +89,10 @@ impl AudioHandle {
                         } else {
                             crate::applog!("audio: stop requested but no stream was active");
                         }
+                        // Otherwise the widget's level meter would hold on
+                        // whatever the last in-flight callback happened to
+                        // report, instead of resting at zero once idle.
+                        level_thread.store(0.0f32.to_bits(), Ordering::Relaxed);
                         let captured = std::mem::take(&mut *samples.lock().unwrap());
                         crate::applog!("audio: captured {} samples", captured.len());
                         let result = if captured.is_empty() {
@@ -95,6 +109,7 @@ impl AudioHandle {
         Self {
             tx,
             selected_device,
+            level,
         }
     }
 
@@ -121,6 +136,14 @@ impl AudioHandle {
     pub fn selected_device(&self) -> Option<String> {
         self.selected_device.lock().unwrap().clone()
     }
+
+    /// Most recent input level, 0.0-1.0 — 0.0 at rest (not recording, or no
+    /// callback has landed yet). Polled by `recording.rs`'s level-meter
+    /// thread; not itself pushed anywhere, so reading it costs nothing when
+    /// nobody's watching.
+    pub fn current_level(&self) -> f32 {
+        f32::from_bits(self.level.load(Ordering::Relaxed))
+    }
 }
 
 /// Names of all available input devices, for the settings picker.
@@ -146,6 +169,7 @@ pub fn default_device_name() -> Option<String> {
 /// input rather than silently capturing nothing.
 fn open_with_retry_and_fallback(
     samples: Arc<Mutex<Vec<f32>>>,
+    level: Arc<AtomicU32>,
     device_name: Option<&str>,
 ) -> Result<(cpal::Stream, u32, u16, String), String> {
     const RETRIES: u32 = 3;
@@ -157,7 +181,7 @@ fn open_with_retry_and_fallback(
             crate::applog!("audio: retrying '{}' in {delay:?} (attempt {})", device_name.unwrap_or("<default>"), attempt + 1);
             std::thread::sleep(delay);
         }
-        match build_input_stream(samples.clone(), device_name) {
+        match build_input_stream(samples.clone(), level.clone(), device_name) {
             Ok(ok) => return Ok(ok),
             Err(err) => {
                 crate::applog!("audio: attempt {} to open '{}' failed: {err}", attempt + 1, device_name.unwrap_or("<default>"));
@@ -168,14 +192,30 @@ fn open_with_retry_and_fallback(
 
     if device_name.is_some() {
         crate::applog!("audio: '{}' unavailable after {RETRIES} attempts ({last_err}), falling back to system default", device_name.unwrap());
-        return build_input_stream(samples, None);
+        return build_input_stream(samples, level, None);
     }
 
     Err(last_err)
 }
 
+/// Root-mean-square level of a chunk, scaled and clamped into a visually
+/// useful 0.0-1.0 range for the widget's live level meter. Raw speech RMS
+/// on a typical mic rarely exceeds ~0.2-0.3, so a flat 1x mapping would
+/// look nearly silent the whole time — the 4x gain is a rough perceptual
+/// tuning, not a calibrated measurement, and easy to adjust after seeing
+/// it against a real mic.
+fn rms_level(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
+    let rms = (sum_sq / samples.len() as f32).sqrt();
+    (rms * 4.0).clamp(0.0, 1.0)
+}
+
 fn build_input_stream(
     samples: Arc<Mutex<Vec<f32>>>,
+    level: Arc<AtomicU32>,
     device_name: Option<&str>,
 ) -> Result<(cpal::Stream, u32, u16, String), String> {
     let host = cpal::default_host();
@@ -210,12 +250,14 @@ fn build_input_stream(
     let stream = match sample_format {
         SampleFormat::F32 => {
             let first_callback = first_callback.clone();
+            let level = level.clone();
             device.build_input_stream(
                 &stream_config,
                 move |data: &[f32], _| {
                     if !first_callback.swap(true, std::sync::atomic::Ordering::SeqCst) {
                         crate::applog!("audio: first callback received, {} frames", data.len());
                     }
+                    level.store(rms_level(data).to_bits(), Ordering::Relaxed);
                     samples.lock().unwrap().extend_from_slice(data);
                 },
                 err_fn,
@@ -224,14 +266,16 @@ fn build_input_stream(
         }
         SampleFormat::I16 => {
             let first_callback = first_callback.clone();
+            let level = level.clone();
             device.build_input_stream(
                 &stream_config,
                 move |data: &[i16], _| {
                     if !first_callback.swap(true, std::sync::atomic::Ordering::SeqCst) {
                         crate::applog!("audio: first callback received, {} frames", data.len());
                     }
-                    let mut buf = samples.lock().unwrap();
-                    buf.extend(data.iter().map(|s| *s as f32 / i16::MAX as f32));
+                    let converted: Vec<f32> = data.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
+                    level.store(rms_level(&converted).to_bits(), Ordering::Relaxed);
+                    samples.lock().unwrap().extend_from_slice(&converted);
                 },
                 err_fn,
                 None,
@@ -239,17 +283,17 @@ fn build_input_stream(
         }
         SampleFormat::U16 => {
             let first_callback = first_callback.clone();
+            let level = level.clone();
             device.build_input_stream(
                 &stream_config,
                 move |data: &[u16], _| {
                     if !first_callback.swap(true, std::sync::atomic::Ordering::SeqCst) {
                         crate::applog!("audio: first callback received, {} frames", data.len());
                     }
-                    let mut buf = samples.lock().unwrap();
-                    buf.extend(
-                        data.iter()
-                            .map(|s| (*s as f32 / u16::MAX as f32) * 2.0 - 1.0),
-                    );
+                    let converted: Vec<f32> =
+                        data.iter().map(|s| (*s as f32 / u16::MAX as f32) * 2.0 - 1.0).collect();
+                    level.store(rms_level(&converted).to_bits(), Ordering::Relaxed);
+                    samples.lock().unwrap().extend_from_slice(&converted);
                 },
                 err_fn,
                 None,
@@ -284,4 +328,39 @@ fn write_wav(samples: &[f32], sample_rate: u32, channels: u16) -> Result<PathBuf
     writer.finalize().map_err(|e| e.to_string())?;
 
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn silence_is_zero() {
+        assert_eq!(rms_level(&[0.0; 100]), 0.0);
+    }
+
+    #[test]
+    fn empty_slice_is_zero() {
+        assert_eq!(rms_level(&[]), 0.0);
+    }
+
+    #[test]
+    fn a_quiet_tone_produces_a_small_nonzero_level() {
+        let quiet = vec![0.02; 100];
+        let level = rms_level(&quiet);
+        assert!(level > 0.0 && level < 0.2, "expected a small level, got {level}");
+    }
+
+    #[test]
+    fn a_loud_tone_clamps_to_one() {
+        let loud = vec![0.9; 100];
+        assert_eq!(rms_level(&loud), 1.0);
+    }
+
+    #[test]
+    fn louder_input_produces_a_higher_level() {
+        let quiet = vec![0.02; 100];
+        let louder = vec![0.1; 100];
+        assert!(rms_level(&louder) > rms_level(&quiet));
+    }
 }

@@ -360,6 +360,36 @@ build phases.
     `history::update_history_entry_text` persists a Replace, clearing the
     old journal summary since it described text that's no longer there.
 
+- **Live input level meter** (in testing, 2026-08-19, from direct user
+  request — most other dictation apps show some kind of live waveform/
+  level indicator while listening, and the widget's static red dot didn't
+  make it obvious audio was actually being captured).
+  - `audio.rs`: each format's cpal callback (F32/I16/U16) now computes an
+    RMS level of the chunk it just received via a new `rms_level()`
+    (4x gain then clamp to 0.0-1.0 — raw speech RMS rarely exceeds ~0.2-0.3,
+    so an unscaled mapping would look nearly silent throughout; rough
+    perceptual tuning, not calibrated against a real mic yet) and stores it
+    into a new `AudioHandle.level: Arc<AtomicU32>` (bit-packed, no stable
+    `AtomicF32`). Reset to 0 on stop so the meter doesn't hold the last
+    reading once idle.
+  - `recording.rs`: `toggle_recording`'s start branch spawns a thread that
+    polls `AudioHandle::current_level()` and emits an `audio-level` event
+    every 50ms (20fps) while `is_recording` stays true, exiting on its own
+    once it flips false. Deliberately decoupled from the audio callback's
+    own cadence (which fires far more often than any UI redraw needs)
+    rather than emitting an event per callback.
+  - `WidgetView.tsx`: a small `LevelMeter` (7 bars, most recent samples
+    oldest-first) replaces the status text in Compact/Detailed mode while
+    recording; Minimal mode (no room for bars in a 46x46 icon) pulses the
+    existing record dot's scale off the latest sample instead.
+  - 5 unit tests on `rms_level` (silence, empty slice, clamping, relative
+    ordering) as a pure function — the polling thread and event emission
+    aren't unit tested, same reasoning as other Tauri-command-adjacent
+    wiring in this codebase (webhook delivery, history persistence).
+  - **Not yet done**: eyes-on verification against a real mic — the 4x
+    gain tuning in particular needs checking against actual speech, not
+    just synthetic tones. See `manual-testing-inbox/live-level-meter.md`.
+
 - **Double-tap Fn to start/stop recording** (in testing, 2026-08-18, from
   direct user request) — an opt-in alternative trigger alongside the
   existing push-to-talk hotkey, not a replacement. Toggling recording

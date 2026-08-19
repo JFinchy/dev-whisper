@@ -87,6 +87,25 @@ pub fn toggle_recording(app: &AppHandle) {
         set_tray_recording_indicator(app, true);
         state.audio.start();
 
+        // Live level meter: polls the audio thread's current RMS level
+        // (see `audio::AudioHandle::current_level`) and emits it to the
+        // widget while recording, so there's a visible signal that audio
+        // is actually being picked up — most other dictation apps show
+        // some kind of live waveform/level indicator for exactly this
+        // reason. Deliberately polled on its own timer rather than tied to
+        // the audio callback's own cadence, which fires far more often
+        // than any UI redraw needs; 50ms (20fps) is smooth without
+        // flooding the frontend with events. Exits on its own once
+        // `is_recording` flips back to false.
+        let level_app = app.clone();
+        std::thread::spawn(move || {
+            let state = level_app.state::<RecordingState>();
+            while state.is_recording.load(Ordering::SeqCst) {
+                let _ = level_app.emit("audio-level", state.audio.current_level());
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        });
+
         // Capture which app the user was in *before* showing/focusing our
         // own widget below — otherwise NSWorkspace reports Dev Whisper
         // itself as frontmost. Both steps run in one main-thread closure

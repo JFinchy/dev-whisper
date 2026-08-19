@@ -102,6 +102,10 @@ built yet.
 - **Three widget display modes** — Minimal (icon-only recording button),
   Compact (the default status pill), and Detailed (a larger panel with a
   persistent, non-truncating status/error area), switchable from Settings.
+- **Live input level meter** while recording — a small animated bar
+  visualizer (Compact/Detailed) or a pulsing record dot (Minimal), driven
+  by the mic's real-time RMS level, so it's visibly obvious audio is
+  actually being picked up rather than trusting a static "recording" dot.
 - **Errors that don't get lost** — Compact mode auto-grows and holds
   error text on screen for 6 seconds instead of truncating it (this used
   to silently swallow the Accessibility-permission error).
