@@ -124,10 +124,13 @@ pub fn toggle_recording(app: &AppHandle) {
 
             // The widget starts hidden; without this, triggering a
             // recording via the global hotkey gives no visual feedback
-            // that it's running.
+            // that it's running. Deliberately `show()` only, not
+            // `set_focus()` — stealing keyboard focus meant the paste
+            // later landed in the widget instead of whatever app the user
+            // was actually dictating into, forcing a click back into it
+            // first.
             if let Some(window) = main_thread_app.get_webview_window("widget") {
                 let _ = window.show();
-                let _ = window.set_focus();
             }
         });
 

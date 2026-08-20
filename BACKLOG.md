@@ -36,6 +36,23 @@ build phases.
   this has no effect and slow models will still be slow. Last-observed
   latency per model is now surfaced in the Settings LLM picker (shipped
   2026-08-15) so users can judge which local models are fast enough.
+- ~~**Paste lands as a bare "v" instead of the transcript**~~ (fixed
+  2026-08-20) — intermittently, only the letter "v" would land instead of
+  a real paste. Two compounding causes, found across a few live-testing
+  rounds:
+  1. The synthetic Cmd+V in `paste.rs` didn't give the Meta keydown enough
+     time to register as "held" before the V keydown followed — the
+     frontmost app would see a bare "v" instead of the combo. Fixed by
+     adding an explicit 40ms settle between the Meta-down and V-down
+     events specifically (not on every event in the sequence).
+  2. Starting a recording called the widget window's `set_focus()` (not
+     just `show()`), stealing keyboard focus from whatever app the user
+     was dictating into — the paste (whenever it happened to actually
+     land as a proper Cmd+V) would target the widget instead, needing a
+     manual click back into the real target app first. Fixed by dropping
+     `set_focus()` from `recording.rs`'s start-of-recording handler —
+     `show()` alone is enough for the widget to be visible without
+     grabbing focus.
 - ~~**Flaky test: `cargo test --lib` concurrent whisper-context
   loading**~~ (fixed 2026-08-15) — `stt::tests::transcribes_without_panicking`
   and `stt::tests::transcribe_with_model_override_switches_contexts` both
@@ -366,12 +383,12 @@ build phases.
   make it obvious audio was actually being captured).
   - `audio.rs`: each format's cpal callback (F32/I16/U16) now computes an
     RMS level of the chunk it just received via a new `rms_level()`
-    (4x gain then clamp to 0.0-1.0 — raw speech RMS rarely exceeds ~0.2-0.3,
-    so an unscaled mapping would look nearly silent throughout; rough
-    perceptual tuning, not calibrated against a real mic yet) and stores it
-    into a new `AudioHandle.level: Arc<AtomicU32>` (bit-packed, no stable
-    `AtomicF32`). Reset to 0 on stop so the meter doesn't hold the last
-    reading once idle.
+    (8x gain then clamp to 0.0-1.0 — raw speech RMS rarely exceeds ~0.2-0.3,
+    so an unscaled mapping would look nearly silent throughout; bumped from
+    an initial 4x after live testing confirmed the meter worked but was too
+    subtle to read at a glance) and stores it into a new
+    `AudioHandle.level: Arc<AtomicU32>` (bit-packed, no stable `AtomicF32`).
+    Reset to 0 on stop so the meter doesn't hold the last reading once idle.
   - `recording.rs`: `toggle_recording`'s start branch spawns a thread that
     polls `AudioHandle::current_level()` and emits an `audio-level` event
     every 50ms (20fps) while `is_recording` stays true, exiting on its own
@@ -386,9 +403,10 @@ build phases.
     ordering) as a pure function — the polling thread and event emission
     aren't unit tested, same reasoning as other Tauri-command-adjacent
     wiring in this codebase (webhook delivery, history persistence).
-  - **Not yet done**: eyes-on verification against a real mic — the 4x
-    gain tuning in particular needs checking against actual speech, not
-    just synthetic tones. See `manual-testing-inbox/live-level-meter.md`.
+  - Verified live against a real mic (2026-08-20) — confirmed reacting to
+    speech, gain bumped 4x -> 8x per feedback that it was too subtle. See
+    `manual-testing-inbox/live-level-meter.md` for the remaining checklist
+    (dynamic range across widget modes, idle reset, repeated start/stop).
 
 - **Double-tap Fn to start/stop recording** (in testing, 2026-08-18, from
   direct user request) — an opt-in alternative trigger alongside the

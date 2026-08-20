@@ -38,7 +38,13 @@ pub fn paste_text(text: &str) -> Result<(), String> {
     // Give the OS a moment to register the clipboard update before pasting.
     thread::sleep(Duration::from_millis(50));
 
+    // The Meta keydown needs to actually register as "held" with the OS
+    // before the V keydown arrives, or the frontmost app sees a bare "v"
+    // instead of Cmd+V — observed intermittently with `send`'s normal 20ms
+    // gap. A longer settle specifically here (not on every event) targets
+    // that race without slowing down the rest of the sequence.
     send(EventType::KeyPress(Key::MetaLeft))?;
+    thread::sleep(Duration::from_millis(40));
     send(EventType::KeyPress(Key::KeyV))?;
     send(EventType::KeyRelease(Key::KeyV))?;
     send(EventType::KeyRelease(Key::MetaLeft))?;

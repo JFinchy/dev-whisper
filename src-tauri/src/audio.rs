@@ -201,16 +201,16 @@ fn open_with_retry_and_fallback(
 /// Root-mean-square level of a chunk, scaled and clamped into a visually
 /// useful 0.0-1.0 range for the widget's live level meter. Raw speech RMS
 /// on a typical mic rarely exceeds ~0.2-0.3, so a flat 1x mapping would
-/// look nearly silent the whole time — the 4x gain is a rough perceptual
-/// tuning, not a calibrated measurement, and easy to adjust after seeing
-/// it against a real mic.
+/// look nearly silent the whole time — the 8x gain is a rough perceptual
+/// tuning (bumped up from an initial 4x, which was confirmed working but
+/// too subtle to read at a glance), not a calibrated measurement.
 fn rms_level(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return 0.0;
     }
     let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
     let rms = (sum_sq / samples.len() as f32).sqrt();
-    (rms * 4.0).clamp(0.0, 1.0)
+    (rms * 8.0).clamp(0.0, 1.0)
 }
 
 fn build_input_stream(
