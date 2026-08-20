@@ -11,8 +11,9 @@ mic's actual input level — a small bar visualizer in Compact/Detailed
 mode, a pulsing record dot in Minimal mode — instead of a static red dot,
 so it's obvious audio is actually being picked up. Automated coverage
 (`cargo test --lib audio::`) checks the RMS-to-0.0-1.0 scaling function
-against synthetic tones, but the 8x gain tuning and the actual on-screen
-animation can only be judged against a real mic and real speech.
+against synthetic tones, but the sqrt-curve tuning (see `audio::rms_level`)
+and the actual on-screen animation can only be judged against a real mic
+and real speech.
 
 ## Steps
 
@@ -24,11 +25,12 @@ animation can only be judged against a real mic and real speech.
    louder words should produce taller bars, silence should settle the
    bars low (not fully flat/invisible — there's a 15% minimum bar height
    so it doesn't look broken/frozen).
-3. Try clearly quiet vs. loud speech. Confirm the meter's dynamic range
-   feels reasonable — quiet speech shouldn't stay pinned at the minimum
-   the whole time, and normal speaking volume shouldn't immediately clip
-   every bar to 100%. If it does, the 8x gain in `audio::rms_level` needs
-   retuning (see the BACKLOG.md entry for where).
+3. Try clearly quiet vs. loud speech. Confirm normal speaking volume
+   already shows clear, obvious movement (not pinned near the floor), and
+   that reaching a genuinely loud/high-decibel volume lights up every bar
+   to full height. If normal speech still barely moves the meter, or loud
+   speech never reaches full height, `audio::rms_level`'s gain/curve needs
+   further retuning (see the BACKLOG.md entry for where).
 4. Switch the widget to **Detailed** mode. Repeat step 2 — confirm the
    meter replaces the status label at the top while recording, and the
    persistent message area below is unaffected.

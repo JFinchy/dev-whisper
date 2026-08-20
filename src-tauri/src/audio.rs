@@ -198,19 +198,25 @@ fn open_with_retry_and_fallback(
     Err(last_err)
 }
 
-/// Root-mean-square level of a chunk, scaled and clamped into a visually
-/// useful 0.0-1.0 range for the widget's live level meter. Raw speech RMS
-/// on a typical mic rarely exceeds ~0.2-0.3, so a flat 1x mapping would
-/// look nearly silent the whole time — the 8x gain is a rough perceptual
-/// tuning (bumped up from an initial 4x, which was confirmed working but
-/// too subtle to read at a glance), not a calibrated measurement.
+/// Root-mean-square level of a chunk, scaled into a visually useful
+/// 0.0-1.0 range for the widget's live level meter. A straight linear gain
+/// (tried at 4x, then 8x) couldn't satisfy both ends at once: high enough
+/// to make normal speech clearly move the meter meant loud speech
+/// overshot 1.0 almost immediately, low enough to keep loud speech from
+/// clipping meant normal speech barely registered above the floor. A
+/// sqrt-compressed (perceptual) curve fixes that — it boosts quiet/
+/// moderate input much more than loud input, so normal speech already
+/// shows clear, obvious movement, while genuinely loud speech still
+/// saturates to a full "every bar lit" 1.0 rather than needing to be
+/// shouted. Still a rough tuning (15x gain before the compression), not a
+/// calibrated measurement.
 fn rms_level(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return 0.0;
     }
     let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
     let rms = (sum_sq / samples.len() as f32).sqrt();
-    (rms * 8.0).clamp(0.0, 1.0)
+    (rms * 15.0).clamp(0.0, 1.0).sqrt()
 }
 
 fn build_input_stream(
@@ -345,10 +351,13 @@ mod tests {
     }
 
     #[test]
-    fn a_quiet_tone_produces_a_small_nonzero_level() {
+    fn a_quiet_tone_still_produces_a_clearly_visible_level() {
+        // The whole point of the sqrt compression: even fairly quiet input
+        // should already read as a clear, visible movement on the meter,
+        // not a barely-there flicker near the floor.
         let quiet = vec![0.02; 100];
         let level = rms_level(&quiet);
-        assert!(level > 0.0 && level < 0.2, "expected a small level, got {level}");
+        assert!(level > 0.4 && level < 1.0, "expected a clearly visible but unsaturated level, got {level}");
     }
 
     #[test]

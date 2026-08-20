@@ -382,13 +382,18 @@ build phases.
   level indicator while listening, and the widget's static red dot didn't
   make it obvious audio was actually being captured).
   - `audio.rs`: each format's cpal callback (F32/I16/U16) now computes an
-    RMS level of the chunk it just received via a new `rms_level()`
-    (8x gain then clamp to 0.0-1.0 — raw speech RMS rarely exceeds ~0.2-0.3,
-    so an unscaled mapping would look nearly silent throughout; bumped from
-    an initial 4x after live testing confirmed the meter worked but was too
-    subtle to read at a glance) and stores it into a new
-    `AudioHandle.level: Arc<AtomicU32>` (bit-packed, no stable `AtomicF32`).
-    Reset to 0 on stop so the meter doesn't hold the last reading once idle.
+    RMS level of the chunk it just received via a new `rms_level()` and
+    stores it into a new `AudioHandle.level: Arc<AtomicU32>` (bit-packed,
+    no stable `AtomicF32`). Reset to 0 on stop so the meter doesn't hold
+    the last reading once idle. Scaling went through two rounds of live
+    tuning: a straight linear gain (4x, then 8x) couldn't satisfy both
+    ends — high enough for normal speech to clearly move the meter meant
+    loud speech clipped to 1.0 almost immediately, low enough to avoid
+    that meant normal speech barely left the floor. Settled on a
+    sqrt-compressed (perceptual) curve — `(rms * 15.0).clamp(0.0,
+    1.0).sqrt()` — which boosts quiet/moderate input far more than loud
+    input, so normal speech shows clear movement immediately and only
+    genuinely loud speech saturates to a full "every bar lit" 1.0.
   - `recording.rs`: `toggle_recording`'s start branch spawns a thread that
     polls `AudioHandle::current_level()` and emits an `audio-level` event
     every 50ms (20fps) while `is_recording` stays true, exiting on its own
@@ -403,8 +408,10 @@ build phases.
     ordering) as a pure function — the polling thread and event emission
     aren't unit tested, same reasoning as other Tauri-command-adjacent
     wiring in this codebase (webhook delivery, history persistence).
-  - Verified live against a real mic (2026-08-20) — confirmed reacting to
-    speech, gain bumped 4x -> 8x per feedback that it was too subtle. See
+  - Verified live against a real mic across several rounds (2026-08-20) —
+    confirmed reacting to speech, then retuned twice (linear 4x -> 8x,
+    then switched to the sqrt curve above) after feedback that it still
+    needed to be much louder before it read as clearly visible. See
     `manual-testing-inbox/live-level-meter.md` for the remaining checklist
     (dynamic range across widget modes, idle reset, repeated start/stop).
 
