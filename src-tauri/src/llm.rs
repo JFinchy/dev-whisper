@@ -162,20 +162,20 @@ struct TagEntry {
     name: String,
 }
 
-fn prompt_for_mode(mode: crate::modes::Mode, text: &str) -> String {
+fn prompt_for_mode(mode: crate::modes::Behavior, text: &str) -> String {
     let instruction = match mode {
-        crate::modes::Mode::Cli => {
+        crate::modes::Behavior::Cli => {
             "Rewrite the following dictated text as a single shell command. Output ONLY the \
              command itself — no explanation, no markdown code fences, no surrounding quotes. \
              If it doesn't actually describe a command, just clean up filler words and output \
              the cleaned text instead."
         }
-        crate::modes::Mode::Casual => {
+        crate::modes::Behavior::Casual => {
             "Clean up this dictated text: fix filler words, false starts, and grammar, but keep \
              it casual and conversational — don't make it sound formal. Output ONLY the cleaned \
              text, nothing else."
         }
-        crate::modes::Mode::Plain => {
+        crate::modes::Behavior::Plain => {
             "Clean up this dictated text: fix filler words, false starts, and obvious \
              transcription errors, but don't change its meaning or tone. Output ONLY the \
              cleaned text, nothing else."
@@ -188,7 +188,7 @@ fn prompt_for_mode(mode: crate::modes::Mode, text: &str) -> String {
 /// mode-aware cleanup. Returns a clear error (rather than hanging or
 /// panicking) if Ollama isn't installed/running — callers should fall back
 /// to the un-refined text rather than blocking the paste on this.
-pub fn refine(mode: crate::modes::Mode, text: &str, model: &str) -> Result<String, String> {
+pub fn refine(mode: crate::modes::Behavior, text: &str, model: &str) -> Result<String, String> {
     let body = serde_json::json!({
         "model": model,
         "prompt": prompt_for_mode(mode, text),
@@ -368,7 +368,7 @@ mod tests {
         let model = &models[0];
 
         let result = refine(
-            crate::modes::Mode::Cli,
+            crate::modes::Behavior::Cli,
             "git commit update the readme file",
             model,
         );

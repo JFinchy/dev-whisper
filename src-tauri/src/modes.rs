@@ -3,14 +3,17 @@ use tauri::AppHandle;
 
 use crate::config;
 
+/// The underlying formatting/refinement transform a mode applies. This is
+/// the small, fixed set of *technical* behaviors (regex-based CLI
+/// formatting, LLM prompt phrasing in `llm.rs::prompt_for_mode`) — several
+/// user-facing named modes (see `ModeDefinition`) can share the same one.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "snake_case")]
-pub enum Mode {
+pub enum Behavior {
     /// No transformation — pastes the raw Whisper transcript.
     Plain,
-    /// Reserved for casual/conversational apps (Slack, Messages). No
-    /// rule-based transform yet; this is the hook for LLM refinement
-    /// (see BACKLOG.md) — today it behaves the same as Plain.
+    /// No rule-based transform (behaves like Plain formatting-wise); the
+    /// natural fit for modes that lean on LLM refinement for tone instead.
     Casual,
     /// Terminal apps: a handful of illustrative natural-language ->
     /// shell-command patterns. Intentionally narrow — general NL-to-CLI
@@ -18,37 +21,128 @@ pub enum Mode {
     Cli,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct AppModeRule {
+/// A mode's LLM refinement choice — a mode can opt out entirely, ride
+/// along with whatever the global default model is, or pin its own
+/// specific model. Modeled as an enum rather than `Option<String>` because
+/// "off" and "no override (use the global default)" are genuinely
+/// different states, both of which need representing in the Settings UI.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmRefinement {
+    #[default]
+    Off,
+    Global,
+    Model(String),
+}
+
+/// One app assigned to a mode.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+pub struct AppRef {
     pub bundle_id: String,
     pub app_name: String,
-    pub mode: Mode,
-    /// Whisper model id (matching `models::CATALOG`) to use for this app,
+}
+
+/// A named, user-editable mode: a formatting behavior plus the apps that
+/// use it and its own model choices. Modes are a flat, uniform list (see
+/// `config::AppConfig::modes`) — the handful shipped by default (Default,
+/// Voice to Text, Messaging, CLI) are just pre-seeded entries, exactly as
+/// renameable/deletable as anything a user creates.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ModeDefinition {
+    pub name: String,
+    pub behavior: Behavior,
+    #[serde(default)]
+    pub apps: Vec<AppRef>,
+    /// Whisper model id (matching `models::CATALOG`) to use for this mode,
     /// overriding the globally-active model. `None` = use whatever's
     /// globally active.
     #[serde(default)]
     pub stt_model: Option<String>,
-    /// Forward-looking toggle for the LLM refinement pipeline (see
-    /// BACKLOG.md) — not yet wired to an actual LLM call.
+    #[serde(default)]
+    pub llm_refinement: LlmRefinement,
+    /// Exactly one mode should have this set — the fallback used when the
+    /// frontmost app isn't assigned to any mode. A `name`-based lookup
+    /// would break the moment a user renames their fallback mode; this
+    /// survives that.
+    #[serde(default)]
+    pub is_default: bool,
+}
+
+/// Legacy one-app-per-rule shape, kept only so `config::load`'s one-time
+/// migration can still deserialize a `config.json` saved before modes
+/// became named/multi-app (see `config.rs`). Not used anywhere else.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AppModeRule {
+    pub bundle_id: String,
+    pub app_name: String,
+    pub mode: Behavior,
+    pub stt_model: Option<String>,
     #[serde(default)]
     pub use_llm_refinement: bool,
 }
 
-/// Bundle IDs this app knows a sensible default mode for out of the box.
-/// User rules (persisted in config) always take priority over these.
-const BUILTIN_DEFAULTS: &[(&str, Mode)] = &[
-    ("com.apple.Terminal", Mode::Cli),
-    ("com.googlecode.iterm2", Mode::Cli),
-    ("net.kovidgoyal.kitty", Mode::Cli),
-    ("com.github.wez.wezterm", Mode::Cli),
-    ("dev.warp.Warp-Stable", Mode::Cli),
-    ("com.apple.MobileSMS", Mode::Casual),
-    ("com.tinyspeck.slackmacgap", Mode::Casual),
-    ("com.hnc.Discord", Mode::Casual),
-];
+/// The 4 modes a fresh install (or a config migrating up from before named
+/// modes existed) starts with. Pre-populating Messaging/CLI's `apps`
+/// collapses what used to be a separate hardcoded bundle-id table
+/// (`BUILTIN_DEFAULTS`) into real, visible, editable config data instead of
+/// an invisible second resolution path.
+pub fn seed_default_modes() -> Vec<ModeDefinition> {
+    fn app(bundle_id: &str, app_name: &str) -> AppRef {
+        AppRef { bundle_id: bundle_id.to_string(), app_name: app_name.to_string() }
+    }
+
+    vec![
+        ModeDefinition {
+            name: "Default".to_string(),
+            behavior: Behavior::Plain,
+            apps: Vec::new(),
+            stt_model: None,
+            llm_refinement: LlmRefinement::Off,
+            is_default: true,
+        },
+        ModeDefinition {
+            name: "Voice to Text".to_string(),
+            behavior: Behavior::Plain,
+            apps: Vec::new(),
+            stt_model: None,
+            llm_refinement: LlmRefinement::Off,
+            is_default: false,
+        },
+        ModeDefinition {
+            name: "Messaging".to_string(),
+            behavior: Behavior::Casual,
+            apps: vec![
+                app("com.apple.MobileSMS", "Messages"),
+                app("com.tinyspeck.slackmacgap", "Slack"),
+                app("com.hnc.Discord", "Discord"),
+            ],
+            stt_model: None,
+            // Casual's rule-based path is a no-op (regex can't meaningfully
+            // "sound casual"), so this is the one shipped mode worth
+            // defaulting to LLM refinement rather than leaving the raw
+            // transcript as-is.
+            llm_refinement: LlmRefinement::Global,
+            is_default: false,
+        },
+        ModeDefinition {
+            name: "CLI".to_string(),
+            behavior: Behavior::Cli,
+            apps: vec![
+                app("com.apple.Terminal", "Terminal"),
+                app("com.googlecode.iterm2", "iTerm"),
+                app("net.kovidgoyal.kitty", "kitty"),
+                app("com.github.wez.wezterm", "WezTerm"),
+                app("dev.warp.Warp-Stable", "Warp"),
+            ],
+            stt_model: None,
+            llm_refinement: LlmRefinement::Off,
+            is_default: false,
+        },
+    ]
+}
 
 pub struct ResolvedSettings {
-    pub mode: Mode,
+    pub mode: Behavior,
     /// Per-mode Whisper model override, settable in Settings. Consumed by
     /// `recording::transcribe_and_paste`, which resolves it to a path and
     /// passes it to `WhisperEngine::transcribe_with_model` — the engine
@@ -56,55 +150,55 @@ pub struct ResolvedSettings {
     /// across recordings doesn't repay the multi-second Metal shader
     /// compile every time.
     pub stt_model: Option<String>,
-    pub use_llm_refinement: bool,
+    pub llm_refinement: LlmRefinement,
+}
+
+fn settings_for(def: &ModeDefinition) -> ResolvedSettings {
+    ResolvedSettings {
+        mode: def.behavior,
+        stt_model: def.stt_model.clone(),
+        llm_refinement: def.llm_refinement.clone(),
+    }
 }
 
 /// Full resolution (mode + per-mode overrides), used by the recording
-/// pipeline. `resolve_mode` below is a thin wrapper kept for callers (and
-/// tests) that only care about the mode.
-pub fn resolve_settings(bundle_id: Option<&str>, rules: &[AppModeRule]) -> ResolvedSettings {
-    let Some(bundle_id) = bundle_id else {
-        return ResolvedSettings {
-            mode: Mode::Plain,
-            stt_model: None,
-            use_llm_refinement: false,
-        };
-    };
-    if let Some(rule) = rules.iter().find(|r| r.bundle_id == bundle_id) {
-        return ResolvedSettings {
-            mode: rule.mode,
-            stt_model: rule.stt_model.clone(),
-            use_llm_refinement: rule.use_llm_refinement,
-        };
-    }
-    let mode = BUILTIN_DEFAULTS
-        .iter()
-        .find(|(id, _)| *id == bundle_id)
-        .map(|(_, mode)| *mode)
-        .unwrap_or(Mode::Plain);
-    ResolvedSettings {
-        mode,
+/// pipeline. Looks for a mode whose `apps` includes the frontmost app;
+/// falls back to whichever mode has `is_default: true`; falls back further
+/// to a hardcoded Plain/no-refinement if even that's been deleted, so
+/// dictation never has nothing to fall back to.
+pub fn resolve_settings(bundle_id: Option<&str>, modes: &[ModeDefinition]) -> ResolvedSettings {
+    let hardcoded_fallback = ResolvedSettings {
+        mode: Behavior::Plain,
         stt_model: None,
-        // Casual mode's rule-based path is a no-op (regex can't meaningfully
-        // "sound casual"), so it's the one builtin default worth defaulting
-        // to LLM refinement rather than leaving the raw transcript as-is.
-        // CLI/Plain keep the conservative false default — CLI already gets
-        // real value from the rule-based formatting alone.
-        use_llm_refinement: mode == Mode::Casual,
+        llm_refinement: LlmRefinement::Off,
+    };
+    let Some(bundle_id) = bundle_id else {
+        return hardcoded_fallback;
+    };
+    if let Some(def) = modes
+        .iter()
+        .find(|m| m.apps.iter().any(|a| a.bundle_id == bundle_id))
+    {
+        return settings_for(def);
     }
+    modes
+        .iter()
+        .find(|m| m.is_default)
+        .map(settings_for)
+        .unwrap_or(hardcoded_fallback)
 }
 
-/// Thin convenience wrapper around `resolve_settings` for callers (mainly
-/// tests) that only care about the mode.
-#[allow(dead_code)]
-pub fn resolve_mode(bundle_id: Option<&str>, rules: &[AppModeRule]) -> Mode {
-    resolve_settings(bundle_id, rules).mode
+/// Resolves a specific mode by name — used for the widget's one-off
+/// "next dictation" override, which picks a mode directly rather than
+/// going through the frontmost-app lookup above.
+pub fn settings_for_name(name: &str, modes: &[ModeDefinition]) -> Option<ResolvedSettings> {
+    modes.iter().find(|m| m.name == name).map(settings_for)
 }
 
-pub fn apply_mode(mode: Mode, transcript: &str) -> String {
+pub fn apply_mode(mode: Behavior, transcript: &str) -> String {
     match mode {
-        Mode::Plain | Mode::Casual => transcript.to_string(),
-        Mode::Cli => format_as_cli(transcript),
+        Behavior::Plain | Behavior::Casual => transcript.to_string(),
+        Behavior::Cli => format_as_cli(transcript),
     }
 }
 
@@ -142,97 +236,115 @@ fn format_as_cli(text: &str) -> String {
 mod tests {
     use super::*;
 
-    fn rule(bundle_id: &str, mode: Mode) -> AppModeRule {
-        AppModeRule {
-            bundle_id: bundle_id.to_string(),
-            app_name: bundle_id.to_string(),
-            mode,
+    fn mode(name: &str, behavior: Behavior, apps: Vec<&str>) -> ModeDefinition {
+        ModeDefinition {
+            name: name.to_string(),
+            behavior,
+            apps: apps
+                .into_iter()
+                .map(|id| AppRef { bundle_id: id.to_string(), app_name: id.to_string() })
+                .collect(),
             stt_model: None,
-            use_llm_refinement: false,
+            llm_refinement: LlmRefinement::Off,
+            is_default: false,
         }
     }
 
     #[test]
     fn no_bundle_id_resolves_to_plain() {
-        assert_eq!(resolve_mode(None, &[]), Mode::Plain);
+        assert_eq!(resolve_settings(None, &[]).mode, Behavior::Plain);
     }
 
     #[test]
-    fn unknown_app_with_no_rules_resolves_to_plain() {
-        assert_eq!(resolve_mode(Some("com.example.unknown"), &[]), Mode::Plain);
+    fn unknown_app_with_no_modes_resolves_to_plain() {
+        assert_eq!(resolve_settings(Some("com.example.unknown"), &[]).mode, Behavior::Plain);
     }
 
     #[test]
-    fn builtin_default_applies_when_no_user_rule() {
-        assert_eq!(resolve_mode(Some("com.apple.Terminal"), &[]), Mode::Cli);
-        assert_eq!(resolve_mode(Some("com.tinyspeck.slackmacgap"), &[]), Mode::Casual);
+    fn app_assigned_to_a_mode_resolves_to_it() {
+        let modes = vec![mode("CLI", Behavior::Cli, vec!["com.apple.Terminal"])];
+        assert_eq!(resolve_settings(Some("com.apple.Terminal"), &modes).mode, Behavior::Cli);
     }
 
     #[test]
-    fn casual_builtin_default_uses_llm_refinement() {
-        // Casual's rule-based path is a no-op, so the builtin default
-        // should opt into LLM refinement rather than leaving raw text as-is.
-        let settings = resolve_settings(Some("com.tinyspeck.slackmacgap"), &[]);
-        assert_eq!(settings.mode, Mode::Casual);
-        assert!(settings.use_llm_refinement);
+    fn multiple_apps_can_share_one_mode() {
+        let modes = vec![mode("Messaging", Behavior::Casual, vec!["com.tinyspeck.slackmacgap", "com.hnc.Discord"])];
+        assert_eq!(resolve_settings(Some("com.tinyspeck.slackmacgap"), &modes).mode, Behavior::Casual);
+        assert_eq!(resolve_settings(Some("com.hnc.Discord"), &modes).mode, Behavior::Casual);
     }
 
     #[test]
-    fn cli_and_plain_builtin_defaults_do_not_use_llm_refinement() {
-        let cli = resolve_settings(Some("com.apple.Terminal"), &[]);
-        assert!(!cli.use_llm_refinement);
-
-        let plain = resolve_settings(Some("com.example.unknown"), &[]);
-        assert!(!plain.use_llm_refinement);
+    fn unassigned_app_falls_back_to_the_default_mode() {
+        let mut fallback = mode("Default", Behavior::Plain, vec![]);
+        fallback.is_default = true;
+        let modes = vec![mode("CLI", Behavior::Cli, vec!["com.apple.Terminal"]), fallback];
+        assert_eq!(resolve_settings(Some("com.example.unknown"), &modes).mode, Behavior::Plain);
     }
 
     #[test]
-    fn user_rule_overrides_the_casual_llm_default() {
-        // An explicit user rule always wins, even if it disables LLM
-        // refinement for an app whose builtin default is Casual.
-        let mut r = rule("com.tinyspeck.slackmacgap", Mode::Casual);
-        r.use_llm_refinement = false;
-        let settings = resolve_settings(Some("com.tinyspeck.slackmacgap"), &[r]);
-        assert!(!settings.use_llm_refinement);
+    fn no_default_mode_falls_back_to_hardcoded_plain() {
+        let modes = vec![mode("CLI", Behavior::Cli, vec!["com.apple.Terminal"])];
+        let settings = resolve_settings(Some("com.example.unknown"), &modes);
+        assert_eq!(settings.mode, Behavior::Plain);
+        assert_eq!(settings.llm_refinement, LlmRefinement::Off);
     }
 
     #[test]
-    fn user_rule_overrides_builtin_default() {
-        let rules = vec![rule("com.apple.Terminal", Mode::Casual)];
-        assert_eq!(resolve_mode(Some("com.apple.Terminal"), &rules), Mode::Casual);
+    fn llm_refinement_resolves_per_mode() {
+        let mut m = mode("Messaging", Behavior::Casual, vec!["com.tinyspeck.slackmacgap"]);
+        m.llm_refinement = LlmRefinement::Global;
+        let modes = vec![m];
+        assert_eq!(resolve_settings(Some("com.tinyspeck.slackmacgap"), &modes).llm_refinement, LlmRefinement::Global);
     }
 
     #[test]
-    fn user_rule_applies_to_apps_without_a_builtin_default() {
-        let rules = vec![rule("com.example.myapp", Mode::Cli)];
-        assert_eq!(resolve_mode(Some("com.example.myapp"), &rules), Mode::Cli);
+    fn stt_model_resolves_per_mode() {
+        let mut m = mode("CLI", Behavior::Cli, vec!["com.apple.Terminal"]);
+        m.stt_model = Some("small.en".to_string());
+        let modes = vec![m];
+        assert_eq!(resolve_settings(Some("com.apple.Terminal"), &modes).stt_model, Some("small.en".to_string()));
+    }
+
+    #[test]
+    fn settings_for_name_finds_the_named_mode() {
+        let modes = vec![mode("CLI", Behavior::Cli, vec![])];
+        let settings = settings_for_name("CLI", &modes).expect("mode should resolve");
+        assert_eq!(settings.mode, Behavior::Cli);
+        assert!(settings_for_name("Nonexistent", &modes).is_none());
+    }
+
+    #[test]
+    fn seed_default_modes_has_exactly_one_default() {
+        let seeded = seed_default_modes();
+        assert_eq!(seeded.iter().filter(|m| m.is_default).count(), 1);
+        assert_eq!(seeded.len(), 4);
     }
 
     #[test]
     fn plain_and_casual_pass_transcript_through_unchanged() {
         let text = "  Hello,  world.  ";
-        assert_eq!(apply_mode(Mode::Plain, text), text);
-        assert_eq!(apply_mode(Mode::Casual, text), text);
+        assert_eq!(apply_mode(Behavior::Plain, text), text);
+        assert_eq!(apply_mode(Behavior::Casual, text), text);
     }
 
     #[test]
     fn cli_mode_formats_git_commit() {
         assert_eq!(
-            apply_mode(Mode::Cli, "git commit update readme"),
+            apply_mode(Behavior::Cli, "git commit update readme"),
             "git commit -m \"update readme\""
         );
         // Case-insensitive prefix match.
         assert_eq!(
-            apply_mode(Mode::Cli, "Git Commit fix the bug."),
+            apply_mode(Behavior::Cli, "Git Commit fix the bug."),
             "git commit -m \"fix the bug\""
         );
     }
 
     #[test]
     fn cli_mode_formats_mkdir_and_cd() {
-        assert_eq!(apply_mode(Mode::Cli, "make directory src"), "mkdir src");
+        assert_eq!(apply_mode(Behavior::Cli, "make directory src"), "mkdir src");
         assert_eq!(
-            apply_mode(Mode::Cli, "change directory to src"),
+            apply_mode(Behavior::Cli, "change directory to src"),
             "cd src"
         );
     }
@@ -240,50 +352,32 @@ mod tests {
     #[test]
     fn cli_mode_passes_through_unmatched_text() {
         assert_eq!(
-            apply_mode(Mode::Cli, "this doesn't match any pattern"),
+            apply_mode(Behavior::Cli, "this doesn't match any pattern"),
             "this doesn't match any pattern"
         );
     }
 
     #[test]
-    fn mode_serializes_as_snake_case() {
-        assert_eq!(serde_json::to_string(&Mode::Cli).unwrap(), "\"cli\"");
-        assert_eq!(serde_json::to_string(&Mode::Casual).unwrap(), "\"casual\"");
-        assert_eq!(serde_json::to_string(&Mode::Plain).unwrap(), "\"plain\"");
+    fn behavior_serializes_as_snake_case() {
+        assert_eq!(serde_json::to_string(&Behavior::Cli).unwrap(), "\"cli\"");
+        assert_eq!(serde_json::to_string(&Behavior::Casual).unwrap(), "\"casual\"");
+        assert_eq!(serde_json::to_string(&Behavior::Plain).unwrap(), "\"plain\"");
     }
 }
 
 #[tauri::command]
-pub fn get_mode_rules(app: AppHandle) -> Vec<AppModeRule> {
-    config::load(&app).mode_rules
+pub fn get_modes(app: AppHandle) -> Vec<ModeDefinition> {
+    config::load(&app).modes
 }
 
+/// Full-list replace, mirroring `snippets::set_snippets` — the Settings UI
+/// keeps the whole list client-side (renaming, adding/removing apps,
+/// adding/deleting modes are all just array edits) and saves it back in
+/// one shot rather than the backend exposing per-field mutation commands.
 #[tauri::command]
-pub fn set_mode_rule(
-    app: AppHandle,
-    bundle_id: String,
-    app_name: String,
-    mode: Mode,
-    stt_model: Option<String>,
-    use_llm_refinement: bool,
-) {
-    eprintln!("modes: set_mode_rule bundle_id={bundle_id} app_name={app_name} mode={mode:?} stt_model={stt_model:?} use_llm_refinement={use_llm_refinement}");
+pub fn set_modes(app: AppHandle, modes: Vec<ModeDefinition>) {
     let mut cfg = config::load(&app);
-    cfg.mode_rules.retain(|r| r.bundle_id != bundle_id);
-    cfg.mode_rules.push(AppModeRule {
-        bundle_id,
-        app_name,
-        mode,
-        stt_model,
-        use_llm_refinement,
-    });
-    let _ = config::save(&app, &cfg);
-}
-
-#[tauri::command]
-pub fn remove_mode_rule(app: AppHandle, bundle_id: String) {
-    let mut cfg = config::load(&app);
-    cfg.mode_rules.retain(|r| r.bundle_id != bundle_id);
+    cfg.modes = modes;
     let _ = config::save(&app, &cfg);
 }
 
@@ -295,7 +389,7 @@ pub struct RunningAppPayload {
     pub is_running: bool,
 }
 
-/// Lists apps for the "add a rule" picker in Settings: currently-running
+/// Lists apps for the "add to mode" picker in Settings: currently-running
 /// apps first (so adding a rule doesn't require switching to the target
 /// app first), then common developer/everyday apps that are installed but
 /// not currently running. Icons included for both. NSWorkspace requires

@@ -28,8 +28,20 @@ pub struct AppConfig {
     pub input_device: Option<String>,
     pub shortcut: Option<ShortcutConfig>,
     pub active_model: Option<String>,
+    /// Legacy one-app-per-rule mode assignments, from before modes became
+    /// named/multi-app. Only ever read once, by `migrate_legacy_mode_rules`
+    /// in `load()` below, which folds them into `modes` and clears this —
+    /// kept only so a `config.json` saved before that migration existed
+    /// still deserializes.
     #[serde(default)]
     pub mode_rules: Vec<crate::modes::AppModeRule>,
+    /// Named, user-editable dictation modes (formatting behavior + apps +
+    /// model choices) — see `modes::ModeDefinition`. Defaults to
+    /// `modes::seed_default_modes()` both for fresh installs and for
+    /// configs saved before named modes existed (migrated up from
+    /// `mode_rules` in `load()` below).
+    #[serde(default = "crate::modes::seed_default_modes")]
+    pub modes: Vec<crate::modes::ModeDefinition>,
     /// Developer-jargon terms biasing Whisper's recognition. Defaults to
     /// `stt::default_vocabulary()` both for fresh installs (via `impl
     /// Default`) and for configs saved before this field existed (via
@@ -42,7 +54,8 @@ pub struct AppConfig {
     #[serde(default = "default_history_retention_days")]
     pub history_retention_days: u32,
     /// Which locally-pulled Ollama model to use for LLM refinement (see
-    /// `llm.rs`). Only used for modes with `use_llm_refinement: true`.
+    /// `llm.rs`) when a mode's `llm_refinement` is `Global` rather than a
+    /// specific pinned model.
     #[serde(default = "crate::llm::default_model")]
     pub llm_model: String,
     /// Last dragged position of the widget window (logical coordinates),
@@ -131,6 +144,7 @@ impl Default for AppConfig {
             shortcut: None,
             active_model: None,
             mode_rules: Vec::new(),
+            modes: crate::modes::seed_default_modes(),
             vocabulary: crate::stt::default_vocabulary(),
             history_retention_days: default_history_retention_days(),
             llm_model: crate::llm::default_model(),
@@ -156,12 +170,52 @@ fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("config.json"))
 }
 
+/// One-time upgrade path from the old one-app-per-rule `mode_rules` to
+/// named/multi-app `modes` (see `modes::ModeDefinition`). Groups each
+/// legacy rule into the seeded mode matching its behavior (adding the app
+/// if that mode doesn't already have it) and adopts the rule's
+/// stt_model/LLM choice onto that mode if it doesn't already have one set
+/// — first-writer-wins if multiple old rules under the same behavior
+/// disagree, which is an acceptable simplification for a one-time,
+/// best-effort migration. Returns `true` if it changed anything, so the
+/// caller knows to persist the result and skip this on every future load.
+fn migrate_legacy_mode_rules(cfg: &mut AppConfig) -> bool {
+    if cfg.mode_rules.is_empty() {
+        return false;
+    }
+
+    for rule in cfg.mode_rules.drain(..).collect::<Vec<_>>() {
+        let Some(target) = cfg.modes.iter_mut().find(|m| m.behavior == rule.mode) else {
+            continue;
+        };
+        if !target.apps.iter().any(|a| a.bundle_id == rule.bundle_id) {
+            target.apps.push(crate::modes::AppRef {
+                bundle_id: rule.bundle_id,
+                app_name: rule.app_name,
+            });
+        }
+        if target.stt_model.is_none() {
+            target.stt_model = rule.stt_model;
+        }
+        if target.llm_refinement == crate::modes::LlmRefinement::Off && rule.use_llm_refinement {
+            target.llm_refinement = crate::modes::LlmRefinement::Global;
+        }
+    }
+    true
+}
+
 pub fn load(app: &AppHandle) -> AppConfig {
-    config_path(app)
+    let mut cfg = config_path(app)
         .ok()
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|contents| serde_json::from_str(&contents).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    if migrate_legacy_mode_rules(&mut cfg) {
+        let _ = save(app, &cfg);
+    }
+
+    cfg
 }
 
 pub fn save(app: &AppHandle, config: &AppConfig) -> Result<(), String> {
@@ -191,7 +245,7 @@ mod tests {
             mode_rules: vec![crate::modes::AppModeRule {
                 bundle_id: "com.apple.Terminal".to_string(),
                 app_name: "Terminal".to_string(),
-                mode: crate::modes::Mode::Cli,
+                mode: crate::modes::Behavior::Cli,
                 stt_model: None,
                 use_llm_refinement: false,
             }],
@@ -241,5 +295,40 @@ mod tests {
         assert_eq!(restored.snippets, crate::snippets::default_snippets());
         assert!(!restored.double_tap_fn_enabled);
         assert_eq!(restored.layout, crate::theme::Layout::default());
+        assert_eq!(restored.modes, crate::modes::seed_default_modes());
+    }
+
+    #[test]
+    fn migration_is_a_no_op_when_there_are_no_legacy_rules() {
+        let mut cfg = AppConfig::default();
+        let seeded = cfg.modes.clone();
+        assert!(!migrate_legacy_mode_rules(&mut cfg));
+        assert_eq!(cfg.modes, seeded);
+    }
+
+    #[test]
+    fn migration_folds_a_legacy_rule_into_the_matching_seeded_mode() {
+        let mut cfg = AppConfig {
+            mode_rules: vec![crate::modes::AppModeRule {
+                bundle_id: "com.stablyai.orca".to_string(),
+                app_name: "Orca".to_string(),
+                mode: crate::modes::Behavior::Cli,
+                stt_model: Some("base.en".to_string()),
+                use_llm_refinement: true,
+            }],
+            ..AppConfig::default()
+        };
+
+        assert!(migrate_legacy_mode_rules(&mut cfg));
+        assert!(cfg.mode_rules.is_empty());
+
+        let cli = cfg.modes.iter().find(|m| m.name == "CLI").unwrap();
+        assert!(cli.apps.iter().any(|a| a.bundle_id == "com.stablyai.orca"));
+        assert_eq!(cli.stt_model, Some("base.en".to_string()));
+        assert_eq!(cli.llm_refinement, crate::modes::LlmRefinement::Global);
+
+        // Idempotent: running it again on the already-migrated config does
+        // nothing further, since mode_rules is now empty.
+        assert!(!migrate_legacy_mode_rules(&mut cfg));
     }
 }

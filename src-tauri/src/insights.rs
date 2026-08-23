@@ -283,7 +283,11 @@ fn compute_adoption(entries: &[HistoryEntry], cfg: &AppConfig) -> AdoptionInfo {
         AdoptionItem {
             key: "modes".to_string(),
             label: "Per-app modes".to_string(),
-            done: !cfg.mode_rules.is_empty(),
+            // Modes always has at least the 4 shipped defaults, so
+            // "done" has to mean "changed from what shipped" (a new app
+            // assigned, a new mode created, a model overridden) rather
+            // than just non-empty.
+            done: cfg.modes != crate::modes::seed_default_modes(),
             suggestion:
                 "Set up per-app formatting in Modes so your terminal, Slack, and editor each get the right style."
                     .to_string(),
@@ -314,7 +318,7 @@ pub fn get_insights(app: tauri::AppHandle) -> InsightsPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modes::{AppModeRule, Mode};
+    use crate::modes::AppRef;
 
     fn entry(text: &str, app_name: &str, mode: &str, days_ago: i64, duration_ms: Option<u64>) -> HistoryEntry {
         let now: u64 = 1_700_000_000_000; // fixed reference instant
@@ -443,12 +447,9 @@ mod tests {
     #[test]
     fn adoption_score_reflects_which_features_have_been_used() {
         let mut cfg = AppConfig::default();
-        cfg.mode_rules.push(AppModeRule {
+        cfg.modes[0].apps.push(AppRef {
             bundle_id: "com.apple.Terminal".to_string(),
             app_name: "Terminal".to_string(),
-            mode: Mode::Cli,
-            stt_model: None,
-            use_llm_refinement: false,
         });
         let entries = vec![entry("a", "Terminal", "casing", 0, None)];
         let payload = compute(&entries, &cfg, NOW);

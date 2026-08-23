@@ -211,7 +211,7 @@ fn entry_matches(entry: &HistoryEntry, query_lower: &str) -> bool {
 pub fn reprocess_history_text(
     app: AppHandle,
     text: String,
-    mode: crate::modes::Mode,
+    mode: crate::modes::Behavior,
     use_llm_refinement: bool,
 ) -> Result<String, String> {
     let formatted = crate::modes::apply_mode(mode, &text);

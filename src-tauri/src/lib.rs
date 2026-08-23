@@ -47,7 +47,7 @@ use insights::get_insights;
 use llm::{get_llm_model, list_llm_catalog, list_ollama_models, pull_llm_model, set_llm_model};
 use logging::{clear_logs, get_logs};
 use models::{download_model, list_models, set_active_model};
-use modes::{get_mode_rules, list_running_apps, remove_mode_rule, set_mode_rule};
+use modes::{get_modes, list_running_apps, set_modes};
 use recording::{
     get_active_input_device, get_copy_only, get_isolated_voice_enabled, get_last_frontmost_app,
     get_next_mode_override, get_press_enter_enabled, get_vocabulary, list_input_devices,
@@ -224,9 +224,8 @@ pub fn run() {
             list_models,
             download_model,
             set_active_model,
-            get_mode_rules,
-            set_mode_rule,
-            remove_mode_rule,
+            get_modes,
+            set_modes,
             list_running_apps,
             get_last_frontmost_app,
             get_vocabulary,

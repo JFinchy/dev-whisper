@@ -6,13 +6,10 @@ import { applyTheme, type ThemeId } from "./theme";
 
 type Phase = "idle" | "recording" | "transcribing" | "refining";
 type WidgetMode = "minimal" | "compact" | "detailed";
-type ModeOverride = "plain" | "casual" | "cli" | null;
-
-const OVERRIDE_LABEL: Record<Exclude<ModeOverride, null>, string> = {
-  plain: "Plain",
-  casual: "Casual",
-  cli: "CLI",
-};
+// Only the name is needed here — the flyout just offers a pick list, the
+// backend resolves the full mode (behavior/models) by name when the
+// override is consumed. See `modes::ModeDefinition` for the full shape.
+type ModeSummary = { name: string };
 
 const STATUS_LABEL: Record<Phase, string> = {
   idle: "Ready",
@@ -27,11 +24,25 @@ const COMPACT_BASE_SIZE = { width: 220, height: 60 };
 // the Accessibility-permission error before this fix.
 const COMPACT_EXPANDED_SIZE = { width: 220, height: 108 };
 // How tall compact grows for the hover flyout (mic mode + a one-off mode
-// override for the next dictation). Grows downward rather than upward —
-// this window has no titlebar to anchor from, and downward reuses the
-// exact resize mechanism COMPACT_EXPANDED_SIZE already relies on instead
-// of introducing new position math.
-const COMPACT_FLYOUT_SIZE = { width: 220, height: 168 };
+// override for the next dictation), sized for exactly one row of
+// "Next dictation" buttons. Grows downward rather than upward — this
+// window has no titlebar to anchor from, and downward reuses the exact
+// resize mechanism COMPACT_EXPANDED_SIZE already relies on instead of
+// introducing new position math.
+const COMPACT_FLYOUT_BASE_HEIGHT = 168;
+// "Next dictation" is one full-width button per mode (see .dw-fly-col in
+// App.css) rather than a single cramped row, so the flyout has to grow
+// with however many modes exist — matches that CSS's row height + gap.
+const FLYOUT_MODE_ROW_HEIGHT = 26;
+const FLYOUT_MODE_ROW_GAP = 4;
+
+function compactFlyoutSize(modeCount: number) {
+  const extraRows = Math.max(modeCount, 1) - 1;
+  return {
+    width: 220,
+    height: COMPACT_FLYOUT_BASE_HEIGHT + extraRows * (FLYOUT_MODE_ROW_HEIGHT + FLYOUT_MODE_ROW_GAP),
+  };
+}
 
 // How many recent level samples the meter shows at once — enough to read
 // as a little waveform rather than a single flickering bar, short enough
@@ -78,7 +89,8 @@ function WidgetView() {
   // override), not local-only UI state.
   const [flyoutHovered, setFlyoutHovered] = useState(false);
   const [micMode, setMicMode] = useState(false);
-  const [overrideMode, setOverrideMode] = useState<ModeOverride>(null);
+  const [overrideMode, setOverrideMode] = useState<string | null>(null);
+  const [modes, setModes] = useState<ModeSummary[]>([]);
 
   // Rolling window of recent input levels for the live level meter — see
   // LevelMeter above. Reset to silence whenever recording isn't active, so
@@ -98,6 +110,10 @@ function WidgetView() {
     invoke<boolean>("get_isolated_voice_enabled")
       .then(setMicMode)
       .catch((err) => console.error("get_isolated_voice_enabled failed:", err));
+
+    invoke<ModeSummary[]>("get_modes")
+      .then(setModes)
+      .catch((err) => console.error("get_modes failed:", err));
 
     invoke<ThemeId>("get_theme")
       .then(applyTheme)
@@ -159,12 +175,12 @@ function WidgetView() {
     // the flyout (rather than fighting over which one "wins" the window
     // height) is the simpler, still-correct choice.
     const size = flyoutHovered
-      ? COMPACT_FLYOUT_SIZE
+      ? compactFlyoutSize(modes.length)
       : flashVisible && isError
         ? COMPACT_EXPANDED_SIZE
         : COMPACT_BASE_SIZE;
     invoke("set_widget_size", size).catch((err) => console.error("set_widget_size failed:", err));
-  }, [mode, flashVisible, isError, flyoutHovered]);
+  }, [mode, flashVisible, isError, flyoutHovered, modes.length]);
 
   function toggleRecording() {
     invoke("toggle_recording_command").catch((err) => console.error("toggle_recording_command failed:", err));
@@ -182,13 +198,13 @@ function WidgetView() {
     });
   }
 
-  function pickOverride(next: Exclude<ModeOverride, null>) {
+  function pickOverride(next: string) {
     // Clicking the already-selected pill clears it back to "auto" rather
     // than being stuck — this is a one-off nudge for the very next
     // dictation, not a persistent setting.
     const nextValue = overrideMode === next ? null : next;
     setOverrideMode(nextValue);
-    invoke("set_next_mode_override", { mode: nextValue }).catch((err) =>
+    invoke("set_next_mode_override", { modeName: nextValue }).catch((err) =>
       console.error("set_next_mode_override failed:", err),
     );
   }
@@ -334,16 +350,16 @@ function WidgetView() {
             </button>
           </div>
           <div className="dw-fly-label">Next dictation</div>
-          <div className="dw-fly-row">
-            {(Object.keys(OVERRIDE_LABEL) as Exclude<ModeOverride, null>[]).map((m) => (
+          <div className="dw-fly-col">
+            {modes.map((m) => (
               <button
-                key={m}
+                key={m.name}
                 type="button"
-                className={`dw-fly-btn ${overrideMode === m ? "sel" : ""}`}
-                onClick={() => pickOverride(m)}
-                title={overrideMode === m ? "Click again to use the auto-detected mode" : undefined}
+                className={`dw-fly-btn ${overrideMode === m.name ? "sel" : ""}`}
+                onClick={() => pickOverride(m.name)}
+                title={overrideMode === m.name ? "Click again to use the auto-detected mode" : undefined}
               >
-                {OVERRIDE_LABEL[m]}
+                {m.name}
               </button>
             ))}
           </div>

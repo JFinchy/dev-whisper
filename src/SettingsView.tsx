@@ -192,8 +192,8 @@ function ShortcutSection() {
   }, [listening]);
 
   return (
-    <div className="mb-4">
-      <label className="mb-1 block text-xs font-medium opacity-70">Push-to-talk key</label>
+    <div className="rounded-lg border border-base-content/10 bg-base-100 p-4">
+      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide opacity-60">Push-to-talk key</h3>
       <div className="flex items-center gap-2">
         <button
           className={`btn btn-sm flex-1 ${listening ? "btn-primary" : ""}`}
@@ -202,9 +202,9 @@ function ShortcutSection() {
           {listening ? "Press a key combo… (Esc to cancel)" : shortcut ? shortcutLabel(shortcut) : "…"}
         </button>
       </div>
-      {error && <p className="mt-1 text-xs text-error">{error}</p>}
+      {error && <p className="mt-1.5 text-xs text-error">{error}</p>}
       {doubleTapChecked && (
-        <label className="mt-2 flex items-center gap-1.5 text-xs opacity-80">
+        <label className="mt-3 flex items-center gap-2 text-xs opacity-80">
           <input
             type="checkbox"
             className="checkbox checkbox-xs"
@@ -215,10 +215,31 @@ function ShortcutSection() {
         </label>
       )}
       {doubleTapEnabled && (
-        <p className="mt-1 text-xs opacity-60">
+        <p className="mt-1.5 text-xs opacity-60">
           Needs macOS's Input Monitoring permission — System Settings → Privacy &amp; Security → Input Monitoring.
         </p>
       )}
+    </div>
+  );
+}
+
+/// Qualitative speed/accuracy positioning for the local Whisper catalog —
+/// same tradeoff each model's `label` already states in words (see
+/// `models.rs::CATALOG`), just rendered as bars too so it scans at a
+/// glance. Not measured benchmark numbers, same as the existing text.
+const MODEL_STATS: Record<string, { speed: number; accuracy: number }> = {
+  "tiny.en": { speed: 1, accuracy: 0.55 },
+  "base.en": { speed: 0.7, accuracy: 0.75 },
+  "small.en": { speed: 0.4, accuracy: 0.95 },
+};
+
+function StatBar({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="w-14 shrink-0 opacity-50">{label}</span>
+      <div className="h-1 w-16 overflow-hidden rounded-full bg-base-300">
+        <div className="h-full rounded-full bg-primary" style={{ width: `${value * 100}%` }} />
+      </div>
     </div>
   );
 }
@@ -280,33 +301,44 @@ function ModelsSection() {
   }
 
   return (
-    <div className="mb-4">
-      <label className="mb-1 block text-xs font-medium opacity-70">Whisper model</label>
-      <ul className="flex flex-col gap-1.5">
-        {models.map((m) => (
-          <li key={m.id} className="flex items-center justify-between rounded-md bg-base-100 px-2.5 py-1.5 text-xs">
-            <div>
-              <div className="font-medium">{m.label}</div>
-              <div className="opacity-50">{m.size_mb}MB</div>
-            </div>
-            {m.active ? (
-              <span className="badge badge-success badge-sm">Active</span>
-            ) : m.id in progress ? (
-              <span className="w-10 text-right opacity-70">{progress[m.id]}%</span>
-            ) : m.downloaded ? (
-              <button className="btn btn-xs" onClick={() => activate(m.id)}>
-                Use
-              </button>
-            ) : (
-              <button className="btn btn-xs" onClick={() => download(m.id)}>
-                Download
-              </button>
-            )}
-          </li>
-        ))}
+    <div className="rounded-lg border border-base-content/10 bg-base-100 p-4">
+      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide opacity-60">Whisper model</h3>
+      <ul className="flex flex-col gap-2">
+        {models.map((m) => {
+          const stats = MODEL_STATS[m.id];
+          return (
+            <li key={m.id} className="rounded-md bg-base-200 px-3 py-2 text-xs">
+              <div className="flex items-center justify-between">
+                <div className="font-medium">{m.label}</div>
+                {m.active ? (
+                  <span className="badge badge-success badge-sm">Active</span>
+                ) : m.id in progress ? (
+                  <span className="w-10 text-right opacity-70">{progress[m.id]}%</span>
+                ) : m.downloaded ? (
+                  <button className="btn btn-xs" onClick={() => activate(m.id)}>
+                    Use
+                  </button>
+                ) : (
+                  <button className="btn btn-xs" onClick={() => download(m.id)}>
+                    Download
+                  </button>
+                )}
+              </div>
+              <div className="mt-1.5 flex items-center gap-4">
+                <span className="opacity-50">{m.size_mb}MB</span>
+                {stats && (
+                  <>
+                    <StatBar label="Speed" value={stats.speed} />
+                    <StatBar label="Accuracy" value={stats.accuracy} />
+                  </>
+                )}
+              </div>
+            </li>
+          );
+        })}
       </ul>
       {Object.entries(errors).map(([id, err]) => (
-        <p key={id} className="mt-1 text-xs text-error">
+        <p key={id} className="mt-1.5 text-xs text-error">
           {err}
         </p>
       ))}
@@ -338,8 +370,8 @@ function DeviceSection() {
   }
 
   return (
-    <div className="mb-4 border-t border-base-content/10 pt-3">
-      <label className="mb-1 block text-xs font-medium opacity-70">Microphone</label>
+    <div className="rounded-lg border border-base-content/10 bg-base-100 p-4">
+      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide opacity-60">Microphone</h3>
       {loading ? (
         <span className="loading loading-spinner loading-xs" />
       ) : devices.length === 0 ? (
@@ -361,20 +393,32 @@ function DeviceSection() {
   );
 }
 
-type Mode = "plain" | "casual" | "cli";
-const MODES: Mode[] = ["plain", "casual", "cli"];
-const MODE_LABEL: Record<Mode, string> = { plain: "Plain", casual: "Casual", cli: "CLI" };
+type Behavior = "plain" | "casual" | "cli";
+const BEHAVIORS: Behavior[] = ["plain", "casual", "cli"];
+const BEHAVIOR_LABEL: Record<Behavior, string> = { plain: "Plain", casual: "Casual", cli: "CLI" };
 const GLOBAL_MODEL = "__global__";
 
-type AppModeRule = {
-  bundle_id: string;
-  app_name: string;
-  mode: Mode;
+type AppRef = { bundle_id: string; app_name: string };
+// Mirrors the Rust `LlmRefinement` enum's serde shape: unit variants
+// serialize as bare strings, the tuple variant as `{ model: "<id>" }`.
+type LlmRefinement = "off" | "global" | { model: string };
+type ModeDefinition = {
+  name: string;
+  behavior: Behavior;
+  apps: AppRef[];
   stt_model: string | null;
-  use_llm_refinement: boolean;
+  llm_refinement: LlmRefinement;
+  is_default: boolean;
 };
 type FrontmostApp = { bundle_id: string; name: string; icon_data_uri: string | null };
 type RunningApp = { bundle_id: string; name: string; icon_data_uri: string | null; is_running: boolean };
+
+function llmSelectValue(r: LlmRefinement): string {
+  return typeof r === "string" ? r : r.model;
+}
+function llmFromSelectValue(v: string): LlmRefinement {
+  return v === "off" || v === "global" ? v : { model: v };
+}
 
 function AppIcon({ src, name }: { src: string | null; name: string }) {
   if (src) {
@@ -389,16 +433,19 @@ function AppIcon({ src, name }: { src: string | null; name: string }) {
 }
 
 function AppModesSection() {
-  const [rules, setRules] = useState<AppModeRule[]>([]);
+  const [modes, setModes] = useState<ModeDefinition[]>([]);
+  const [loading, setLoading] = useState(true);
   const [lastApp, setLastApp] = useState<FrontmostApp | null>(null);
   const [runningApps, setRunningApps] = useState<RunningApp[]>([]);
   const [availableModels, setAvailableModels] = useState<ModelStatus[]>([]);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [llmCatalog, setLlmCatalog] = useState<LlmModelStatus[]>([]);
+  const [pickerOpenFor, setPickerOpenFor] = useState<number | null>(null);
 
   function refresh() {
-    invoke<AppModeRule[]>("get_mode_rules")
-      .then(setRules)
-      .catch((err) => console.error("get_mode_rules failed:", err));
+    invoke<ModeDefinition[]>("get_modes")
+      .then(setModes)
+      .catch((err) => console.error("get_modes failed:", err))
+      .finally(() => setLoading(false));
   }
 
   function loadRunningApps() {
@@ -416,151 +463,209 @@ function AppModesSection() {
     invoke<ModelStatus[]>("list_models")
       .then(setAvailableModels)
       .catch((err) => console.error("list_models failed:", err));
+    invoke<LlmModelStatus[]>("list_llm_catalog")
+      .then(setLlmCatalog)
+      .catch((err) => console.error("list_llm_catalog failed:", err));
   }, []);
 
-  function addRule(bundleId: string, appName: string, mode: Mode) {
-    invoke("set_mode_rule", { bundleId, appName, mode, sttModel: null, useLlmRefinement: false })
-      .then(refresh)
-      .catch((err) => console.error("set_mode_rule failed:", err));
+  // Full-list replace, mirroring `SnippetsSection` — the whole list lives
+  // client-side (renaming a mode, adding/removing an app, adding/deleting
+  // a mode are all just array edits) and gets saved back in one shot
+  // rather than the backend exposing per-field mutation commands.
+  function save(next: ModeDefinition[]) {
+    setModes(next);
+    invoke("set_modes", { modes: next }).catch((err) => console.error("set_modes failed:", err));
   }
 
-  function updateRule(rule: AppModeRule, patch: Partial<AppModeRule>) {
-    const next = { ...rule, ...patch };
-    invoke("set_mode_rule", {
-      bundleId: next.bundle_id,
-      appName: next.app_name,
-      mode: next.mode,
-      sttModel: next.stt_model,
-      useLlmRefinement: next.use_llm_refinement,
-    })
-      .then(refresh)
-      .catch((err) => console.error("set_mode_rule failed:", err));
+  function updateMode(index: number, patch: Partial<ModeDefinition>) {
+    const next = modes.slice();
+    next[index] = { ...next[index], ...patch };
+    save(next);
   }
 
-  function removeRule(bundleId: string) {
-    invoke("remove_mode_rule", { bundleId })
-      .then(refresh)
-      .catch((err) => console.error("remove_mode_rule failed:", err));
+  function addMode() {
+    save([
+      ...modes,
+      { name: "New mode", behavior: "plain", apps: [], stt_model: null, llm_refinement: "off", is_default: false },
+    ]);
   }
 
-  const lastAppAlreadyRuled = lastApp && rules.some((r) => r.bundle_id === lastApp.bundle_id);
-  const pickableApps = runningApps.filter((a) => !rules.some((r) => r.bundle_id === a.bundle_id));
-  const ruleIcon = (bundleId: string) => runningApps.find((a) => a.bundle_id === bundleId)?.icon_data_uri ?? null;
+  function removeMode(index: number) {
+    save(modes.filter((_, i) => i !== index));
+  }
 
-  function pickApp(app: RunningApp) {
-    addRule(app.bundle_id, app.name, "cli");
-    setPickerOpen(false);
+  function addAppToMode(index: number, bundleId: string, appName: string) {
+    const next = modes.slice();
+    next[index] = { ...next[index], apps: [...next[index].apps, { bundle_id: bundleId, app_name: appName }] };
+    save(next);
+    setPickerOpenFor(null);
+  }
+
+  function removeAppFromMode(index: number, bundleId: string) {
+    const next = modes.slice();
+    next[index] = { ...next[index], apps: next[index].apps.filter((a) => a.bundle_id !== bundleId) };
+    save(next);
+  }
+
+  const assignedBundleIds = new Set(modes.flatMap((m) => m.apps.map((a) => a.bundle_id)));
+  const lastAppAlreadyAssigned = lastApp && assignedBundleIds.has(lastApp.bundle_id);
+  const appIcon = (bundleId: string) => runningApps.find((a) => a.bundle_id === bundleId)?.icon_data_uri ?? null;
+
+  if (loading) {
+    return <span className="loading loading-spinner loading-xs" />;
   }
 
   return (
-    <div className="mb-4">
-      <label className="mb-1 block text-xs font-medium opacity-70">App modes</label>
-
-      {rules.length > 0 && (
-        <ul className="mb-2 flex flex-col gap-1.5">
-          {rules.map((r) => (
-            <li key={r.bundle_id} className="rounded-md bg-base-100 px-2.5 py-1.5 text-xs">
-              <div className="mb-1 flex items-center justify-between">
-                <span className="flex items-center gap-1.5 truncate font-medium">
-                  <AppIcon src={ruleIcon(r.bundle_id)} name={r.app_name} />
-                  {r.app_name}
-                </span>
-                <div className="flex items-center gap-1.5">
-                  <select
-                    className="select select-xs"
-                    value={r.mode}
-                    onChange={(e) => updateRule(r, { mode: e.target.value as Mode })}
+    <>
+      <div className="flex flex-col gap-3">
+        {modes.map((m, index) => {
+          const pickableApps = runningApps.filter((a) => !assignedBundleIds.has(a.bundle_id));
+          return (
+            <div key={index} className="rounded-lg border border-base-content/10 bg-base-100 p-4">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <input
+                  className="input input-xs flex-1 font-medium"
+                  value={m.name}
+                  onChange={(e) => updateMode(index, { name: e.target.value })}
+                  aria-label="Mode name"
+                />
+                {!m.is_default && (
+                  <button
+                    className="btn btn-ghost btn-xs"
+                    onClick={() => removeMode(index)}
+                    aria-label={`Delete ${m.name}`}
                   >
-                    {MODES.map((m) => (
-                      <option key={m} value={m}>
-                        {MODE_LABEL[m]}
-                      </option>
-                    ))}
-                  </select>
-                  <button className="btn btn-ghost btn-xs" onClick={() => removeRule(r.bundle_id)} aria-label={`Remove rule for ${r.app_name}`}>
                     ✕
                   </button>
+                )}
+              </div>
+
+              <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                {m.apps.map((a) => (
+                  <span
+                    key={a.bundle_id}
+                    className="flex items-center gap-1 rounded-full bg-base-200 py-0.5 pl-1 pr-1.5 text-[11px]"
+                  >
+                    <AppIcon src={appIcon(a.bundle_id)} name={a.app_name} />
+                    {a.app_name}
+                    <button
+                      className="opacity-50 hover:opacity-100"
+                      onClick={() => removeAppFromMode(index, a.bundle_id)}
+                      aria-label={`Remove ${a.app_name} from ${m.name}`}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+                <div className="relative">
+                  <button
+                    className="btn btn-ghost btn-xs"
+                    onClick={() => {
+                      setPickerOpenFor(pickerOpenFor === index ? null : index);
+                      loadRunningApps();
+                    }}
+                  >
+                    + Add app
+                  </button>
+                  {pickerOpenFor === index && (
+                    <ul className="absolute z-10 mt-1 max-h-52 w-48 overflow-y-auto rounded-md bg-base-100 p-1 shadow-lg">
+                      {pickableApps.length === 0 && <li className="px-2 py-1 text-xs opacity-50">Loading…</li>}
+                      {pickableApps.map((a, i) => {
+                        const prevRunning = i > 0 ? pickableApps[i - 1].is_running : true;
+                        return (
+                          <li key={a.bundle_id}>
+                            {prevRunning && !a.is_running && (
+                              <div className="mt-1 border-t border-base-content/10 pt-1 text-[10px] uppercase opacity-40">
+                                Other apps
+                              </div>
+                            )}
+                            <button
+                              className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs hover:bg-base-200"
+                              onClick={() => addAppToMode(index, a.bundle_id, a.name)}
+                            >
+                              <AppIcon src={a.icon_data_uri} name={a.name} />
+                              <span className="truncate">{a.name}</span>
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                 </div>
               </div>
-              <div className="flex items-center justify-between opacity-70">
-                <label className="flex items-center gap-1">
-                  <input
-                    type="checkbox"
-                    className="checkbox checkbox-xs"
-                    checked={r.use_llm_refinement}
-                    onChange={(e) => updateRule(r, { use_llm_refinement: e.target.checked })}
-                  />
-                  Refine with LLM
-                </label>
+
+              <div className="flex flex-wrap items-center gap-1.5">
                 <select
                   className="select select-xs"
-                  value={r.stt_model ?? GLOBAL_MODEL}
+                  value={m.behavior}
+                  onChange={(e) => updateMode(index, { behavior: e.target.value as Behavior })}
+                >
+                  {BEHAVIORS.map((b) => (
+                    <option key={b} value={b}>
+                      {BEHAVIOR_LABEL[b]}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="select select-xs"
+                  value={m.stt_model ?? GLOBAL_MODEL}
                   onChange={(e) =>
-                    updateRule(r, { stt_model: e.target.value === GLOBAL_MODEL ? null : e.target.value })
+                    updateMode(index, { stt_model: e.target.value === GLOBAL_MODEL ? null : e.target.value })
                   }
                 >
                   <option value={GLOBAL_MODEL}>Global model</option>
-                  {availableModels.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label}
+                  {availableModels.map((mo) => (
+                    <option key={mo.id} value={mo.id}>
+                      {mo.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="select select-xs"
+                  value={llmSelectValue(m.llm_refinement)}
+                  onChange={(e) => updateMode(index, { llm_refinement: llmFromSelectValue(e.target.value) })}
+                >
+                  <option value="off">No LLM refinement</option>
+                  <option value="global">Refine with global LLM</option>
+                  {llmCatalog.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      Refine with {l.label}
                     </option>
                   ))}
                 </select>
               </div>
-            </li>
-          ))}
-        </ul>
-      )}
+            </div>
+          );
+        })}
+        <button className="btn btn-xs w-full justify-start" onClick={addMode}>
+          + Add mode
+        </button>
+      </div>
 
-      {lastApp && !lastAppAlreadyRuled && (
-        <div className="mb-1.5 flex items-center gap-1.5 text-xs">
-          <button
-            className="btn btn-xs flex-1 justify-start gap-1.5"
-            onClick={() => addRule(lastApp.bundle_id, lastApp.name, "cli")}
+      {lastApp && !lastAppAlreadyAssigned && (
+        <div className="mt-1.5 flex items-center gap-1.5 text-xs">
+          <AppIcon src={lastApp.icon_data_uri} name={lastApp.name} />
+          <span className="truncate opacity-70">Add {lastApp.name} to:</span>
+          <select
+            className="select select-xs flex-1"
+            value=""
+            onChange={(e) => {
+              const index = modes.findIndex((m) => m.name === e.target.value);
+              if (index >= 0) addAppToMode(index, lastApp.bundle_id, lastApp.name);
+            }}
           >
-            <AppIcon src={lastApp.icon_data_uri} name={lastApp.name} />+ Add rule for {lastApp.name}
-          </button>
+            <option value="" disabled>
+              Choose a mode…
+            </option>
+            {modes.map((m) => (
+              <option key={m.name} value={m.name}>
+                {m.name}
+              </option>
+            ))}
+          </select>
         </div>
       )}
-
-      <div className="relative">
-        <button
-          className="btn btn-xs w-full justify-start"
-          onClick={() => {
-            setPickerOpen((open) => !open);
-            loadRunningApps();
-          }}
-        >
-          Browse apps…
-        </button>
-        {pickerOpen && (
-          <ul className="absolute z-10 mt-1 max-h-52 w-full overflow-y-auto rounded-md bg-base-100 p-1 shadow-lg">
-            {pickableApps.length === 0 && (
-              <li className="px-2 py-1 text-xs opacity-50">Loading…</li>
-            )}
-            {pickableApps.map((a, i) => {
-              const prevRunning = i > 0 ? pickableApps[i - 1].is_running : true;
-              return (
-                <li key={a.bundle_id}>
-                  {prevRunning && !a.is_running && (
-                    <div className="mt-1 border-t border-base-content/10 pt-1 text-[10px] uppercase opacity-40">
-                      Other apps
-                    </div>
-                  )}
-                  <button
-                    className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs hover:bg-base-200"
-                    onClick={() => pickApp(a)}
-                  >
-                    <AppIcon src={a.icon_data_uri} name={a.name} />
-                    <span className="truncate">{a.name}</span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
-    </div>
+    </>
   );
 }
 
@@ -812,7 +917,7 @@ function formatTimestamp(ms: number): string {
 }
 
 type ReprocessState = {
-  mode: Mode;
+  mode: Behavior;
   useLlm: boolean;
   loading: boolean;
   result: string | null;
@@ -1054,11 +1159,11 @@ function HistorySection() {
                       <select
                         className="select select-xs"
                         value={reprocess.mode}
-                        onChange={(e) => patchReprocess(entry.timestamp_ms, { mode: e.target.value as Mode })}
+                        onChange={(e) => patchReprocess(entry.timestamp_ms, { mode: e.target.value as Behavior })}
                       >
-                        {MODES.map((m) => (
+                        {BEHAVIORS.map((m) => (
                           <option key={m} value={m}>
-                            {MODE_LABEL[m]}
+                            {BEHAVIOR_LABEL[m]}
                           </option>
                         ))}
                       </select>
@@ -1597,13 +1702,13 @@ function GeneralSection() {
   }
 
   return (
-    <div className="mb-4 border-b border-base-content/10 pb-3">
-      <label className="mb-1 block text-xs font-medium opacity-70">General</label>
+    <div className="rounded-lg border border-base-content/10 bg-base-100 p-4">
+      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide opacity-60">General</h3>
       {!checked ? (
         <span className="loading loading-spinner loading-xs" />
       ) : (
-        <div className="flex flex-col gap-2">
-          <label className="flex items-center gap-1.5 text-xs">
+        <div className="flex flex-col gap-3">
+          <label className="flex items-center gap-2 text-xs">
             <input
               type="checkbox"
               className="checkbox checkbox-xs"
@@ -1612,7 +1717,7 @@ function GeneralSection() {
             />
             Launch Dev Whisper at login
           </label>
-          <label className="flex items-center gap-1.5 text-xs">
+          <label className="flex items-center gap-2 text-xs">
             Widget:
             <select
               className="select select-xs flex-1"
@@ -1856,18 +1961,18 @@ const VOICE_COMMAND_GROUPS: VoiceCommandGroup[] = [
 
 function VoiceCommandsSection() {
   return (
-    <div className="mb-4 border-b border-base-content/10 pb-3">
-      <label className="mb-1 block text-xs font-medium opacity-70">Voice Commands</label>
-      <p className="mb-2 text-xs opacity-60">
+    <div className="rounded-lg border border-base-content/10 bg-base-100 p-4">
+      <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-60">Voice Commands</h3>
+      <p className="mb-3 text-xs opacity-60">
         Trigger phrases recognized in any app, in any Mode — if dictation ever came out looking unexpectedly
         transformed, check here first.
       </p>
-      <div className="flex flex-col gap-2.5">
+      <div className="flex flex-col gap-4">
         {VOICE_COMMAND_GROUPS.map((group) => (
           <div key={group.title}>
             <p className="text-xs font-medium">{group.title}</p>
-            <p className="mb-1 text-xs opacity-60">{group.description}</p>
-            <div className="flex flex-col gap-0.5">
+            <p className="mb-1.5 text-xs opacity-60">{group.description}</p>
+            <div className="flex flex-col gap-1">
               {group.examples.map((ex) => (
                 <p key={ex.say} className="text-xs">
                   <code className="opacity-80">{ex.say}</code>
@@ -1880,8 +1985,8 @@ function VoiceCommandsSection() {
         ))}
         <div>
           <p className="text-xs font-medium">Punctuation & symbols</p>
-          <p className="mb-1 text-xs opacity-60">Say the word, get the character — works mid-sentence, not just at the end.</p>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+          <p className="mb-1.5 text-xs opacity-60">Say the word, get the character — works mid-sentence, not just at the end.</p>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
             {PUNCTUATION_COMMANDS.map(([word, symbol]) => (
               <div key={word} className="flex items-center justify-between text-xs">
                 <code className="opacity-80">{word}</code>
@@ -2298,39 +2403,41 @@ function SidebarLayout({ appearance }: { appearance: ReactElement }) {
 
         <div className="dw-page">
           <h2 className="dw-page-title">{PAGE_TITLE[page]}</h2>
-          {page === "dictation" && (
-            <>
-              <GeneralSection />
-              <VoiceCommandsSection />
-              <DeviceSection />
-              <ShortcutSection />
-            </>
-          )}
-          {page === "voice" && (
-            <>
-              <ModelsSection />
-              <VoiceIsolationSection />
-            </>
-          )}
-          {page === "vocabulary" && (
-            <>
-              <VocabularySection />
-              <SnippetsSection />
-            </>
-          )}
-          {page === "modes" && <AppModesSection />}
-          {page === "llm" && <LlmSection />}
-          {page === "insights" && <InsightsSection />}
-          {page === "history" && <HistorySection />}
-          {page === "integrations" && (
-            <>
-              <DeliverySection />
-              <WebhookSection />
-            </>
-          )}
-          {page === "appearance" && appearance}
-          {page === "about" && <AboutSection />}
-          {page === "advanced" && <LogsSection />}
+          <div className="dw-page-body">
+            {page === "dictation" && (
+              <>
+                <GeneralSection />
+                <DeviceSection />
+                <ShortcutSection />
+                <VoiceCommandsSection />
+              </>
+            )}
+            {page === "voice" && (
+              <>
+                <ModelsSection />
+                <VoiceIsolationSection />
+              </>
+            )}
+            {page === "vocabulary" && (
+              <>
+                <VocabularySection />
+                <SnippetsSection />
+              </>
+            )}
+            {page === "modes" && <AppModesSection />}
+            {page === "llm" && <LlmSection />}
+            {page === "insights" && <InsightsSection />}
+            {page === "history" && <HistorySection />}
+            {page === "integrations" && (
+              <>
+                <DeliverySection />
+                <WebhookSection />
+              </>
+            )}
+            {page === "appearance" && appearance}
+            {page === "about" && <AboutSection />}
+            {page === "advanced" && <LogsSection />}
+          </div>
         </div>
       </div>
     </main>

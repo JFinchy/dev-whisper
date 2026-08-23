@@ -573,11 +573,54 @@ build phases.
     instability means the "accelerated" story needs reframing to
     WebGPU/CPU, and third-party ONNX conversions have to track NVIDIA's
     upstream churn (a v2→v3 model revision already happened).
-  - **Recommendation: not implemented, no code written.** Tractable as a
-    validate-first spike against `parakeet-rs` directly (confirm
-    real-world speed/accuracy on our hardware) before committing to
-    maintaining it as a shipped option — premature to build the full
-    Settings/download UI plumbing before that spike says it's worth it.
+  - **Validate-first spike run (2026-08-21)**, on this M1 Pro dev
+    machine: standalone Cargo project (not merged into the app) using
+    `parakeet-rs` 0.3.7 against `istupakov/parakeet-tdt-0.6b-v3-onnx`
+    (int8, CPU execution provider), benchmarked head-to-head against our
+    shipped `whisper-rs`/Metal `base.en` on the same 12s synthesized
+    speech clip (macOS `say`, so a known ground-truth transcript):
+    - **Speed: Parakeet lost, on this hardware.** whisper.cpp
+      `base.en`/Metal: 113ms model load, ~275–320ms inference (~40x
+      realtime). Parakeet TDT int8/CPU: ~3.6s model load (one-time ONNX
+      session init — amortized away by a warm-context pool same as
+      Whisper's), ~510–600ms inference (~20–23x realtime) — roughly 2x
+      *slower* than our current default. This directly contradicts the
+      earlier anecdotal "CPU beats Metal on M3" data point — didn't
+      hold up here. Confirms the `parakeet-rs` source's own code comment
+      (not just the README): CoreML is skipped entirely by design, not
+      just "unstable" — the model's dynamic input shapes prevent CoreML
+      from building an optimized ANE/GPU plan, so it silently runs on
+      CPU anyway with extra overhead. CPU is the correct execution
+      provider for this model on Apple Silicon, not a fallback.
+    - **Accuracy: excellent, and differently shaped than Whisper's.**
+      Both engines transcribed the test clip essentially perfectly.
+      Parakeet TDT natively emits punctuation/capitalization without
+      any prompt engineering; Whisper needs (and got, via
+      `default_vocabulary()`'s initial-prompt trick) a nudge to reach
+      the same polish — and that same prompt over-eagerly camelCased a
+      plain-English phrase in the test clip, which Parakeet (no
+      vocabulary-biasing hook at all) transcribed literally instead.
+      Net: Parakeet's raw output quality looks strong, but it has no
+      equivalent of our vocabulary list feature to bias toward
+      dev-jargon — that hook would need to be built from scratch against
+      `parakeet-rs`, unclear how (or if) it's even exposed.
+    - **Footprint: substantially heavier.** The int8 TDT model alone is
+      ~640MB on disk (622MB encoder + 17MB decoder_joint) — over 10x our
+      current default (`base.en`, 59MB) and 3x larger than our biggest
+      current option (`small.en`, 190MB). Bundling ONNX Runtime is a
+      solved problem, not a blocker — `superwhisper.app` already ships
+      `libonnxruntime.1.19.0.dylib` at 53MB in `Contents/Frameworks` —
+      but it's real added weight on top of whisper.cpp's static lib.
+  - **Recommendation, updated**: on real hardware, Parakeet is not a
+    speed win over our current Metal-accelerated default — it's slower
+    and much heavier on disk, for comparable accuracy on this (clean,
+    single-voice, synthetic) test clip. That test can't probe the
+    scenario where Parakeet might actually earn its footprint: harder
+    real-world audio (background noise, accents, fast/mumbled speech).
+    Before building any Settings/download UI, the next validate-first
+    step is a harder audio test, not integration work — if accuracy
+    doesn't meaningfully separate on hard audio too, the size+speed
+    cost isn't worth carrying as a second inference backend.
 
 ## Research / Exploration
 
@@ -641,3 +684,100 @@ build phases.
     output-side workflow automation (Notion/webhook/Slack routing for
     transcripts), and a snippet library (spoken-cue text expansion,
     separate from the vocabulary editor).
+
+- **Ambient/hands-free listening mode** (idea captured 2026-08-23, direct
+  user request — "go further with the listening mode"). Push-to-talk
+  today is a deliberate bounding signal: exactly the audio between
+  hotkey-down and hotkey-up gets transcribed and pasted. This would drop
+  that requirement for an opt-in session where speech is auto-detected
+  and transcribed continuously instead.
+  - The hard part isn't detection, it's avoiding disruption — an open
+    mic that auto-pastes every detected utterance would just as happily
+    fire on a side conversation, a phone call, or the TV. Proposed v1
+    scope: an explicit **session** (started/stopped via the existing
+    double-tap-Fn gesture from the doubletap.rs work, not a true
+    always-on background listener), gated behind Isolated Voice mode's
+    enrolled-speaker check already being on — unenrolled ambient
+    listening isn't worth shipping, the false-trigger rate would be too
+    high.
+  - `isolate.rs`'s hysteresis energy-gate (separate enter/exit
+    thresholds, hangover padding) is most of the needed VAD primitive
+    already, but it currently *masks* a single already-captured
+    push-to-talk buffer. Ambient mode needs it repurposed to *segment* a
+    live continuous stream into discrete utterances, each independently
+    sent through transcription/formatting/paste — a real change in how
+    it's used, not just a config flag.
+  - Wake-word activation ("hey dev whisper") is a plausible later
+    addition but not needed for v1, since the double-tap gesture already
+    gives an explicit, low-friction start/stop signal.
+  - Not yet scoped: whether ambient mode should respect per-app Modes
+    (e.g. only auto-listen while a specific app is frontmost) or run
+    independent of app context.
+
+- **Prompt-building mode** (idea captured 2026-08-23, direct user
+  request). A conversational assistant for turning a rough spoken idea
+  into a refined LLM prompt: dictate a rough ask, the local LLM (existing
+  Ollama pipeline in `llm.rs`) asks a clarifying question or names an
+  assumption worth confirming, you answer by voice, repeat until the
+  prompt is ready to hand off.
+  - This is a genuinely different interaction shape than the rest of the
+    app — multi-turn conversation state instead of one-shot
+    dictate-transcribe-format-paste — so it's better modeled as a new
+    top-level feature (peer to Snippets/Backtrack) than as a 4th
+    `Behavior` value or another entry in the Modes list built out below.
+  - **Text-to-speech, resolved**: yes, worth building, and cheaper than
+    it sounds. macOS ships `AVSpeechSynthesizer` (and the `say` CLI as an
+    even lighter integration point) — fully local, zero new model
+    weight, no cloud call, a perfect fit for the app's local-only
+    positioning. Speaking the clarifying questions back (toggleable, off
+    by default probably, given every other synthetic-audio surface in
+    this app is currently silent) lets the whole loop stay hands-off/
+    eyes-off-screen instead of breaking immersion to read text.
+  - Needs a session end condition (spoken "looks good"/"done", or a
+    turn cap) and a decision on where the final prompt goes — clipboard,
+    paste into frontmost app, or a dedicated review screen before
+    delivery, given it's a synthesized multi-turn artifact rather than a
+    direct transcript.
+  - Not yet scoped: UI surface for showing the running draft + question
+    while mid-conversation (widget flyout is probably too small; likely
+    needs its own small window).
+
+- **Dev-speak/business-speak coaching with active recall** (idea
+  captured 2026-08-23, direct user request). Passively notice
+  under-used target vocabulary/phrasing in what's actually dictated, and
+  coach toward better word choices via spaced-repetition-style active
+  recall drills.
+  - Splits into two halves with very different cost. **Detection** is
+    nearly free — `insights.rs` and the Vocabulary editor already have
+    the per-dictation word-level data this would ride on, it's mostly a
+    new comparison pass over data already flowing through the pipeline.
+    **The active-recall quiz/flashcard UI** is a real new product
+    surface — a spaced-repetition trainer bolted onto Settings, with its
+    own review-scheduling logic, unrelated to the dictation loop itself.
+  - Flagged as the idea here most likely to cut against the "invisible
+    dictation tool" positioning (see the SuperWhisper research's
+    explicitly-out-of-scope list) rather than extend it, since it turns
+    part of the app into a standalone habit-building product. Worth a
+    deliberate positioning call before building the recall-quiz half,
+    not something to default into.
+
+- **Mobile app keyboard suggestions** (idea captured 2026-08-23, direct
+  user request). Unscoped between two different things: (a) a
+  text-prediction/phrase-suggestion custom keyboard, vs (b) a
+  dictation-enabled custom keyboard (voice-to-text via a mic button),
+  mirroring the desktop app on iOS.
+  - Meaningfully the largest-scope idea in this list — a second
+    platform (iOS app + keyboard extension target, Apple Developer
+    provisioning, TestFlight/App Store distribution), not a feature
+    addition to the existing macOS app.
+  - Apple's keyboard-extension sandbox changes the constraints
+    significantly versus this app's current assumptions: no easy
+    background mic capture, restricted/discouraged network access even
+    with "Full Access" granted, tight memory limits. A from-scratch
+    on-device Whisper pipeline on iOS is plausible (whisper.cpp has a
+    CoreML iOS path, and prior art exists in other OSS dictation
+    keyboards) but is a multi-week build, not a spike.
+  - Recommendation: needs its own scoping research pass (what's the
+    smallest real version worth shipping — e.g. syncing vocabulary/
+    snippets to a companion keyboard vs. full on-device dictation) before
+    it's estimated like a normal backlog feature.

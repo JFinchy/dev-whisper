@@ -29,12 +29,15 @@ pub struct RecordingState {
     /// clicking a button in the widget, so the widget is always already
     /// frontmost by that point).
     pub active_app: Mutex<Option<AppInfo>>,
-    /// One-shot override for the *next* dictation's formatting mode, set
-    /// from the widget's quick-actions flyout (see WidgetView.tsx). Takes
-    /// priority over whatever `modes::resolve_settings` would otherwise
-    /// pick for the frontmost app, and is consumed (cleared) the moment a
-    /// dictation uses it, so it never silently applies to a second one.
-    pub mode_override: Mutex<Option<modes::Mode>>,
+    /// One-shot override for the *next* dictation's mode, set from the
+    /// widget's quick-actions flyout (see WidgetView.tsx) as a mode name —
+    /// resolved via `modes::settings_for_name` at consume time, so the
+    /// override carries the whole mode's settings (behavior, stt_model,
+    /// llm_refinement), not just a raw behavior. Takes priority over
+    /// whatever `modes::resolve_settings` would otherwise pick for the
+    /// frontmost app, and is consumed (cleared) the moment a dictation uses
+    /// it, so it never silently applies to a second one.
+    pub mode_override: Mutex<Option<String>>,
     /// `Some(Enrollment)` while `voice_isolation.rs` owns the shared
     /// recording primitive — see `RecordingPurpose`. `None` means dictation
     /// (the default/normal case) owns it.
@@ -150,20 +153,27 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
     // on it. Casing-command detection still happens after, on the
     // resulting text, since that's orthogonal to which model produced it.
     let cfg = crate::config::load(app);
-    let mut settings = modes::resolve_settings(bundle_id.as_deref(), &cfg.mode_rules);
-    if let Some(override_mode) = state.mode_override.lock().unwrap().take() {
-        crate::applog!(
-            "modes: next-dictation override {override_mode:?} applied over resolved {:?}",
-            settings.mode
-        );
-        settings.mode = override_mode;
+    let mut settings = modes::resolve_settings(bundle_id.as_deref(), &cfg.modes);
+    if let Some(override_name) = state.mode_override.lock().unwrap().take() {
+        match modes::settings_for_name(&override_name, &cfg.modes) {
+            Some(override_settings) => {
+                crate::applog!(
+                    "modes: next-dictation override {override_name:?} applied over resolved {:?}",
+                    settings.mode
+                );
+                settings = override_settings;
+            }
+            None => {
+                crate::applog!("modes: next-dictation override {override_name:?} no longer exists, ignoring");
+            }
+        }
     }
     let model_override = settings.stt_model.as_ref().and_then(|id| {
         crate::models::resolve_model_path(app, id).map(|path| (id.clone(), path))
     });
     crate::applog!(
-        "modes: bundle_id={bundle_id:?} rules={} resolved_mode={:?} stt_model_override={:?} (resolved={})",
-        cfg.mode_rules.len(),
+        "modes: bundle_id={bundle_id:?} modes={} resolved_mode={:?} stt_model_override={:?} (resolved={})",
+        cfg.modes.len(),
         settings.mode,
         settings.stt_model,
         model_override.is_some(),
@@ -297,9 +307,14 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
                 let formatted = modes::apply_mode(settings.mode, &text);
                 crate::applog!("modes: transcript={text:?} formatted={formatted:?}");
 
-                let formatted = if settings.use_llm_refinement {
+                let llm_model = match &settings.llm_refinement {
+                    modes::LlmRefinement::Off => None,
+                    modes::LlmRefinement::Global => Some(cfg.llm_model.as_str()),
+                    modes::LlmRefinement::Model(id) => Some(id.as_str()),
+                };
+                let formatted = if let Some(model) = llm_model {
                     let _ = app.emit("refining-started", ());
-                    match crate::llm::refine(settings.mode, &formatted, &cfg.llm_model) {
+                    match crate::llm::refine(settings.mode, &formatted, model) {
                         Ok(refined) => refined,
                         Err(err) => {
                             crate::applog!("llm: refinement failed, pasting unrefined text: {err}");
@@ -509,13 +524,13 @@ pub fn set_isolated_voice_enabled(app: AppHandle, enabled: bool) {
 /// dictation — see `RecordingState::mode_override`. Not persisted to
 /// config: this is deliberately session/one-shot state, not a setting.
 #[tauri::command]
-pub fn set_next_mode_override(mode: Option<modes::Mode>, state: tauri::State<RecordingState>) {
-    *state.mode_override.lock().unwrap() = mode;
+pub fn set_next_mode_override(mode_name: Option<String>, state: tauri::State<RecordingState>) {
+    *state.mode_override.lock().unwrap() = mode_name;
 }
 
 #[tauri::command]
-pub fn get_next_mode_override(state: tauri::State<RecordingState>) -> Option<modes::Mode> {
-    *state.mode_override.lock().unwrap()
+pub fn get_next_mode_override(state: tauri::State<RecordingState>) -> Option<String> {
+    state.mode_override.lock().unwrap().clone()
 }
 
 #[tauri::command]

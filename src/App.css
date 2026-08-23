@@ -21,6 +21,12 @@ body,
   --dw-accent: #e8a33d;
   --dw-accent-fg: #16181b;
   --dw-nav-active-bg: #262115;
+
+  /* Route daisyui's own accent color through the app's theme tokens so
+     checkboxes/buttons/selects match the active theme (see theme.ts)
+     instead of daisyui's unrelated stock violet. */
+  --color-primary: var(--dw-accent);
+  --color-primary-content: var(--dw-accent-fg);
 }
 
 /* ---------- Settings: Signal sidebar shell ---------- */
@@ -37,7 +43,13 @@ body,
 
 .dw-app-shell {
   display: flex;
-  min-height: 100vh;
+  height: 100%;
+  /* The sidebar and page pane must never grow taller than the shell:
+     that let content push the whole layout past 100vh with nothing to
+     paint a background behind the overflow, so far enough down the page
+     it looked like the background just ran out. Only .dw-page scrolls
+     internally now, so .dw-shell's background always covers the window. */
+  overflow: hidden;
 }
 
 .dw-sidebar {
@@ -106,14 +118,31 @@ body,
 .dw-page {
   flex: 1;
   min-width: 0;
-  padding: 26px 32px;
+  height: 100%;
+  overflow-y: auto;
 }
 
+/* Pinned while .dw-page scrolls beneath it, so it needs a fully solid
+   background (no transparency/opacity) or scrolled content would show
+   through and visually clash with the title. */
 .dw-page-title {
-  margin: 0 0 20px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 22px 32px 16px;
+  background: var(--dw-bg);
+  border-bottom: 1px solid var(--dw-border);
   font-size: 19px;
   font-weight: 800;
   letter-spacing: -0.01em;
+}
+
+.dw-page-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px 32px 32px;
 }
 
 /* ---------- Settings: Signal Chain layout (alternate to the sidebar) ---------- */
@@ -338,11 +367,29 @@ body,
   gap: 5px;
 }
 
+/* Used instead of .dw-fly-row when there can be more than a couple of
+   options (the mode list, unlike the fixed 2-way mic-mode toggle) — one
+   full-width row per option instead of squeezing them all into equal
+   flex segments that truncate long names. */
+.dw-fly-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dw-fly-col .dw-fly-btn {
+  text-align: left;
+}
+
 .dw-fly-btn {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: 11px;
   font-weight: 600;
-  padding: 5px 0;
+  padding: 5px 4px;
   border-radius: 7px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: transparent;
