@@ -4,7 +4,44 @@ Local, privacy-first dictation for developers. See `FEATURES.md` for
 everything currently built, `PRODUCT_SPEC.md` for the product vision, and
 `ROADMAP.md`/`BACKLOG.md` for what's next.
 
-## Setup
+## Install (the app itself, not the source)
+
+There's no signed/notarized release yet — no DMG to download, no GitHub
+Releases page. For now, "installing" means building it once and keeping
+the resulting app; you don't need to touch this again after that.
+
+```sh
+bun install
+bun run tauri build
+```
+
+That produces `Dev Whisper.app` in `src-tauri/target/release/bundle/macos/`,
+plus a `Dev Whisper_0.1.0_aarch64.dmg` in
+`src-tauri/target/release/bundle/dmg/` (drag-to-Applications, like any other
+Mac app) — open the DMG and drag `Dev Whisper.app` into `/Applications`.
+
+**First launch**: the app isn't notarized, so Gatekeeper will refuse to
+open it normally ("Apple could not verify..."). Right-click (Control-click)
+`Dev Whisper.app` in Applications and choose **Open** — this extra prompt
+only happens once. macOS will then separately ask for Microphone access
+(for recording) and Accessibility access (for pasting the transcript);
+both are required for the app to actually work, not optional extras.
+
+**Download a Whisper model**: a fresh install has no speech model on disk
+yet (the `./scripts/download-model.sh` step below is a dev-only shortcut,
+not something a real install runs). Open Settings — gear icon on the
+floating widget — → Dictation → Models, and download one; Base (~57MB) is
+a reasonable default. Nothing will transcribe until that finishes.
+
+**Optional — LLM refinement**: install [Ollama](https://ollama.com) and
+pull a small model (Settings → Dictation → LLM refinement offers one-click
+downloads for a few small models) if you want app-aware cleanup/tone
+refinement. The app works without it, just with plainer/unrefined output.
+
+## Dev setup
+
+For working on the app itself — runs from source with hot reload instead
+of building a standalone `.app`.
 
 ```sh
 bun install
