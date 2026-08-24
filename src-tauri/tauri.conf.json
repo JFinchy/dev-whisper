@@ -50,6 +50,9 @@
     ],
     "resources": {
       "resources/wespeaker_en_voxceleb_resnet34_LM.onnx": "models/wespeaker_en_voxceleb_resnet34_LM.onnx"
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.0"
     }
   }
 }

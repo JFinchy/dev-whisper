@@ -1,0 +1,19 @@
+[env]
+# Tauri defaults to 10.13 for broad compatibility, but whisper.cpp's use of
+# C++17 std::filesystem requires 10.15+. This is a local dev tool for
+# Apple Silicon only, so pinning to a modern target is fine.
+#
+# This has to live at the repo root, not src-tauri/.cargo/config.toml:
+# Cargo discovers [env] by walking *up* from the current working directory,
+# and `bun run tauri build`/`bun run tauri dev` both run with cwd at the
+# repo root (where package.json is), not inside src-tauri/ — a config file
+# nested under src-tauri/ is silently never found in that case.
+#
+# `force = true` is required, not optional: the Tauri CLI itself exports
+# MACOSX_DEPLOYMENT_TARGET (derived from tauri.conf.json's
+# bundle.macOS.minimumSystemVersion, kept in sync with this value) before
+# it shells out to cargo. Cargo's [env] table only fills in a variable that
+# isn't *already* set in the environment — without `force`, that pre-set
+# value silently wins and this override does nothing, which is exactly
+# what happened here: the fix was in place but never took effect.
+MACOSX_DEPLOYMENT_TARGET = { value = "12.0", force = true }
