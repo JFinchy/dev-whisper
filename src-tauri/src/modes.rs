@@ -60,6 +60,12 @@ pub struct ModeDefinition {
     pub stt_model: Option<String>,
     #[serde(default)]
     pub llm_refinement: LlmRefinement,
+    /// Free-form extra instructions folded into the LLM refinement prompt
+    /// for this mode (see `llm::prompt_for_mode`) — e.g. "sign off messages
+    /// with 'thanks, Jake'". Ignored when `llm_refinement` is `Off`, since
+    /// there's no LLM call to steer.
+    #[serde(default)]
+    pub custom_instructions: Option<String>,
     /// Exactly one mode should have this set — the fallback used when the
     /// frontmost app isn't assigned to any mode. A `name`-based lookup
     /// would break the moment a user renames their fallback mode; this
@@ -98,6 +104,7 @@ pub fn seed_default_modes() -> Vec<ModeDefinition> {
             apps: Vec::new(),
             stt_model: None,
             llm_refinement: LlmRefinement::Off,
+            custom_instructions: None,
             is_default: true,
         },
         ModeDefinition {
@@ -106,6 +113,7 @@ pub fn seed_default_modes() -> Vec<ModeDefinition> {
             apps: Vec::new(),
             stt_model: None,
             llm_refinement: LlmRefinement::Off,
+            custom_instructions: None,
             is_default: false,
         },
         ModeDefinition {
@@ -122,6 +130,7 @@ pub fn seed_default_modes() -> Vec<ModeDefinition> {
             // defaulting to LLM refinement rather than leaving the raw
             // transcript as-is.
             llm_refinement: LlmRefinement::Global,
+            custom_instructions: None,
             is_default: false,
         },
         ModeDefinition {
@@ -136,6 +145,7 @@ pub fn seed_default_modes() -> Vec<ModeDefinition> {
             ],
             stt_model: None,
             llm_refinement: LlmRefinement::Off,
+            custom_instructions: None,
             is_default: false,
         },
     ]
@@ -151,6 +161,9 @@ pub struct ResolvedSettings {
     /// compile every time.
     pub stt_model: Option<String>,
     pub llm_refinement: LlmRefinement,
+    /// Extra LLM prompt instructions carried over from the resolved mode's
+    /// `custom_instructions`. Meaningless when `llm_refinement` is `Off`.
+    pub custom_instructions: Option<String>,
 }
 
 fn settings_for(def: &ModeDefinition) -> ResolvedSettings {
@@ -158,6 +171,7 @@ fn settings_for(def: &ModeDefinition) -> ResolvedSettings {
         mode: def.behavior,
         stt_model: def.stt_model.clone(),
         llm_refinement: def.llm_refinement.clone(),
+        custom_instructions: def.custom_instructions.clone(),
     }
 }
 
@@ -171,6 +185,7 @@ pub fn resolve_settings(bundle_id: Option<&str>, modes: &[ModeDefinition]) -> Re
         mode: Behavior::Plain,
         stt_model: None,
         llm_refinement: LlmRefinement::Off,
+        custom_instructions: None,
     };
     let Some(bundle_id) = bundle_id else {
         return hardcoded_fallback;
@@ -246,6 +261,7 @@ mod tests {
                 .collect(),
             stt_model: None,
             llm_refinement: LlmRefinement::Off,
+            custom_instructions: None,
             is_default: false,
         }
     }
@@ -303,6 +319,17 @@ mod tests {
         m.stt_model = Some("small.en".to_string());
         let modes = vec![m];
         assert_eq!(resolve_settings(Some("com.apple.Terminal"), &modes).stt_model, Some("small.en".to_string()));
+    }
+
+    #[test]
+    fn custom_instructions_resolve_per_mode() {
+        let mut m = mode("Messaging", Behavior::Casual, vec!["com.tinyspeck.slackmacgap"]);
+        m.custom_instructions = Some("Always sign off with 'thanks, Jake'".to_string());
+        let modes = vec![m];
+        assert_eq!(
+            resolve_settings(Some("com.tinyspeck.slackmacgap"), &modes).custom_instructions,
+            Some("Always sign off with 'thanks, Jake'".to_string())
+        );
     }
 
     #[test]

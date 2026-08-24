@@ -217,7 +217,7 @@ pub fn reprocess_history_text(
     let formatted = crate::modes::apply_mode(mode, &text);
     if use_llm_refinement {
         let cfg = config::load(&app);
-        crate::llm::refine(mode, &formatted, &cfg.llm_model)
+        crate::llm::refine(mode, &formatted, &cfg.llm_model, None)
     } else {
         Ok(formatted)
     }

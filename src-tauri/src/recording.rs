@@ -314,7 +314,7 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
                 };
                 let formatted = if let Some(model) = llm_model {
                     let _ = app.emit("refining-started", ());
-                    match crate::llm::refine(settings.mode, &formatted, model) {
+                    match crate::llm::refine(settings.mode, &formatted, model, settings.custom_instructions.as_deref()) {
                         Ok(refined) => refined,
                         Err(err) => {
                             crate::applog!("llm: refinement failed, pasting unrefined text: {err}");

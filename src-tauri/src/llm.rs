@@ -162,7 +162,7 @@ struct TagEntry {
     name: String,
 }
 
-fn prompt_for_mode(mode: crate::modes::Behavior, text: &str) -> String {
+fn prompt_for_mode(mode: crate::modes::Behavior, text: &str, custom_instructions: Option<&str>) -> String {
     let instruction = match mode {
         crate::modes::Behavior::Cli => {
             "Rewrite the following dictated text as a single shell command. Output ONLY the \
@@ -181,17 +181,29 @@ fn prompt_for_mode(mode: crate::modes::Behavior, text: &str) -> String {
              cleaned text, nothing else."
         }
     };
-    format!("{instruction}\n\nDictated text: {text}")
+    // User-supplied per-mode steering (e.g. "sign off messages with 'thanks, Jake'"),
+    // folded in as its own instruction line so it can't be confused with the
+    // dictated text itself. Skipped entirely when unset/blank rather than
+    // appending an empty "Additional instructions:" line for every refinement.
+    match custom_instructions.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(extra) => format!("{instruction}\n\nAdditional instructions from the user: {extra}\n\nDictated text: {text}"),
+        None => format!("{instruction}\n\nDictated text: {text}"),
+    }
 }
 
 /// Sends the transcript to a locally-running Ollama instance for
 /// mode-aware cleanup. Returns a clear error (rather than hanging or
 /// panicking) if Ollama isn't installed/running — callers should fall back
 /// to the un-refined text rather than blocking the paste on this.
-pub fn refine(mode: crate::modes::Behavior, text: &str, model: &str) -> Result<String, String> {
+pub fn refine(
+    mode: crate::modes::Behavior,
+    text: &str,
+    model: &str,
+    custom_instructions: Option<&str>,
+) -> Result<String, String> {
     let body = serde_json::json!({
         "model": model,
-        "prompt": prompt_for_mode(mode, text),
+        "prompt": prompt_for_mode(mode, text, custom_instructions),
         "stream": false,
         // Dictation cleanup needs to be fast, not deliberate — reasoning
         // ("thinking") models otherwise spend many seconds on an internal
@@ -371,6 +383,7 @@ mod tests {
             crate::modes::Behavior::Cli,
             "git commit update the readme file",
             model,
+            None,
         );
 
         match result {
@@ -384,6 +397,20 @@ mod tests {
         let latency = last_latency_ms(model);
         assert!(latency.is_some(), "successful refine() should record a latency");
         eprintln!("Ollama ({model}) refine() latency: {}ms", latency.unwrap());
+    }
+
+    #[test]
+    fn prompt_for_mode_folds_in_custom_instructions_when_present() {
+        let prompt = prompt_for_mode(crate::modes::Behavior::Plain, "hello", Some("be brief"));
+        assert!(prompt.contains("Additional instructions from the user: be brief"));
+    }
+
+    #[test]
+    fn prompt_for_mode_omits_custom_instructions_block_when_blank_or_absent() {
+        let without = prompt_for_mode(crate::modes::Behavior::Plain, "hello", None);
+        assert!(!without.contains("Additional instructions"));
+        let blank = prompt_for_mode(crate::modes::Behavior::Plain, "hello", Some("   "));
+        assert!(!blank.contains("Additional instructions"));
     }
 
     #[test]

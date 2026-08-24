@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from "react";
+import { useEffect, useState, type ReactElement, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { applyTheme, THEME_ORDER, THEME_LABEL, THEMES, type ThemeId } from "./theme";
@@ -408,6 +408,7 @@ type ModeDefinition = {
   apps: AppRef[];
   stt_model: string | null;
   llm_refinement: LlmRefinement;
+  custom_instructions: string | null;
   is_default: boolean;
 };
 type FrontmostApp = { bundle_id: string; name: string; icon_data_uri: string | null };
@@ -432,6 +433,28 @@ function AppIcon({ src, name }: { src: string | null; name: string }) {
   );
 }
 
+function InfoPopover({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-block">
+      <button
+        type="button"
+        className="btn btn-ghost btn-circle btn-xs opacity-60 hover:opacity-100"
+        aria-label="More info"
+        onClick={() => setOpen((v) => !v)}
+        onBlur={() => setOpen(false)}
+      >
+        ⓘ
+      </button>
+      {open && (
+        <div className="absolute right-0 z-20 mt-1 w-64 rounded-md border border-base-content/10 bg-base-100 p-2.5 text-[11px] leading-snug opacity-100 shadow-lg">
+          {children}
+        </div>
+      )}
+    </span>
+  );
+}
+
 function AppModesSection() {
   const [modes, setModes] = useState<ModeDefinition[]>([]);
   const [loading, setLoading] = useState(true);
@@ -440,6 +463,8 @@ function AppModesSection() {
   const [availableModels, setAvailableModels] = useState<ModelStatus[]>([]);
   const [llmCatalog, setLlmCatalog] = useState<LlmModelStatus[]>([]);
   const [pickerOpenFor, setPickerOpenFor] = useState<number | null>(null);
+  const [llmProgress, setLlmProgress] = useState<Record<string, { status: string; percent: number | null }>>({});
+  const [llmErrors, setLlmErrors] = useState<Record<string, string>>({});
 
   function refresh() {
     invoke<ModeDefinition[]>("get_modes")
@@ -454,18 +479,61 @@ function AppModesSection() {
       .catch((err) => console.error("list_running_apps failed:", err));
   }
 
+  function loadLlmCatalog() {
+    invoke<LlmModelStatus[]>("list_llm_catalog")
+      .then(setLlmCatalog)
+      .catch((err) => console.error("list_llm_catalog failed:", err));
+  }
+
+  function pullLlmModel(id: string) {
+    setLlmErrors((er) => {
+      const next = { ...er };
+      delete next[id];
+      return next;
+    });
+    setLlmProgress((p) => ({ ...p, [id]: { status: "starting…", percent: null } }));
+    invoke("pull_llm_model", { id }).catch((err) => setLlmErrors((er) => ({ ...er, [id]: String(err) })));
+  }
+
   useEffect(() => {
     refresh();
     loadRunningApps();
+    loadLlmCatalog();
     invoke<FrontmostApp | null>("get_last_frontmost_app")
       .then(setLastApp)
       .catch((err) => console.error("get_last_frontmost_app failed:", err));
     invoke<ModelStatus[]>("list_models")
       .then(setAvailableModels)
       .catch((err) => console.error("list_models failed:", err));
-    invoke<LlmModelStatus[]>("list_llm_catalog")
-      .then(setLlmCatalog)
-      .catch((err) => console.error("list_llm_catalog failed:", err));
+
+    const unlistenProgress = listen<{ id: string; status: string; percent: number | null }>(
+      "llm-pull-progress",
+      (e) => {
+        setLlmProgress((p) => ({ ...p, [e.payload.id]: { status: e.payload.status, percent: e.payload.percent } }));
+      },
+    );
+    const unlistenDone = listen<string>("llm-pull-complete", (e) => {
+      setLlmProgress((p) => {
+        const next = { ...p };
+        delete next[e.payload];
+        return next;
+      });
+      loadLlmCatalog();
+    });
+    const unlistenError = listen<{ id: string; error: string }>("llm-pull-error", (e) => {
+      setLlmProgress((p) => {
+        const next = { ...p };
+        delete next[e.payload.id];
+        return next;
+      });
+      setLlmErrors((er) => ({ ...er, [e.payload.id]: e.payload.error }));
+    });
+
+    return () => {
+      unlistenProgress.then((f) => f());
+      unlistenDone.then((f) => f());
+      unlistenError.then((f) => f());
+    };
   }, []);
 
   // Full-list replace, mirroring `SnippetsSection` — the whole list lives
@@ -486,7 +554,15 @@ function AppModesSection() {
   function addMode() {
     save([
       ...modes,
-      { name: "New mode", behavior: "plain", apps: [], stt_model: null, llm_refinement: "off", is_default: false },
+      {
+        name: "New mode",
+        behavior: "plain",
+        apps: [],
+        stt_model: null,
+        llm_refinement: "off",
+        custom_instructions: null,
+        is_default: false,
+      },
     ]);
   }
 
@@ -629,11 +705,63 @@ function AppModesSection() {
                   <option value="global">Refine with global LLM</option>
                   {llmCatalog.map((l) => (
                     <option key={l.id} value={l.id}>
-                      Refine with {l.label}
+                      {l.downloaded ? "✓ " : "⬇ "}
+                      {l.label}
+                      {!l.downloaded && l.size_gb > 0 ? ` — ${l.size_gb.toFixed(1)}GB, not installed` : ""}
                     </option>
                   ))}
                 </select>
+                <InfoPopover>
+                  <p className="mb-1 font-semibold">Installing a model</p>
+                  <p>
+                    Models run fully offline via Ollama. "✓" means it's already downloaded and ready to use for free;
+                    "⬇" means selecting it triggers a one-time download (the size shown) that's kept permanently on
+                    disk. No ongoing cost either way — no data ever leaves this machine, and there's no per-use fee.
+                  </p>
+                </InfoPopover>
               </div>
+
+              {(() => {
+                const selectedModelId = typeof m.llm_refinement === "object" ? m.llm_refinement.model : null;
+                const selected = selectedModelId ? llmCatalog.find((l) => l.id === selectedModelId) : undefined;
+                if (!selectedModelId || !selected || selected.downloaded) return null;
+                const progress = llmProgress[selectedModelId];
+                const error = llmErrors[selectedModelId];
+                return (
+                  <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-warning">
+                    <span>
+                      {selected.label} isn't installed yet{selected.size_gb > 0 ? ` (${selected.size_gb.toFixed(1)}GB)` : ""}.
+                    </span>
+                    {progress ? (
+                      <span className="opacity-70" title={progress.status}>
+                        {progress.percent !== null ? `${progress.percent}%` : progress.status}
+                      </span>
+                    ) : (
+                      <button className="btn btn-xs" onClick={() => pullLlmModel(selectedModelId)}>
+                        Download
+                      </button>
+                    )}
+                    {error && <span className="text-error">{error}</span>}
+                  </div>
+                );
+              })()}
+
+              {llmSelectValue(m.llm_refinement) !== "off" && (
+                <textarea
+                  className="textarea textarea-xs mt-2 w-full font-sans"
+                  rows={2}
+                  aria-label={`Extra LLM instructions for ${m.name}`}
+                  placeholder={
+                    'Extra instructions for the LLM, e.g. "Always sign off with \'thanks, Jake\'."\n\n' +
+                    'Example — said: "hey can we push the meeting to thursday" -> output: "Hi, could we push ' +
+                    'our meeting to Thursday?\\n\\nThanks,\\nJake"'
+                  }
+                  value={m.custom_instructions ?? ""}
+                  onChange={(e) =>
+                    updateMode(index, { custom_instructions: e.target.value === "" ? null : e.target.value })
+                  }
+                />
+              )}
             </div>
           );
         })}

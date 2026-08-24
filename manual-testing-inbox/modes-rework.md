@@ -55,6 +55,25 @@ below, since it only runs once.
    different raw behavior (Plain/Casual/CLI) — confirm this still works
    unchanged (it intentionally still operates on the 3 raw behaviors, not
    named modes).
+10. Back on a mode's LLM dropdown: confirm already-pulled Ollama models
+    show a "✓" prefix and not-yet-pulled catalog models show a "⬇" prefix
+    with their size (e.g. "⬇ Mistral (7B) — larger, more capable —
+    4.1GB, not installed"). Click the ⓘ next to the dropdown and confirm
+    the install-cost explainer popover opens/closes correctly (click the
+    button again, or click away, to close it).
+11. Pick a mode's LLM refinement to a model that isn't downloaded yet —
+    confirm a "isn't installed yet (X GB)" row with a Download button
+    appears under the dropdown. Click Download and confirm live progress
+    (percent or status text) shows, the row disappears once it finishes,
+    and the dropdown's "⬇" flips to "✓" without needing a manual refresh.
+12. With a mode's LLM refinement set to anything other than "No LLM
+    refinement", confirm a small textarea for extra instructions appears
+    (placeholder shows an example instruction + before/after text) and
+    disappears when refinement is set back to "off". Type something like
+    "always sign off with my name" into CLI or Messaging's box, dictate
+    from one of its assigned apps, and confirm Settings → Logs / the
+    actual pasted output reflects that extra instruction being followed
+    by the LLM (not just the mode's normal refinement behavior).
 
 ## Pass criteria
 
@@ -62,4 +81,7 @@ The real Orca migration looks correct (step 2), modes are fully
 add/rename/delete/reassign-able and everything persists (steps 3-6),
 per-mode LLM model selection actually changes which model gets called
 (step 7), the widget flyout reflects the live mode list without breaking
-its layout (step 8), and History reprocessing is unaffected (step 9).
+its layout (step 8), History reprocessing is unaffected (step 9), the
+LLM dropdown's install-status indicators/info popover/inline download
+flow all work end to end (steps 10-11), and a mode's custom LLM
+instructions actually change the model's output (step 12).
