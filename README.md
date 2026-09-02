@@ -38,6 +38,19 @@ pull a small model (Settings → Dictation → LLM refinement offers one-click
 downloads for a few small models) if you want app-aware cleanup/tone
 refinement. The app works without it, just with plainer/unrefined output.
 
+**After that first install, updates are automatic** (once a release has
+actually been published — see `RELEASING.md`): the app checks GitHub for
+a newer version on launch and shows a small dot on the widget's gear icon
+if one's available. Settings → About has the same status plus a "Check
+for updates"/"Update to vX.Y.Z" button — clicking it downloads, verifies,
+installs, and relaunches on its own. No manual rebuild-and-replace needed
+from here on. Update packages are cryptographically signed (not just served over
+HTTPS) so a compromised GitHub account alone couldn't push a malicious
+auto-installed update. The app itself still isn't notarized, though, so
+Gatekeeper may or may not re-flag the app after an in-place update swap —
+not yet verified against a real two-version update cycle; if it does,
+the same right-click-Open fix from the first install applies.
+
 ## Dev setup
 
 For working on the app itself — runs from source with hot reload instead

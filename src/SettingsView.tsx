@@ -1,6 +1,9 @@
 import { useEffect, useState, type ReactElement, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
+import { check as checkForUpdate, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { applyTheme, THEME_ORDER, THEME_LABEL, THEMES, type ThemeId } from "./theme";
 import { VOCAB_BOOKS } from "./vocabularyBooks";
 
@@ -1797,6 +1800,96 @@ function AboutSection() {
   );
 }
 
+type UpdateCheckState = "checking" | "idle" | "available" | "downloading" | "error";
+
+function UpdatesSection() {
+  const [version, setVersion] = useState("");
+  const [state, setState] = useState<UpdateCheckState>("checking");
+  const [update, setUpdate] = useState<Update | null>(null);
+  const [percent, setPercent] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  function runCheck() {
+    setState("checking");
+    setError(null);
+    checkForUpdate()
+      .then((found) => {
+        setUpdate(found);
+        setState(found ? "available" : "idle");
+      })
+      .catch((err) => {
+        console.error("checkForUpdate failed:", err);
+        setError(String(err));
+        setState("error");
+      });
+  }
+
+  useEffect(() => {
+    getVersion()
+      .then(setVersion)
+      .catch((err) => console.error("getVersion failed:", err));
+    runCheck();
+  }, []);
+
+  function installUpdate() {
+    if (!update) return;
+    setState("downloading");
+    setPercent(0);
+    // contentLength isn't guaranteed by every server response, so a null
+    // percent (rather than a wrong one) is the honest fallback — the
+    // "Downloading…" label alone still shows real progress is happening.
+    let total = 0;
+    let downloaded = 0;
+    update
+      .downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          total = event.data.contentLength ?? 0;
+        } else if (event.event === "Progress") {
+          downloaded += event.data.chunkLength;
+          setPercent(total > 0 ? Math.round((downloaded / total) * 100) : null);
+        }
+      })
+      .then(() => relaunch())
+      .catch((err) => {
+        console.error("downloadAndInstall failed:", err);
+        setError(String(err));
+        setState("error");
+      });
+  }
+
+  return (
+    <div className="rounded-lg border border-base-content/10 bg-base-100 p-4">
+      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide opacity-60">Updates</h3>
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="opacity-70">Version {version || "…"}</span>
+        {state === "checking" && <span className="loading loading-spinner loading-xs" />}
+        {state === "idle" && (
+          <button className="btn btn-ghost btn-xs" onClick={runCheck}>
+            Check for updates
+          </button>
+        )}
+        {state === "available" && update && (
+          <button className="btn btn-xs" onClick={installUpdate}>
+            Update to v{update.version}
+          </button>
+        )}
+        {state === "downloading" && (
+          <span className="opacity-70">{percent !== null ? `Downloading… ${percent}%` : "Downloading…"}</span>
+        )}
+        {state === "error" && (
+          <button className="btn btn-ghost btn-xs" onClick={runCheck}>
+            Retry
+          </button>
+        )}
+      </div>
+      {error && <p className="mt-1.5 text-xs text-error">{error}</p>}
+      <p className="mt-1.5 text-xs opacity-50">
+        Checks GitHub on launch and whenever this page opens — no data sent, just "is there a newer release."
+      </p>
+    </div>
+  );
+}
+
 function GeneralSection() {
   const [autostart, setAutostart] = useState(false);
   const [widgetMode, setWidgetModeState] = useState<WidgetMode>("compact");
@@ -2563,7 +2656,12 @@ function SidebarLayout({ appearance }: { appearance: ReactElement }) {
               </>
             )}
             {page === "appearance" && appearance}
-            {page === "about" && <AboutSection />}
+            {page === "about" && (
+              <>
+                <UpdatesSection />
+                <AboutSection />
+              </>
+            )}
             {page === "advanced" && <LogsSection />}
           </div>
         </div>
@@ -2674,6 +2772,7 @@ function ChainLayout({ appearance }: { appearance: ReactElement }) {
             <>
               <GeneralSection />
               {appearance}
+              <UpdatesSection />
               <div className="mb-4 border-t border-base-content/10 pt-3">
                 <AboutSection />
               </div>

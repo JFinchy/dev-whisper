@@ -1,0 +1,40 @@
+name: Release
+
+# Cutting a release is: bump the 3 version fields (see RELEASING.md), then
+# `git tag vX.Y.Z && git push --tags`. Everything else happens here.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    # Apple Silicon only, matching this app's own scope (see Cargo.toml) —
+    # macos-latest runners have been arm64 since GH's macOS 14 image.
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: bun install
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Dev Whisper ${{ github.ref_name }}"
+          releaseBody: "See the commit history for what changed."
+          # Draft, not published automatically: CI handles the tedious,
+          # error-prone part (build + sign), but a human still confirms the
+          # build is good before it becomes the "latest" release every
+          # installed copy auto-updates to. Publish it from the GitHub
+          # Releases page once you've sanity-checked it.
+          releaseDraft: true

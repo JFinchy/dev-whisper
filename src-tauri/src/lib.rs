@@ -30,11 +30,12 @@ use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Manager,
+    Emitter, Manager,
 };
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState as PressState};
+use tauri_plugin_updater::UpdaterExt;
 
 use audio::AudioHandle;
 use doubletap::{get_double_tap_enabled, set_double_tap_enabled, DoubleTapState};
@@ -196,6 +197,8 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, triggered, event| {
@@ -360,6 +363,29 @@ pub fn run() {
             let retention_days = saved_config.history_retention_days;
             std::thread::spawn(move || {
                 history::purge_old_entries(&purge_app, retention_days);
+            });
+
+            // Check GitHub for a newer release once per launch — a plain,
+            // unauthenticated request to the updater endpoint (see
+            // tauri.conf.json's plugins.updater.endpoints), nothing about
+            // this device or its usage is sent. Best-effort: no network,
+            // no release yet, or a malformed response should never surface
+            // as an error, same reasoning as the model warm-up and history
+            // purge above — this is a nice-to-know, not something the
+            // user's session should ever block or fail on.
+            let update_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                match update_app.updater() {
+                    Ok(updater) => match updater.check().await {
+                        Ok(Some(update)) => {
+                            crate::applog!("update: version {} available (current {})", update.version, update.current_version);
+                            let _ = update_app.emit("update-available", update.version);
+                        }
+                        Ok(None) => {}
+                        Err(err) => crate::applog!("update: check failed, ignoring: {err}"),
+                    },
+                    Err(err) => crate::applog!("update: updater unavailable: {err}"),
+                }
             });
 
             // Reopen the widget wherever the user last dragged it, instead

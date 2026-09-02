@@ -91,6 +91,11 @@ function WidgetView() {
   const [micMode, setMicMode] = useState(false);
   const [overrideMode, setOverrideMode] = useState<string | null>(null);
   const [modes, setModes] = useState<ModeSummary[]>([]);
+  // Set once per launch if the backend's startup check (see lib.rs) finds
+  // a newer release; null means either "no update" or "haven't heard back
+  // yet" — both render the same (no badge), so they don't need telling
+  // apart here.
+  const [updateAvailable, setUpdateAvailable] = useState<string | null>(null);
 
   // Rolling window of recent input levels for the live level meter — see
   // LevelMeter above. Reset to silence whenever recording isn't active, so
@@ -154,6 +159,9 @@ function WidgetView() {
       setOverrideMode(null);
       announce(event.payload, true);
     });
+    const unlistenUpdateAvailable = listen<string>("update-available", (event) => {
+      setUpdateAvailable(event.payload);
+    });
 
     return () => {
       unlistenTheme.then((f) => f());
@@ -165,6 +173,7 @@ function WidgetView() {
       unlistenRecordingError.then((f) => f());
       unlistenTranscriptReady.then((f) => f());
       unlistenTranscriptError.then((f) => f());
+      unlistenUpdateAvailable.then((f) => f());
     };
   }, []);
 
@@ -279,11 +288,15 @@ function WidgetView() {
             </span>
           )}
           <button
-            className="btn btn-ghost btn-circle h-7 w-7 min-h-0"
+            className="btn btn-ghost btn-circle relative h-7 w-7 min-h-0"
             onClick={openSettings}
-            aria-label="Open settings"
+            aria-label={updateAvailable ? `Open settings — update to v${updateAvailable} available` : "Open settings"}
+            title={updateAvailable ? `Update to v${updateAvailable} available` : undefined}
           >
             ⚙
+            {updateAvailable && (
+              <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-accent" />
+            )}
           </button>
         </div>
         <p
@@ -323,11 +336,13 @@ function WidgetView() {
           </span>
         )}
         <button
-          className="btn btn-ghost btn-circle h-7 w-7 min-h-0"
+          className="btn btn-ghost btn-circle relative h-7 w-7 min-h-0"
           onClick={openSettings}
-          aria-label="Open settings"
+          aria-label={updateAvailable ? `Open settings — update to v${updateAvailable} available` : "Open settings"}
+          title={updateAvailable ? `Update to v${updateAvailable} available` : undefined}
         >
           ⚙
+          {updateAvailable && <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-accent" />}
         </button>
       </div>
       {flyoutHovered && (
