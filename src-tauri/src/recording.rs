@@ -194,6 +194,13 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
 
     match transcribed {
         Ok(text) if !text.is_empty() => {
+            // Raw model output, logged before any pipeline pass touches it
+            // (punctuation/backtrack/trigger-stripping/mode/LLM all mutate
+            // `text` below) — the only place to see what Whisper actually
+            // heard, needed to tell a real STT mis-transcription apart from
+            // a bug in one of those passes when a voice command misfires.
+            crate::applog!("whisper: raw transcript={text:?}");
+
             // Tracks which of the passes below actually changed the text
             // (as opposed to running as a no-op pass-through), for the
             // Insights feature-adoption checklist — "have you tried
@@ -311,6 +318,24 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
                     modes::LlmRefinement::Off => None,
                     modes::LlmRefinement::Global => Some(cfg.llm_model.as_str()),
                     modes::LlmRefinement::Model(id) => Some(id.as_str()),
+                };
+                // CLI mode's LLM prompt rewrites text "as a single shell
+                // command" — appropriate for the literal directives
+                // `format_as_cli` already recognized, but a small local
+                // model doesn't reliably honor that prompt's own fallback
+                // for ordinary prose, and instead mangles agent-chat
+                // dictation (e.g. into a terminal running Claude Code) into
+                // a bogus single-token slug. See
+                // `modes::is_literal_cli_directive`'s doc comment for the
+                // exact repro. `formatted` has already gone through file
+                // tagging by this point, so skipping the LLM step here
+                // still delivers a fully-resolved result.
+                let llm_model = if settings.mode == modes::Behavior::Cli
+                    && !modes::is_literal_cli_directive(&text)
+                {
+                    None
+                } else {
+                    llm_model
                 };
                 let formatted = if let Some(model) = llm_model {
                     let _ = app.emit("refining-started", ());

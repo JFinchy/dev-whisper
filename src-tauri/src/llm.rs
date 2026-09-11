@@ -226,7 +226,13 @@ pub fn refine(
     // isn't a meaningful "how fast is this model" data point.
     record_latency(model, started.elapsed().as_millis() as u64);
 
-    let cleaned = parsed.response.trim().to_string();
+    // Same "small models ignore 'no markdown fences' instructions" issue
+    // `generate_boilerplate` already guards against below — none of the
+    // three `prompt_for_mode` instructions ask for code, but a model can
+    // still wrap plain refined prose in a fenced block anyway (observed via
+    // the eval suite: "make directory for the new service" refined to
+    // "```bash\nmkdir -p\n```" instead of a bare command).
+    let cleaned = strip_markdown_fences(parsed.response.trim());
     if cleaned.is_empty() {
         Err("Ollama returned an empty response".to_string())
     } else {
@@ -273,7 +279,7 @@ pub fn summarize_for_journal(text: &str, model: &str) -> Option<Result<String, S
 
     record_latency(model, started.elapsed().as_millis() as u64);
 
-    let summary = parsed.response.trim().trim_matches('"').to_string();
+    let summary = strip_markdown_fences(parsed.response.trim()).trim_matches('"').to_string();
     if summary.is_empty() {
         Some(Err("Ollama returned an empty response".to_string()))
     } else {
@@ -454,6 +460,158 @@ mod tests {
             }
             Err(err) => panic!("boilerplate generation failed: {err}"),
         }
+    }
+
+    /// Loose, structural quality gates for `refine()` output — not
+    /// exact-match assertions (the model's wording varies run to run), but
+    /// checks shaped specifically around failure modes actually observed in
+    /// manual testing:
+    /// - a chat-tuned model wrapping its answer in a conversational
+    ///   preamble ("Sure, here's...") instead of just returning the
+    ///   cleaned text the prompt asked for,
+    /// - leftover markdown fences,
+    /// - collapsing free-form prose into a single-token slug (2026-09-09:
+    ///   CLI mode's "rewrite as a single shell command" prompt did this to
+    ///   ordinary agent-chat dictation — see `modes::is_literal_cli_directive`,
+    ///   which now stops that input from reaching `refine()` at all in the
+    ///   real pipeline, but the eval case below is kept to track whether the
+    ///   underlying prompt/model combo itself ever gets more reliable),
+    /// - gutting the message under a plain "clean up filler words" prompt
+    ///   rather than lightly editing it.
+    fn check_refinement_quality(
+        mode: crate::modes::Behavior,
+        input: &str,
+        output: &str,
+    ) -> Result<(), String> {
+        if output.trim().is_empty() {
+            return Err("output is empty".to_string());
+        }
+        if output.contains("```") {
+            return Err(format!("output still has markdown fences: {output:?}"));
+        }
+        let lower = output.trim().to_lowercase();
+        let preamble_markers = ["sure,", "sure!", "here's", "here is", "certainly", "of course"];
+        if preamble_markers.iter().any(|m| lower.starts_with(m)) {
+            return Err(format!(
+                "output looks like a conversational preamble, not cleaned dictation: {output:?}"
+            ));
+        }
+
+        let input_words = input.split_whitespace().count();
+        let output_words = output.split_whitespace().count();
+        match mode {
+            crate::modes::Behavior::Cli => {
+                // A real single-command rewrite is expected to be short —
+                // but collapsing several words of prose into one no-space
+                // token isn't a command, it's the slug failure mode.
+                if input_words > 4 && output_words <= 1 && output.trim().len() > 20 {
+                    return Err(format!(
+                        "output collapsed {input_words} input words into a single token: {output:?}"
+                    ));
+                }
+            }
+            crate::modes::Behavior::Plain | crate::modes::Behavior::Casual => {
+                // Cleanup should trim filler, not gut the message — a >70%
+                // reduction on anything but a very short input reads as a
+                // rewrite rather than a cleanup.
+                if input_words >= 8 && output_words < input_words / 3 {
+                    return Err(format!(
+                        "output dropped from {input_words} to {output_words} words, looks \
+                         rewritten rather than cleaned: {output:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Representative dictations per mode, picked from real manual-testing
+    /// reports rather than invented examples. Not exhaustive — add to this
+    /// as new quality issues turn up in actual use, the same way the
+    /// deterministic passes' unit tests grew from real Whisper output.
+    const EVAL_CASES: &[(crate::modes::Behavior, &str)] = &[
+        (crate::modes::Behavior::Cli, "git commit update the readme file"),
+        (crate::modes::Behavior::Cli, "make directory for the new service"),
+        (
+            crate::modes::Behavior::Plain,
+            "um so I think we should probably go with the the second approach because it's \
+             it's simpler and also easier to test",
+        ),
+        (
+            crate::modes::Behavior::Casual,
+            "hey can you like send that file over when you get a sec no rush at all",
+        ),
+    ];
+
+    /// Runs `EVAL_CASES` against a real, locally-running Ollama instance and
+    /// checks each output with `check_refinement_quality`. A smoke-test net
+    /// for real-world prompt/model quality regressions — not a strict
+    /// correctness check, since LLM output isn't deterministic — matching
+    /// the "skip if Ollama unreachable" convention of the other live tests
+    /// in this file rather than gating on it with `#[ignore]`.
+    #[test]
+    fn eval_suite_against_real_ollama() {
+        let models = list_ollama_models();
+        if models.is_empty() {
+            eprintln!("skipping: no Ollama models found (is `ollama serve` running?)");
+            return;
+        }
+        let model = &models[0];
+
+        let mut failures = Vec::new();
+        for &(mode, input) in EVAL_CASES {
+            // Mirrors `recording.rs`'s real pipeline: `apply_mode`'s
+            // mechanical pass runs first, and `refine()` only ever sees
+            // its output, never the raw transcript directly — skipping
+            // this step here made an earlier version of this suite
+            // exercise `refine()` on text production never actually sends
+            // it (e.g. literal "make directory ..." instead of the
+            // already-`mkdir`-formatted string).
+            let pre_formatted = crate::modes::apply_mode(mode, input);
+            match refine(mode, &pre_formatted, model, None) {
+                Ok(output) => {
+                    eprintln!("[{mode:?}] {input:?} -> (pre-formatted: {pre_formatted:?}) -> {output:?}");
+                    if let Err(reason) = check_refinement_quality(mode, &pre_formatted, &output) {
+                        failures.push(format!("{mode:?} {input:?}: {reason}"));
+                    }
+                }
+                Err(err) => failures.push(format!("{mode:?} {input:?}: refine() failed: {err}")),
+            }
+        }
+
+        assert!(failures.is_empty(), "eval suite failures:\n{}", failures.join("\n"));
+    }
+
+    /// Documents a known, still-open weakness in the raw Cli prompt/model
+    /// combo rather than the pipeline as a whole: `refine()` called
+    /// directly (bypassing `modes::is_literal_cli_directive`'s production
+    /// gate) on ordinary agent-chat prose reliably reproduces the
+    /// 2026-09-09 slug bug. `#[ignore]`d so a perpetually-known model
+    /// limitation doesn't keep the default suite red — run explicitly
+    /// (`cargo test --lib -- --ignored eval_suite_prompt_weakness`) after a
+    /// model/prompt change to see whether this has actually improved.
+    #[test]
+    #[ignore]
+    fn eval_suite_prompt_weakness_cli_mode_mishandles_agent_chat_prose() {
+        let models = list_ollama_models();
+        if models.is_empty() {
+            eprintln!("skipping: no Ollama models found (is `ollama serve` running?)");
+            return;
+        }
+        let model = &models[0];
+        let input = "Let's test and see what happens when we try and paste in here. If it \
+                     truly is just a problem with this terminal, we still need to work it out.";
+
+        let pre_formatted = crate::modes::apply_mode(crate::modes::Behavior::Cli, input);
+        let output = refine(crate::modes::Behavior::Cli, &pre_formatted, model, None)
+            .expect("refine() call itself should succeed");
+        eprintln!("[Cli] {input:?} -> (pre-formatted: {pre_formatted:?}) -> {output:?}");
+
+        // Intentionally asserting the *bad* outcome still reproduces —
+        // this test passing means the underlying weakness is still present
+        // (expected today); it failing is good news worth investigating.
+        check_refinement_quality(crate::modes::Behavior::Cli, &pre_formatted, &output)
+            .expect_err("expected the known slug-collapse weakness to still reproduce");
     }
 
     #[test]

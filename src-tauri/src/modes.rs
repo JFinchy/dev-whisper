@@ -225,8 +225,38 @@ fn strip_prefix_ci<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
     }
 }
 
+fn normalize_cli_input(text: &str) -> &str {
+    text.trim().trim_end_matches('.')
+}
+
+/// Whether `text` matches one of the literal shell-command directives
+/// `format_as_cli` mechanically translates (`git commit ...`, `make
+/// directory ...`, `change directory to ...`) — as opposed to falling
+/// through to file-reference tagging, the natural-language case for
+/// dictating into a terminal-based coding agent rather than a literal
+/// shell command.
+///
+/// Used to gate `llm::refine`'s Cli prompt ("rewrite as a single shell
+/// command"): a small local model doesn't reliably honor that prompt's own
+/// "if it doesn't describe a command, just clean up filler words"
+/// fallback, and instead mangles ordinary agent-chat prose into a bogus
+/// single-token slug — observed 2026-09-09 manual testing, dictating into
+/// Orca (a coding-agent terminal assigned to CLI mode): "Let's test and
+/// see what happens when we try and paste in here. If it truly is just a
+/// problem with this terminal, we still need to work it out." came back as
+/// `test_paste_what_happens_truly_problem_terminal_work_out`. Skipping the
+/// LLM step for anything that isn't a recognized literal directive avoids
+/// that entirely, since `format_as_cli`'s fallthrough (file tagging) is
+/// already the correct, fully-resolved output for prose.
+pub fn is_literal_cli_directive(text: &str) -> bool {
+    let trimmed = normalize_cli_input(text);
+    strip_prefix_ci(trimmed, "git commit ").is_some()
+        || strip_prefix_ci(trimmed, "make directory ").is_some()
+        || strip_prefix_ci(trimmed, "change directory to ").is_some()
+}
+
 fn format_as_cli(text: &str) -> String {
-    let trimmed = text.trim().trim_end_matches('.');
+    let trimmed = normalize_cli_input(text);
 
     if let Some(message) = strip_prefix_ci(trimmed, "git commit ") {
         return format!("git commit -m \"{message}\"");
@@ -374,6 +404,29 @@ mod tests {
             apply_mode(Behavior::Cli, "change directory to src"),
             "cd src"
         );
+    }
+
+    #[test]
+    fn is_literal_cli_directive_matches_the_three_shell_directives() {
+        assert!(is_literal_cli_directive("git commit update readme"));
+        assert!(is_literal_cli_directive("Git Commit fix the bug."));
+        assert!(is_literal_cli_directive("make directory src"));
+        assert!(is_literal_cli_directive("change directory to src"));
+    }
+
+    #[test]
+    fn is_literal_cli_directive_rejects_agent_chat_prose() {
+        // The exact repro from 2026-09-09 manual testing: dictating a
+        // conversational message into a coding-agent terminal (assigned to
+        // CLI mode) must not be treated as a shell-command directive, or
+        // it gets sent through the LLM's "rewrite as a single shell
+        // command" prompt and comes back mangled.
+        assert!(!is_literal_cli_directive(
+            "Let's test and see what happens when we try and paste in here. \
+             If it truly is just a problem with this terminal, we still need to work it out."
+        ));
+        assert!(!is_literal_cli_directive("this doesn't match any pattern"));
+        assert!(!is_literal_cli_directive("look at recording.rs and fix the bug"));
     }
 
     #[test]

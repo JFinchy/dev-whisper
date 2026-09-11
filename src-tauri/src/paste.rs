@@ -35,8 +35,33 @@ pub fn paste_text(text: &str) -> Result<(), String> {
 
     copy_text(text)?;
 
-    // Give the OS a moment to register the clipboard update before pasting.
-    thread::sleep(Duration::from_millis(50));
+    // `arboard::Clipboard::set_text` above can return `Ok` before macOS has
+    // actually propagated the write to the pasteboard — a fixed sleep alone
+    // doesn't guarantee it's landed, and the frontmost app's Cmd+V can then
+    // win the race and paste whatever was on the clipboard *before* this
+    // call (observed as dictated text mysteriously coming out as stale,
+    // unrelated clipboard content). Read the clipboard back and confirm it
+    // matches before pasting, re-issuing the write if it doesn't rather
+    // than trusting a single guessed delay.
+    let mut verified = false;
+    for attempt in 0..5 {
+        thread::sleep(Duration::from_millis(if attempt == 0 { 50 } else { 30 }));
+        let matches = arboard::Clipboard::new()
+            .and_then(|mut c| c.get_text())
+            .map(|current| current == text)
+            .unwrap_or(false);
+        if matches {
+            verified = true;
+            break;
+        }
+        let _ = copy_text(text);
+    }
+    if !verified {
+        crate::applog!(
+            "paste: clipboard still didn't match the dictated text after retrying, \
+             pasting anyway (may deliver stale clipboard content)"
+        );
+    }
 
     // The Meta keydown needs to actually register as "held" with the OS
     // before the V keydown arrives, or the frontmost app sees a bare "v"

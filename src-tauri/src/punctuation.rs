@@ -142,6 +142,17 @@ fn push_word(out: &mut String, word: &str, suppress_space: &mut bool) {
 fn push_replacement(out: &mut String, replacement: &str, spacing: Spacing, suppress_space: &mut bool) {
     match spacing {
         Spacing::Trailing => {
+            // Whisper's own auto-punctuation frequently lands right before
+            // a spoken command word it also transcribed literally (e.g.
+            // "Hello, comma" — Whisper hears the pause and inserts its own
+            // comma, then transcribes "comma" too), so without this the
+            // command's replacement stacks on top of it: "Hello,,". A
+            // Trailing mark is always meant to be *the* terminal punctuation
+            // at this position, so drop whatever's already there first
+            // rather than layering a second one on.
+            while matches!(out.chars().last(), Some(c) if ".,!?:;".contains(c)) {
+                out.pop();
+            }
             out.push_str(replacement);
             *suppress_space = false;
         }
@@ -423,6 +434,20 @@ mod tests {
     #[test]
     fn empty_string_returns_empty() {
         assert_eq!(expand_punctuation(""), "");
+    }
+
+    #[test]
+    fn whisper_own_auto_punctuation_does_not_stack_with_a_command() {
+        // Real whisper-rs output (dev-whisper manual testing, 2026-09-09)
+        // for a dictated "hello comma world period new line this is a
+        // test": Whisper inserted its own comma/period right next to the
+        // literal command words it also transcribed, which used to
+        // produce "Hello,, world." and "World,." before this fix stripped
+        // the dangling mark first.
+        assert_eq!(
+            expand_punctuation("Hello, comma. World, period. New line. This is a test."),
+            "Hello, World.\nThis is a test."
+        );
     }
 
     #[test]
