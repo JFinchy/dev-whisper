@@ -38,54 +38,64 @@ impl AudioHandle {
         let level_thread = level.clone();
 
         std::thread::spawn(move || {
-            let mut active_stream: Option<cpal::Stream> = None;
             let samples: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
-            let mut sample_rate = 0u32;
-            let mut channels = 0u16;
+
+            // The stream is built once and kept around *paused* between
+            // recordings rather than torn down after every `Stop` — device
+            // enumeration + format negotiation (the expensive part) happens
+            // here, ahead of time, instead of on the hotkey's critical path.
+            // `Start` then only needs `stream.play()`, which is fast, so
+            // speech spoken in the first moments after the hotkey fires
+            // isn't lost waiting for the driver to spin up from cold.
+            // Rebuilt only when the selected device actually changes (see
+            // `requested_device` below) or when reuse fails outright.
+            let mut current: Option<WarmStream> = build_warm_stream(
+                samples.clone(),
+                level_thread.clone(),
+                selected_device_thread.lock().unwrap().clone(),
+            );
 
             for command in rx {
                 match command {
                     AudioCommand::Start => {
-                        if active_stream.is_some() {
-                            crate::applog!("audio: start requested but a stream is already active, ignoring");
-                            continue;
-                        }
                         samples.lock().unwrap().clear();
                         let device_name = selected_device_thread.lock().unwrap().clone();
-                        crate::applog!(
-                            "audio: starting capture, requested device = {}",
-                            device_name.as_deref().unwrap_or("<system default>")
-                        );
-                        match open_with_retry_and_fallback(samples.clone(), level_thread.clone(), device_name.as_deref()) {
-                            Ok((stream, rate, chans, resolved_name)) => {
-                                sample_rate = rate;
-                                channels = chans;
-                                crate::applog!(
-                                    "audio: opened device '{resolved_name}' at {rate}Hz, {chans}ch"
-                                );
-                                match stream.play() {
-                                    Ok(()) => {
-                                        crate::applog!("audio: stream playing");
-                                        active_stream = Some(stream);
-                                    }
-                                    Err(err) => {
-                                        crate::applog!("audio: stream.play() failed: {err}");
-                                    }
-                                }
+
+                        let stale = current
+                            .as_ref()
+                            .map(|cs| cs.requested_device != device_name)
+                            .unwrap_or(true);
+                        if stale {
+                            crate::applog!(
+                                "audio: selected device changed (or no warm stream yet), rebuilding for {}",
+                                device_name.as_deref().unwrap_or("<system default>")
+                            );
+                            current = build_warm_stream(samples.clone(), level_thread.clone(), device_name.clone());
+                        }
+
+                        let played = current.as_ref().and_then(|cs| cs.stream.play().ok());
+                        if played.is_none() {
+                            // Reused stream failed to resume (e.g. a
+                            // Continuity/Bluetooth device dropped while
+                            // idle) — rebuild fresh once and retry, same
+                            // fallback the old per-recording path relied on.
+                            crate::applog!("audio: resuming warm stream failed, rebuilding fresh");
+                            current = build_warm_stream(samples.clone(), level_thread.clone(), device_name);
+                            match current.as_ref().map(|cs| cs.stream.play()) {
+                                Some(Ok(())) => crate::applog!("audio: stream playing (rebuilt)"),
+                                Some(Err(err)) => crate::applog!("audio: stream.play() failed after rebuild: {err}"),
+                                None => crate::applog!("audio: failed to start capture"),
                             }
-                            Err(err) => {
-                                crate::applog!("audio: failed to start capture: {err}");
-                            }
+                        } else {
+                            crate::applog!("audio: stream playing (warm)");
                         }
                     }
                     AudioCommand::Stop(reply) => {
                         crate::applog!("audio: stop requested");
-                        if let Some(stream) = active_stream.take() {
-                            if let Err(err) = stream.pause() {
-                                crate::applog!("audio: stream.pause() before drop failed: {err}");
+                        if let Some(cs) = &current {
+                            if let Err(err) = cs.stream.pause() {
+                                crate::applog!("audio: stream.pause() failed: {err}");
                             }
-                            drop(stream);
-                            crate::applog!("audio: stream paused and dropped");
                         } else {
                             crate::applog!("audio: stop requested but no stream was active");
                         }
@@ -95,10 +105,11 @@ impl AudioHandle {
                         level_thread.store(0.0f32.to_bits(), Ordering::Relaxed);
                         let captured = std::mem::take(&mut *samples.lock().unwrap());
                         crate::applog!("audio: captured {} samples", captured.len());
-                        let result = if captured.is_empty() {
-                            Err("no audio captured".to_string())
-                        } else {
-                            write_wav(&captured, sample_rate, channels)
+                        let result = match &current {
+                            Some(cs) if !captured.is_empty() => {
+                                write_wav(&captured, cs.sample_rate, cs.channels)
+                            }
+                            _ => Err("no audio captured".to_string()),
                         };
                         let _ = reply.send(result);
                     }
@@ -143,6 +154,44 @@ impl AudioHandle {
     /// nobody's watching.
     pub fn current_level(&self) -> f32 {
         f32::from_bits(self.level.load(Ordering::Relaxed))
+    }
+}
+
+/// A built (but not necessarily playing) input stream, kept alive between
+/// recordings so `Start` only has to call `play()` instead of paying the
+/// full device-open cost from cold. `requested_device` is whatever the
+/// caller asked for (`None` = system default) — compared against the
+/// currently-selected device on each `Start` to know whether this stream
+/// is still valid or needs rebuilding for a newly-picked device.
+struct WarmStream {
+    stream: cpal::Stream,
+    requested_device: Option<String>,
+    sample_rate: u32,
+    channels: u16,
+}
+
+/// Builds a stream for `device_name` (logging the resolved device/rate/
+/// channels), leaving it paused/not-yet-playing. `None` on failure — the
+/// caller falls back to treating capture as unavailable, same as before.
+fn build_warm_stream(
+    samples: Arc<Mutex<Vec<f32>>>,
+    level: Arc<AtomicU32>,
+    device_name: Option<String>,
+) -> Option<WarmStream> {
+    match open_with_retry_and_fallback(samples, level, device_name.as_deref()) {
+        Ok((stream, rate, chans, resolved_name)) => {
+            crate::applog!("audio: opened device '{resolved_name}' at {rate}Hz, {chans}ch");
+            Some(WarmStream {
+                stream,
+                requested_device: device_name,
+                sample_rate: rate,
+                channels: chans,
+            })
+        }
+        Err(err) => {
+            crate::applog!("audio: failed to open device: {err}");
+            None
+        }
     }
 }
 
