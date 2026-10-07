@@ -1958,6 +1958,65 @@ function GeneralSection() {
   );
 }
 
+type AmbientPhase = "off" | "listening" | "asleep" | "paused";
+
+const AMBIENT_PHASE_LABEL: Record<AmbientPhase, string> = {
+  off: "Off",
+  listening: "Listening for “Dev Whisper”",
+  asleep: "Asleep — say “Dev Whisper, wake up”",
+  paused: "Paused — another app is using the microphone",
+};
+
+function AmbientListeningControl({ enrolled }: { enrolled: boolean }) {
+  const [enabled, setEnabled] = useState(false);
+  const [phase, setPhase] = useState<AmbientPhase>("off");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    invoke<boolean>("get_ambient_enabled")
+      .then(setEnabled)
+      .catch((err) => console.error("get_ambient_enabled failed:", err));
+    invoke<AmbientPhase>("get_ambient_phase")
+      .then(setPhase)
+      .catch((err) => console.error("get_ambient_phase failed:", err));
+    const unlisten = listen<AmbientPhase>("ambient-phase", (e) => setPhase(e.payload));
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
+
+  function toggle(next: boolean) {
+    setError(null);
+    setEnabled(next);
+    invoke("set_ambient_enabled", { enabled: next }).catch((err) => {
+      setEnabled(!next);
+      setError(String(err));
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-1 rounded-md bg-base-100 px-2.5 py-2 text-xs">
+      <label className={`flex items-center gap-1.5 ${enrolled ? "" : "opacity-50"}`}>
+        <input
+          type="checkbox"
+          className="checkbox checkbox-xs"
+          checked={enabled}
+          disabled={!enrolled && !enabled}
+          onChange={(e) => toggle(e.target.checked)}
+        />
+        Always-on listening — start with “Dev Whisper, …” to dictate hands-free
+      </label>
+      {enabled && <div className="font-medium">{AMBIENT_PHASE_LABEL[phase]}</div>}
+      <p className="opacity-60">
+        {enrolled
+          ? "Only your enrolled voice is acted on, and only when it starts with the wake phrase. Say “Dev Whisper, go to sleep” to pause; it also sleeps after 10 idle minutes, and pauses itself while another app (like a call) is using the microphone. Text is copied instead of pasted if you switch apps before it's ready."
+          : "Enroll your voice above first — always-on listening only acts on your voice."}
+      </p>
+      {error && <p className="text-error">{error}</p>}
+    </div>
+  );
+}
+
 function VoiceIsolationSection() {
   const [enabled, setEnabled] = useState(false);
   const [checked, setChecked] = useState(false);
@@ -2072,6 +2131,8 @@ function VoiceIsolationSection() {
           </p>
 
           {error && <p className="text-xs text-error">{error}</p>}
+
+          <AmbientListeningControl enrolled={Boolean(status?.enrolled)} />
         </div>
       )}
     </div>

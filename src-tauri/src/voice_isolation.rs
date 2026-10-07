@@ -3,19 +3,19 @@
 //! `voice_profile.json` for `isolate.rs`'s embedding-based masking path.
 //!
 //! Enrollment and dictation share the same underlying recorder
-//! (`RecordingState::audio`) — see `RecordingPurpose` in `recording.rs` for
-//! the mutual-exclusion guard that keeps a hotkey press mid-enrollment from
-//! misfiring `transcribe_and_paste` on the enrollment clip.
+//! (`RecordingState::audio`); `capture.rs` keeps the two mutually exclusive,
+//! so a hotkey press mid-enrollment can't misfire `transcribe_and_paste` on
+//! the enrollment clip.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
 use sherpa_onnx::{SpeakerEmbeddingExtractor, SpeakerEmbeddingExtractorConfig};
 
-use crate::recording::{RecordingPurpose, RecordingState};
+use crate::capture::{Request, Transition};
+use crate::recording::RecordingState;
 use crate::stt::WHISPER_SAMPLE_RATE;
 
 /// A user has to talk for at least this long (of actual detected speech,
@@ -220,32 +220,33 @@ mod tests {
 #[tauri::command]
 pub fn start_voice_enrollment(app: AppHandle) -> Result<(), String> {
     let state = app.state::<RecordingState>();
-    if state.is_recording.load(Ordering::SeqCst) {
-        return Err("a recording is already in progress".to_string());
-    }
-
-    {
-        let mut purpose = state.recording_purpose.lock().unwrap();
-        if purpose.is_some() {
-            return Err("enrollment is already in progress".to_string());
+    let _op = state.capture_op.lock().unwrap();
+    match state.capture.request(Request::StartEnrollment) {
+        Transition::StartedEnrollment { .. } => {
+            state.audio.start();
+            let _ = app.emit("enrollment-started", ());
+            Ok(())
         }
-        *purpose = Some(RecordingPurpose::Enrollment);
+        Transition::Rejected(reason) => Err(reason.to_string()),
+        other => Err(format!("unexpected capture transition: {other:?}")),
     }
-
-    state.audio.start();
-    let _ = app.emit("enrollment-started", ());
-    Ok(())
 }
 
 #[tauri::command]
 pub fn stop_voice_enrollment(app: AppHandle) {
     let state = app.state::<RecordingState>();
-    *state.recording_purpose.lock().unwrap() = None;
+    let _op = state.capture_op.lock().unwrap();
+    if !matches!(state.capture.request(Request::StopEnrollment), Transition::StoppedEnrollment { .. }) {
+        return;
+    }
 
     match state.audio.stop() {
         Ok(path) => {
             let app = app.clone();
-            std::thread::spawn(move || process_enrollment(&app, &path));
+            std::thread::spawn(move || {
+                process_enrollment(&app, &path);
+                let _ = std::fs::remove_file(&path);
+            });
         }
         Err(err) => {
             let _ = app.emit("enrollment-error", err);

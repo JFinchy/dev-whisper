@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
@@ -113,6 +114,11 @@ pub struct AppConfig {
     /// just working out of the box like the other punctuation commands.
     #[serde(default)]
     pub press_enter_enabled: bool,
+    /// Always-on listening (see `ambient.rs`). Off by default — it keeps
+    /// the mic open, so it's an explicit opt-in, and it also requires an
+    /// enrolled voice.
+    #[serde(default)]
+    pub ambient_enabled: bool,
     /// Spoken-cue -> saved-text-block expansions (see `snippets.rs`).
     /// Defaults to `snippets::default_snippets()`, same reasoning as
     /// `vocabulary` above — useful out of the box, not an empty list a
@@ -157,6 +163,7 @@ impl Default for AppConfig {
             webhook_url: None,
             theme: crate::theme::Theme::default(),
             press_enter_enabled: false,
+            ambient_enabled: false,
             snippets: crate::snippets::default_snippets(),
             double_tap_fn_enabled: false,
             layout: crate::theme::Layout::default(),
@@ -205,11 +212,10 @@ fn migrate_legacy_mode_rules(cfg: &mut AppConfig) -> bool {
 }
 
 pub fn load(app: &AppHandle) -> AppConfig {
-    let mut cfg = config_path(app)
-        .ok()
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|contents| serde_json::from_str(&contents).ok())
-        .unwrap_or_default();
+    let mut cfg = match config_path(app) {
+        Ok(path) => load_from(&path),
+        Err(_) => AppConfig::default(),
+    };
 
     if migrate_legacy_mode_rules(&mut cfg) {
         let _ = save(app, &cfg);
@@ -218,10 +224,59 @@ pub fn load(app: &AppHandle) -> AppConfig {
     cfg
 }
 
+/// A missing file means a fresh install (defaults). A file that exists but
+/// won't parse is moved aside instead of ignored: every setter does
+/// load-modify-save, so silently returning defaults here meant the very
+/// next setting change overwrote the user's real config (modes,
+/// vocabulary, snippets, webhook) with defaults.
+fn load_from(path: &Path) -> AppConfig {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return AppConfig::default(),
+        Err(err) => {
+            crate::applog!("config: could not read {}: {err}", path.display());
+            return AppConfig::default();
+        }
+    };
+    match serde_json::from_str(&contents) {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let aside = path.with_extension(format!("json.corrupt-{stamp}"));
+            match std::fs::rename(path, &aside) {
+                Ok(()) => crate::applog!(
+                    "config: {} didn't parse ({err}); moved it to {} and started from defaults",
+                    path.display(),
+                    aside.display()
+                ),
+                Err(rename_err) => crate::applog!(
+                    "config: {} didn't parse ({err}) and couldn't be moved aside ({rename_err})",
+                    path.display()
+                ),
+            }
+            AppConfig::default()
+        }
+    }
+}
+
+static SAVE_LOCK: Mutex<()> = Mutex::new(());
+
 pub fn save(app: &AppHandle, config: &AppConfig) -> Result<(), String> {
-    let path = config_path(app)?;
+    save_to(&config_path(app)?, config)
+}
+
+/// Writes to a sibling temp file and renames it into place, so a crash or
+/// kill mid-write can't leave a truncated `config.json` behind (which
+/// `load_from` would then have to quarantine).
+fn save_to(path: &Path, config: &AppConfig) -> Result<(), String> {
     let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| e.to_string())
+    let _guard = SAVE_LOCK.lock().unwrap();
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -330,5 +385,53 @@ mod tests {
         // Idempotent: running it again on the already-migrated config does
         // nothing further, since mode_rules is now empty.
         assert!(!migrate_legacy_mode_rules(&mut cfg));
+    }
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("dev-whisper-config-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn missing_config_loads_defaults_without_creating_files() {
+        let dir = scratch_dir("missing");
+        let path = dir.join("config.json");
+        let _ = load_from(&path);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn corrupt_config_is_moved_aside_not_silently_overwritten() {
+        let dir = scratch_dir("corrupt");
+        let path = dir.join("config.json");
+        std::fs::write(&path, "{ \"vocabulary\": [\"kub").unwrap();
+
+        let _ = load_from(&path);
+
+        assert!(!path.exists(), "corrupt file should have been moved aside");
+        let aside: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains("corrupt-"))
+            .collect();
+        assert_eq!(aside.len(), 1);
+        assert_eq!(std::fs::read_to_string(aside[0].path()).unwrap(), "{ \"vocabulary\": [\"kub");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_then_load_round_trips_and_leaves_no_temp_file() {
+        let dir = scratch_dir("save");
+        let path = dir.join("config.json");
+        let mut cfg = AppConfig::default();
+        cfg.vocabulary = vec!["kubectl".to_string()];
+
+        save_to(&path, &cfg).unwrap();
+
+        assert_eq!(load_from(&path).vocabulary, vec!["kubectl".to_string()]);
+        assert!(!dir.join("config.json.tmp").exists());
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

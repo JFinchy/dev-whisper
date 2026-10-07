@@ -5,7 +5,10 @@
 /// "it didn't paste" or "wrong mode" can check what actually happened
 /// without launching the app from a terminal to see stderr.
 use std::collections::VecDeque;
-use std::sync::Mutex;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_LOG_ENTRIES: usize = 500;
@@ -17,6 +20,19 @@ pub struct LogEntry {
 }
 
 static LOG_BUFFER: Mutex<VecDeque<LogEntry>> = Mutex::new(VecDeque::new());
+
+/// Append-only file mirror of every `applog!` line, so logs survive an app
+/// restart (the in-memory buffer above doesn't). Set once during setup.
+static LOG_FILE: OnceLock<Mutex<File>> = OnceLock::new();
+
+pub fn init_file(path: PathBuf) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = OpenOptions::new().create(true).append(true).open(path)?;
+    let _ = LOG_FILE.set(Mutex::new(file));
+    Ok(())
+}
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -31,8 +47,14 @@ fn now_ms() -> u64 {
 /// string to format — use the macro instead so stderr output (still
 /// useful during `cargo tauri dev`) isn't lost.
 pub fn push(message: String) {
+    let timestamp_ms = now_ms();
+    if let Some(file) = LOG_FILE.get() {
+        if let Ok(mut file) = file.lock() {
+            let _ = writeln!(file, "{timestamp_ms} {message}");
+        }
+    }
     let entry = LogEntry {
-        timestamp_ms: now_ms(),
+        timestamp_ms,
         message,
     };
     let mut buf = LOG_BUFFER.lock().unwrap();

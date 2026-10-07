@@ -227,7 +227,7 @@ pub(crate) fn wav_duration_ms(path: &Path) -> Option<u64> {
     Some(reader.duration() as u64 * 1000 / spec.sample_rate as u64)
 }
 
-fn downmix(samples: &[f32], channels: u16) -> Vec<f32> {
+pub(crate) fn downmix(samples: &[f32], channels: u16) -> Vec<f32> {
     if channels <= 1 {
         return samples.to_vec();
     }
@@ -236,6 +236,63 @@ fn downmix(samples: &[f32], channels: u16) -> Vec<f32> {
         .chunks(channels)
         .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
         .collect()
+}
+
+/// Parenthesized descriptions Whisper uses for non-speech audio. Square
+/// brackets are always annotations (Whisper never transcribes speech into
+/// them), but parentheses can be real dictated text, so only these known
+/// sound labels are dropped from them.
+const PAREN_SOUND_LABELS: &[&str] = &[
+    "music", "upbeat music", "laughs", "laughter", "laughing", "applause", "silence", "inaudible",
+    "coughs", "coughing", "sighs", "typing", "clicking", "mouse clicking", "keyboard clicking",
+    "background noise", "noise", "static", "breathing",
+];
+
+/// Removes Whisper's sound annotations (`[BLANK_AUDIO]`, `[click]`,
+/// `(music)`, `*coughs*`) so they don't get pasted as if they were dictated
+/// text. Returns an empty string when nothing but annotations (and stray
+/// punctuation) was transcribed, which callers treat as "no speech".
+pub fn strip_non_speech(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find(['[', '(', '*']) {
+        out.push_str(&rest[..i]);
+        let open = rest.as_bytes()[i] as char;
+        let close = match open {
+            '[' => ']',
+            '(' => ')',
+            _ => '*',
+        };
+        let after_open = &rest[i + 1..];
+        match after_open.find(close) {
+            Some(j) => {
+                let inner = &after_open[..j];
+                let is_annotation = match open {
+                    '[' => true,
+                    '(' => PAREN_SOUND_LABELS.contains(&inner.trim().to_lowercase().as_str()),
+                    _ => !inner.is_empty() && inner.len() <= 30 && !inner.contains('*'),
+                };
+                if is_annotation {
+                    rest = &after_open[j + 1..];
+                } else {
+                    out.push(open);
+                    rest = after_open;
+                }
+            }
+            None => {
+                out.push_str(&rest[i..]);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+
+    let collapsed = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().any(char::is_alphanumeric) {
+        collapsed
+    } else {
+        String::new()
+    }
 }
 
 #[cfg(test)]
@@ -427,9 +484,40 @@ mod tests {
         }
         writer.finalize().unwrap();
     }
+
+    #[test]
+    fn annotation_only_transcripts_become_empty() {
+        for raw in ["[BLANK_AUDIO]", "[click]", " [Music] ", "(music)", "*coughs*", "[click] ."] {
+            assert_eq!(strip_non_speech(raw), "", "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn trailing_annotation_is_removed_from_real_speech() {
+        assert_eq!(
+            strip_non_speech("Hello, comma, world period, New Line, this is a test. [mouse clicking]"),
+            "Hello, comma, world period, New Line, this is a test."
+        );
+    }
+
+    #[test]
+    fn real_parenthetical_dictation_is_kept() {
+        assert_eq!(strip_non_speech("call foo (with the retry flag) now"), "call foo (with the retry flag) now");
+    }
+
+    #[test]
+    fn unmatched_brackets_are_left_alone() {
+        assert_eq!(strip_non_speech("use the [ key"), "use the [ key");
+        assert_eq!(strip_non_speech("2 * 3"), "2 * 3");
+    }
+
+    #[test]
+    fn plain_speech_is_unchanged() {
+        assert_eq!(strip_non_speech("just a normal sentence."), "just a normal sentence.");
+    }
 }
 
-fn resample_linear(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+pub(crate) fn resample_linear(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     if from_rate == to_rate || input.is_empty() {
         return input.to_vec();
     }

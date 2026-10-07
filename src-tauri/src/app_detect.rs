@@ -111,6 +111,29 @@ pub fn frontmost_app_info() -> Option<AppInfo> {
     })
 }
 
+/// Frontmost app's bundle id and name (no icon encoding), fetched from a
+/// background thread by hopping to the main thread and waiting. `None` if
+/// the main thread doesn't answer within a second rather than hanging the
+/// caller.
+pub fn frontmost_app_blocking(app: &tauri::AppHandle) -> Option<(String, String)> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let workspace = NSWorkspace::sharedWorkspace();
+        let info = workspace.frontmostApplication().and_then(|a| {
+            let bundle_id = a.bundleIdentifier()?.to_string();
+            let name = a.localizedName().map(|n| n.to_string()).unwrap_or_else(|| bundle_id.clone());
+            Some((bundle_id, name))
+        });
+        let _ = tx.send(info);
+    })
+    .ok()?;
+    rx.recv_timeout(std::time::Duration::from_secs(1)).ok().flatten()
+}
+
+pub fn frontmost_bundle_id_blocking(app: &tauri::AppHandle) -> Option<String> {
+    frontmost_app_blocking(app).map(|(bundle_id, _)| bundle_id)
+}
+
 /// Lists currently-running regular (foreground, Dock-visible) apps via
 /// NSWorkspace, for the Settings "assign a mode" picker. Excludes
 /// background/agent processes (menu-bar-only helpers etc.) and Dev

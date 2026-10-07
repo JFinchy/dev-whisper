@@ -1,7 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -9,6 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 enum AudioCommand {
     Start,
     Stop(Sender<Result<PathBuf, String>>),
+    /// Attach (`Some`) or detach (`None`) the ambient listener. While
+    /// attached the stream keeps running between recordings.
+    SetTap(Option<Sender<AudioChunk>>),
 }
 
 /// Handle stored in Tauri state. The `cpal::Stream` itself is not `Send`/`Sync`
@@ -27,84 +30,125 @@ pub struct AudioHandle {
     /// rather than emitting an event per callback, which would be far more
     /// often than any redraw needs.
     level: Arc<AtomicU32>,
+    status: Arc<Mutex<Option<DeviceStatus>>>,
+}
+
+/// Which microphone recording will actually use, as surfaced to the widget.
+/// `Fallback` is the case that used to be silent: the picked mic wasn't
+/// available, so capture quietly switched to the system default.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DeviceStatus {
+    Preferred { using: String },
+    Fallback { wanted: String, using: String },
+    SystemDefault { using: String },
+    Unavailable { wanted: Option<String> },
 }
 
 impl AudioHandle {
-    pub fn spawn() -> Self {
+    /// `initial_device` is passed in rather than set afterwards so the
+    /// warm stream built here is for the right device; setting it after
+    /// spawn raced the thread and could force a rebuild (with retry
+    /// sleeps) onto the first hotkey press.
+    pub fn spawn(
+        initial_device: Option<String>,
+        on_status: impl Fn(&DeviceStatus) + Send + 'static,
+    ) -> Self {
         let (tx, rx) = mpsc::channel::<AudioCommand>();
-        let selected_device: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let selected_device: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(initial_device));
         let selected_device_thread = selected_device.clone();
         let level: Arc<AtomicU32> = Arc::new(AtomicU32::new(0.0f32.to_bits()));
         let level_thread = level.clone();
+        let status: Arc<Mutex<Option<DeviceStatus>>> = Arc::new(Mutex::new(None));
+        let status_thread = status.clone();
 
         std::thread::spawn(move || {
-            let samples: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
+            let sinks = Sinks {
+                samples: Arc::new(Mutex::new(Vec::new())),
+                buffering: Arc::new(AtomicBool::new(false)),
+                tap: Arc::new(Mutex::new(None)),
+                level: level_thread.clone(),
+            };
+            let publish = |stream: &Option<WarmStream>, wanted: &Option<String>| {
+                let next = device_status(stream.as_ref().map(WarmStream::facts).as_ref(), wanted.as_deref());
+                let mut last = status_thread.lock().unwrap();
+                if last.as_ref() != Some(&next) {
+                    crate::applog!("audio: device status -> {next:?}");
+                    on_status(&next);
+                    *last = Some(next);
+                }
+            };
 
             // The stream is built once and kept around *paused* between
             // recordings rather than torn down after every `Stop` — device
             // enumeration + format negotiation (the expensive part) happens
-            // here, ahead of time, instead of on the hotkey's critical path.
-            // `Start` then only needs `stream.play()`, which is fast, so
-            // speech spoken in the first moments after the hotkey fires
-            // isn't lost waiting for the driver to spin up from cold.
-            // Rebuilt only when the selected device actually changes (see
-            // `requested_device` below) or when reuse fails outright.
-            let mut current: Option<WarmStream> = build_warm_stream(
-                samples.clone(),
-                level_thread.clone(),
-                selected_device_thread.lock().unwrap().clone(),
-            );
+            // ahead of time instead of on the hotkey's critical path, so
+            // speech in the first moments after the hotkey isn't lost
+            // waiting for the driver to spin up. It's only rebuilt when
+            // `rebuild_reason` says it's no longer the right stream.
+
+            // Makes sure `current` is the right stream and playing.
+            let ensure_playing = |current: &mut Option<WarmStream>| {
+                let device_name = selected_device_thread.lock().unwrap().clone();
+                let facts = current.as_ref().map(WarmStream::facts);
+                if let Some(reason) = rebuild_reason(
+                    facts.as_ref(),
+                    device_name.as_deref(),
+                    |name| list_device_names().iter().any(|d| d == name),
+                    default_device_name,
+                ) {
+                    crate::applog!("audio: rebuilding stream ({reason})");
+                    *current = build_warm_stream(&sinks, device_name.clone());
+                }
+
+                if current.as_ref().and_then(|cs| cs.stream.play().ok()).is_none() {
+                    crate::applog!("audio: resuming warm stream failed, rebuilding fresh");
+                    *current = build_warm_stream(&sinks, device_name.clone());
+                    match current.as_ref().map(|cs| cs.stream.play()) {
+                        Some(Ok(())) => crate::applog!("audio: stream playing (rebuilt)"),
+                        Some(Err(err)) => crate::applog!("audio: stream.play() failed after rebuild: {err}"),
+                        None => crate::applog!("audio: failed to start capture"),
+                    }
+                }
+                publish(current, &device_name);
+            };
+
+            let pause_if_unused = |current: &Option<WarmStream>| {
+                let tap_attached = sinks.tap.lock().unwrap().is_some();
+                if sinks.buffering.load(Ordering::SeqCst) || tap_attached {
+                    return;
+                }
+                if let Some(cs) = current {
+                    if let Err(err) = cs.stream.pause() {
+                        crate::applog!("audio: stream.pause() failed: {err}");
+                    }
+                }
+                // Otherwise the widget's level meter would hold whatever
+                // the last in-flight callback reported.
+                level_thread.store(0.0f32.to_bits(), Ordering::Relaxed);
+            };
+
+            // cpal starts a stream as soon as it's built, so pause right away:
+            // otherwise the mic is live (and the macOS mic indicator lit)
+            // from launch, with nobody listening.
+            let initial = selected_device_thread.lock().unwrap().clone();
+            let mut current = build_warm_stream(&sinks, initial.clone());
+            pause_if_unused(&current);
+            publish(&current, &initial);
 
             for command in rx {
                 match command {
                     AudioCommand::Start => {
-                        samples.lock().unwrap().clear();
-                        let device_name = selected_device_thread.lock().unwrap().clone();
-
-                        let stale = current
-                            .as_ref()
-                            .map(|cs| cs.requested_device != device_name)
-                            .unwrap_or(true);
-                        if stale {
-                            crate::applog!(
-                                "audio: selected device changed (or no warm stream yet), rebuilding for {}",
-                                device_name.as_deref().unwrap_or("<system default>")
-                            );
-                            current = build_warm_stream(samples.clone(), level_thread.clone(), device_name.clone());
-                        }
-
-                        let played = current.as_ref().and_then(|cs| cs.stream.play().ok());
-                        if played.is_none() {
-                            // Reused stream failed to resume (e.g. a
-                            // Continuity/Bluetooth device dropped while
-                            // idle) — rebuild fresh once and retry, same
-                            // fallback the old per-recording path relied on.
-                            crate::applog!("audio: resuming warm stream failed, rebuilding fresh");
-                            current = build_warm_stream(samples.clone(), level_thread.clone(), device_name);
-                            match current.as_ref().map(|cs| cs.stream.play()) {
-                                Some(Ok(())) => crate::applog!("audio: stream playing (rebuilt)"),
-                                Some(Err(err)) => crate::applog!("audio: stream.play() failed after rebuild: {err}"),
-                                None => crate::applog!("audio: failed to start capture"),
-                            }
-                        } else {
-                            crate::applog!("audio: stream playing (warm)");
-                        }
+                        sinks.samples.lock().unwrap().clear();
+                        ensure_playing(&mut current);
+                        sinks.buffering.store(true, Ordering::SeqCst);
+                        crate::applog!("audio: recording");
                     }
                     AudioCommand::Stop(reply) => {
-                        crate::applog!("audio: stop requested");
-                        if let Some(cs) = &current {
-                            if let Err(err) = cs.stream.pause() {
-                                crate::applog!("audio: stream.pause() failed: {err}");
-                            }
-                        } else {
-                            crate::applog!("audio: stop requested but no stream was active");
-                        }
-                        // Otherwise the widget's level meter would hold on
-                        // whatever the last in-flight callback happened to
-                        // report, instead of resting at zero once idle.
-                        level_thread.store(0.0f32.to_bits(), Ordering::Relaxed);
-                        let captured = std::mem::take(&mut *samples.lock().unwrap());
-                        crate::applog!("audio: captured {} samples", captured.len());
+                        sinks.buffering.store(false, Ordering::SeqCst);
+                        pause_if_unused(&current);
+                        let captured = std::mem::take(&mut *sinks.samples.lock().unwrap());
+                        crate::applog!("audio: stopped, captured {} samples", captured.len());
                         let result = match &current {
                             Some(cs) if !captured.is_empty() => {
                                 write_wav(&captured, cs.sample_rate, cs.channels)
@@ -112,6 +156,17 @@ impl AudioHandle {
                             _ => Err("no audio captured".to_string()),
                         };
                         let _ = reply.send(result);
+                    }
+                    AudioCommand::SetTap(tap) => {
+                        let attach = tap.is_some();
+                        *sinks.tap.lock().unwrap() = tap;
+                        if attach {
+                            ensure_playing(&mut current);
+                            crate::applog!("audio: ambient tap attached");
+                        } else {
+                            pause_if_unused(&current);
+                            crate::applog!("audio: ambient tap detached");
+                        }
                     }
                 }
             }
@@ -121,11 +176,18 @@ impl AudioHandle {
             tx,
             selected_device,
             level,
+            status,
         }
     }
 
     pub fn start(&self) {
         let _ = self.tx.send(AudioCommand::Start);
+    }
+
+    /// Route every captured chunk to `tap` (ambient listening) until called
+    /// again with `None`.
+    pub fn set_tap(&self, tap: Option<Sender<AudioChunk>>) {
+        let _ = self.tx.send(AudioCommand::SetTap(tap));
     }
 
     pub fn stop(&self) -> Result<PathBuf, String> {
@@ -148,6 +210,11 @@ impl AudioHandle {
         self.selected_device.lock().unwrap().clone()
     }
 
+    /// Last published device status (`None` before the first stream build).
+    pub fn device_status(&self) -> Option<DeviceStatus> {
+        self.status.lock().unwrap().clone()
+    }
+
     /// Most recent input level, 0.0-1.0 — 0.0 at rest (not recording, or no
     /// callback has landed yet). Polled by `recording.rs`'s level-meter
     /// thread; not itself pushed anywhere, so reading it costs nothing when
@@ -157,35 +224,139 @@ impl AudioHandle {
     }
 }
 
+/// One callback's worth of captured audio, for the ambient listener.
+pub struct AudioChunk {
+    /// Interleaved, `channels` per frame, at `sample_rate`.
+    pub samples: Vec<f32>,
+    pub channels: u16,
+    pub sample_rate: u32,
+}
+
+/// Where each audio callback's samples go. Cloned into every stream built,
+/// so a rebuilt stream (device change) keeps feeding the same consumers.
+#[derive(Clone)]
+struct Sinks {
+    /// The push-to-talk recording buffer.
+    samples: Arc<Mutex<Vec<f32>>>,
+    /// Only while true do callbacks append to `samples` — the stream also
+    /// runs for ambient listening, and idle audio mustn't accumulate there.
+    buffering: Arc<AtomicBool>,
+    /// The ambient listener, if it's running.
+    tap: Arc<Mutex<Option<Sender<AudioChunk>>>>,
+    level: Arc<AtomicU32>,
+}
+
+impl Sinks {
+    fn deliver(&self, data: &[f32], channels: u16, sample_rate: u32) {
+        self.level.store(rms_level(data).to_bits(), Ordering::Relaxed);
+        if self.buffering.load(Ordering::Relaxed) {
+            self.samples.lock().unwrap().extend_from_slice(data);
+        }
+        if let Some(tap) = self.tap.lock().unwrap().as_ref() {
+            let _ = tap.send(AudioChunk { samples: data.to_vec(), channels, sample_rate });
+        }
+    }
+}
+
 /// A built (but not necessarily playing) input stream, kept alive between
 /// recordings so `Start` only has to call `play()` instead of paying the
-/// full device-open cost from cold. `requested_device` is whatever the
-/// caller asked for (`None` = system default) — compared against the
-/// currently-selected device on each `Start` to know whether this stream
-/// is still valid or needs rebuilding for a newly-picked device.
+/// full device-open cost from cold.
 struct WarmStream {
     stream: cpal::Stream,
+    /// What the caller asked for (`None` = system default).
     requested_device: Option<String>,
+    /// What actually opened.
+    resolved_name: String,
+    /// The requested device was unavailable and this is the system default
+    /// standing in for it.
+    fallback: bool,
+    /// Set by the stream's error callback (e.g. the device was unplugged
+    /// while idle). A dead stream can still report `play()` as Ok and then
+    /// deliver nothing, so it has to be rebuilt rather than resumed.
+    invalid: Arc<AtomicBool>,
     sample_rate: u32,
     channels: u16,
 }
 
+/// The parts of a `WarmStream` the rebuild decision needs, split out so the
+/// decision is testable without real audio hardware.
+#[derive(Clone, Debug)]
+struct StreamFacts {
+    requested: Option<String>,
+    resolved: String,
+    fallback: bool,
+    invalid: bool,
+}
+
+impl WarmStream {
+    fn facts(&self) -> StreamFacts {
+        StreamFacts {
+            requested: self.requested_device.clone(),
+            resolved: self.resolved_name.clone(),
+            fallback: self.fallback,
+            invalid: self.invalid.load(Ordering::SeqCst),
+        }
+    }
+}
+
+/// Why the warm stream can't be reused for a recording of `requested`, or
+/// `None` if it can. The probes are only called when relevant, since device
+/// enumeration isn't free.
+fn rebuild_reason(
+    facts: Option<&StreamFacts>,
+    requested: Option<&str>,
+    preferred_present: impl FnOnce(&str) -> bool,
+    default_now: impl FnOnce() -> Option<String>,
+) -> Option<&'static str> {
+    let Some(facts) = facts else {
+        return Some("no stream yet");
+    };
+    if facts.invalid {
+        return Some("stream reported an error");
+    }
+    if facts.requested.as_deref() != requested {
+        return Some("selected device changed");
+    }
+    match requested {
+        Some(name) if facts.fallback && preferred_present(name) => Some("preferred device is back"),
+        None if default_now().as_deref() != Some(facts.resolved.as_str()) => Some("system default device changed"),
+        _ => None,
+    }
+}
+
+fn device_status(stream: Option<&StreamFacts>, wanted: Option<&str>) -> DeviceStatus {
+    match (stream, wanted) {
+        (None, wanted) => DeviceStatus::Unavailable { wanted: wanted.map(str::to_string) },
+        (Some(s), Some(wanted)) if s.fallback => DeviceStatus::Fallback {
+            wanted: wanted.to_string(),
+            using: s.resolved.clone(),
+        },
+        (Some(s), Some(_)) => DeviceStatus::Preferred { using: s.resolved.clone() },
+        (Some(s), None) => DeviceStatus::SystemDefault { using: s.resolved.clone() },
+    }
+}
+
 /// Builds a stream for `device_name` (logging the resolved device/rate/
 /// channels), leaving it paused/not-yet-playing. `None` on failure — the
-/// caller falls back to treating capture as unavailable, same as before.
-fn build_warm_stream(
-    samples: Arc<Mutex<Vec<f32>>>,
-    level: Arc<AtomicU32>,
-    device_name: Option<String>,
-) -> Option<WarmStream> {
-    match open_with_retry_and_fallback(samples, level, device_name.as_deref()) {
-        Ok((stream, rate, chans, resolved_name)) => {
-            crate::applog!("audio: opened device '{resolved_name}' at {rate}Hz, {chans}ch");
+/// caller treats capture as unavailable.
+fn build_warm_stream(sinks: &Sinks, device_name: Option<String>) -> Option<WarmStream> {
+    match open_with_retry_and_fallback(sinks, device_name.as_deref()) {
+        Ok(opened) => {
+            crate::applog!(
+                "audio: opened device '{}' at {}Hz, {}ch{}",
+                opened.resolved_name,
+                opened.sample_rate,
+                opened.channels,
+                if opened.fallback { " (fallback)" } else { "" }
+            );
             Some(WarmStream {
-                stream,
+                stream: opened.stream,
                 requested_device: device_name,
-                sample_rate: rate,
-                channels: chans,
+                resolved_name: opened.resolved_name,
+                fallback: opened.fallback,
+                invalid: opened.invalid,
+                sample_rate: opened.sample_rate,
+                channels: opened.channels,
             })
         }
         Err(err) => {
@@ -210,28 +381,41 @@ pub fn default_device_name() -> Option<String> {
         .and_then(|d| d.name().ok())
 }
 
+struct OpenedStream {
+    stream: cpal::Stream,
+    sample_rate: u32,
+    channels: u16,
+    resolved_name: String,
+    fallback: bool,
+    invalid: Arc<AtomicBool>,
+}
+
 /// Continuity/Bluetooth input devices (e.g. "iPhone Microphone") can report
 /// a stale handle right after being selected — the underlying CoreAudio
 /// object gets renegotiated and a snapshot `Device` from a moment earlier
 /// no longer resolves. Retrying with a fresh enumeration usually recovers
-/// within a second; if it still won't open, fall back to the system default
-/// input rather than silently capturing nothing.
-fn open_with_retry_and_fallback(
-    samples: Arc<Mutex<Vec<f32>>>,
-    level: Arc<AtomicU32>,
-    device_name: Option<&str>,
-) -> Result<(cpal::Stream, u32, u16, String), String> {
+/// within a second. A device that isn't enumerated at all (unplugged,
+/// headset off) skips the retries, since sleeping won't bring it back and
+/// they'd only delay recording. Either way, fall back to the system default
+/// rather than silently capturing nothing.
+fn open_with_retry_and_fallback(sinks: &Sinks, device_name: Option<&str>) -> Result<OpenedStream, String> {
     const RETRIES: u32 = 3;
     let mut last_err = String::new();
 
-    for attempt in 0..RETRIES {
+    let present = device_name.map_or(true, |name| list_device_names().iter().any(|d| d == name));
+    let attempts = if present { RETRIES } else { 0 };
+    if !present {
+        last_err = format!("input device '{}' is not connected", device_name.unwrap_or_default());
+    }
+
+    for attempt in 0..attempts {
         if attempt > 0 {
             let delay = std::time::Duration::from_millis(300 * attempt as u64);
             crate::applog!("audio: retrying '{}' in {delay:?} (attempt {})", device_name.unwrap_or("<default>"), attempt + 1);
             std::thread::sleep(delay);
         }
-        match build_input_stream(samples.clone(), level.clone(), device_name) {
-            Ok(ok) => return Ok(ok),
+        match build_input_stream(sinks, device_name) {
+            Ok(opened) => return Ok(opened),
             Err(err) => {
                 crate::applog!("audio: attempt {} to open '{}' failed: {err}", attempt + 1, device_name.unwrap_or("<default>"));
                 last_err = err;
@@ -239,9 +423,9 @@ fn open_with_retry_and_fallback(
         }
     }
 
-    if device_name.is_some() {
-        crate::applog!("audio: '{}' unavailable after {RETRIES} attempts ({last_err}), falling back to system default", device_name.unwrap());
-        return build_input_stream(samples, level, None);
+    if let Some(name) = device_name {
+        crate::applog!("audio: '{name}' unavailable ({last_err}), falling back to system default");
+        return build_input_stream(sinks, None).map(|opened| OpenedStream { fallback: true, ..opened });
     }
 
     Err(last_err)
@@ -268,11 +452,7 @@ fn rms_level(samples: &[f32]) -> f32 {
     (rms * 15.0).clamp(0.0, 1.0).sqrt()
 }
 
-fn build_input_stream(
-    samples: Arc<Mutex<Vec<f32>>>,
-    level: Arc<AtomicU32>,
-    device_name: Option<&str>,
-) -> Result<(cpal::Stream, u32, u16, String), String> {
+fn build_input_stream(sinks: &Sinks, device_name: Option<&str>) -> Result<OpenedStream, String> {
     let host = cpal::default_host();
     let device = match device_name {
         Some(name) => host
@@ -294,71 +474,68 @@ fn build_input_stream(
     let sample_format = config.sample_format();
     let stream_config: StreamConfig = config.into();
 
-    let err_fn = |err| crate::applog!("audio stream error: {err}");
+    let invalid = Arc::new(AtomicBool::new(false));
+    let invalid_cb = invalid.clone();
+    let err_fn = move |err| {
+        crate::applog!("audio stream error: {err}");
+        invalid_cb.store(true, Ordering::SeqCst);
+    };
 
     // Logs once per stream, on whichever thread's callback happens to
     // deliver the first buffer — used to measure the gap between
     // stream.play() and real audio actually flowing (Continuity/Bluetooth
     // devices can have multi-second connection latency here).
-    let first_callback = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let first_callback = Arc::new(AtomicBool::new(false));
+    let note_first = move |frames: usize| {
+        if !first_callback.swap(true, Ordering::SeqCst) {
+            crate::applog!("audio: first callback received, {frames} frames");
+        }
+    };
 
+    let sinks = sinks.clone();
     let stream = match sample_format {
-        SampleFormat::F32 => {
-            let first_callback = first_callback.clone();
-            let level = level.clone();
-            device.build_input_stream(
-                &stream_config,
-                move |data: &[f32], _| {
-                    if !first_callback.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                        crate::applog!("audio: first callback received, {} frames", data.len());
-                    }
-                    level.store(rms_level(data).to_bits(), Ordering::Relaxed);
-                    samples.lock().unwrap().extend_from_slice(data);
-                },
-                err_fn,
-                None,
-            )
-        }
-        SampleFormat::I16 => {
-            let first_callback = first_callback.clone();
-            let level = level.clone();
-            device.build_input_stream(
-                &stream_config,
-                move |data: &[i16], _| {
-                    if !first_callback.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                        crate::applog!("audio: first callback received, {} frames", data.len());
-                    }
-                    let converted: Vec<f32> = data.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
-                    level.store(rms_level(&converted).to_bits(), Ordering::Relaxed);
-                    samples.lock().unwrap().extend_from_slice(&converted);
-                },
-                err_fn,
-                None,
-            )
-        }
-        SampleFormat::U16 => {
-            let first_callback = first_callback.clone();
-            let level = level.clone();
-            device.build_input_stream(
-                &stream_config,
-                move |data: &[u16], _| {
-                    if !first_callback.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                        crate::applog!("audio: first callback received, {} frames", data.len());
-                    }
-                    let converted: Vec<f32> =
-                        data.iter().map(|s| (*s as f32 / u16::MAX as f32) * 2.0 - 1.0).collect();
-                    level.store(rms_level(&converted).to_bits(), Ordering::Relaxed);
-                    samples.lock().unwrap().extend_from_slice(&converted);
-                },
-                err_fn,
-                None,
-            )
-        }
+        SampleFormat::F32 => device.build_input_stream(
+            &stream_config,
+            move |data: &[f32], _| {
+                note_first(data.len());
+                sinks.deliver(data, channels, sample_rate);
+            },
+            err_fn,
+            None,
+        ),
+        SampleFormat::I16 => device.build_input_stream(
+            &stream_config,
+            move |data: &[i16], _| {
+                note_first(data.len());
+                let converted: Vec<f32> = data.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
+                sinks.deliver(&converted, channels, sample_rate);
+            },
+            err_fn,
+            None,
+        ),
+        SampleFormat::U16 => device.build_input_stream(
+            &stream_config,
+            move |data: &[u16], _| {
+                note_first(data.len());
+                let converted: Vec<f32> =
+                    data.iter().map(|s| (*s as f32 / u16::MAX as f32) * 2.0 - 1.0).collect();
+                sinks.deliver(&converted, channels, sample_rate);
+            },
+            err_fn,
+            None,
+        ),
         other => return Err(format!("unsupported sample format: {other:?}")),
     }
     .map_err(|e| e.to_string())?;
 
-    Ok((stream, sample_rate, channels, resolved_name))
+    Ok(OpenedStream {
+        stream,
+        sample_rate,
+        channels,
+        resolved_name,
+        fallback: false,
+        invalid,
+    })
 }
 
 fn write_wav(samples: &[f32], sample_rate: u32, channels: u16) -> Result<PathBuf, String> {
@@ -420,5 +597,79 @@ mod tests {
         let quiet = vec![0.02; 100];
         let louder = vec![0.1; 100];
         assert!(rms_level(&louder) > rms_level(&quiet));
+    }
+    fn facts(requested: Option<&str>, resolved: &str, fallback: bool) -> StreamFacts {
+        StreamFacts {
+            requested: requested.map(str::to_string),
+            resolved: resolved.to_string(),
+            fallback,
+            invalid: false,
+        }
+    }
+
+    fn never_called_present(_: &str) -> bool {
+        panic!("device enumeration should not run for this case")
+    }
+
+    fn never_called_default() -> Option<String> {
+        panic!("default-device lookup should not run for this case")
+    }
+
+    #[test]
+    fn no_stream_needs_a_build() {
+        assert!(rebuild_reason(None, None, never_called_present, never_called_default).is_some());
+    }
+
+    #[test]
+    fn healthy_preferred_stream_is_reused_without_probing() {
+        let f = facts(Some("AIRHUG 28"), "AIRHUG 28", false);
+        assert_eq!(rebuild_reason(Some(&f), Some("AIRHUG 28"), never_called_present, never_called_default), None);
+    }
+
+    #[test]
+    fn an_errored_stream_is_rebuilt() {
+        let mut f = facts(Some("AIRHUG 28"), "AIRHUG 28", false);
+        f.invalid = true;
+        assert!(rebuild_reason(Some(&f), Some("AIRHUG 28"), never_called_present, never_called_default).is_some());
+    }
+
+    #[test]
+    fn picking_a_different_device_rebuilds() {
+        let f = facts(None, "MacBook Pro Microphone", false);
+        assert!(rebuild_reason(Some(&f), Some("AIRHUG 28"), never_called_present, never_called_default).is_some());
+    }
+
+    #[test]
+    fn fallback_recovers_once_the_preferred_device_returns() {
+        let f = facts(Some("AIRHUG 28"), "MacBook Pro Microphone", true);
+        assert!(rebuild_reason(Some(&f), Some("AIRHUG 28"), |_| true, never_called_default).is_some());
+        assert_eq!(rebuild_reason(Some(&f), Some("AIRHUG 28"), |_| false, never_called_default), None);
+    }
+
+    #[test]
+    fn system_default_change_rebuilds_only_when_no_device_is_picked() {
+        let f = facts(None, "MacBook Pro Microphone", false);
+        assert!(rebuild_reason(Some(&f), None, never_called_present, || Some("AirPods".to_string())).is_some());
+        assert_eq!(
+            rebuild_reason(Some(&f), None, never_called_present, || Some("MacBook Pro Microphone".to_string())),
+            None
+        );
+    }
+
+    #[test]
+    fn status_distinguishes_fallback_from_preferred_and_default() {
+        assert_eq!(
+            device_status(Some(&facts(Some("AIRHUG 28"), "MacBook Pro Microphone", true)), Some("AIRHUG 28")),
+            DeviceStatus::Fallback { wanted: "AIRHUG 28".into(), using: "MacBook Pro Microphone".into() }
+        );
+        assert_eq!(
+            device_status(Some(&facts(Some("AIRHUG 28"), "AIRHUG 28", false)), Some("AIRHUG 28")),
+            DeviceStatus::Preferred { using: "AIRHUG 28".into() }
+        );
+        assert_eq!(
+            device_status(Some(&facts(None, "MacBook Pro Microphone", false)), None),
+            DeviceStatus::SystemDefault { using: "MacBook Pro Microphone".into() }
+        );
+        assert_eq!(device_status(None, Some("AIRHUG 28")), DeviceStatus::Unavailable { wanted: Some("AIRHUG 28".into()) });
     }
 }

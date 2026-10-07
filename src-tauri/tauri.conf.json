@@ -56,7 +56,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "resources/wespeaker_en_voxceleb_resnet34_LM.onnx": "models/wespeaker_en_voxceleb_resnet34_LM.onnx"
+      "resources/wespeaker_en_voxceleb_resnet34_LM.onnx": "models/wespeaker_en_voxceleb_resnet34_LM.onnx",
+      "resources/silero_vad.onnx": "models/silero_vad.onnx"
     },
     "macOS": {
       "minimumSystemVersion": "12.0"

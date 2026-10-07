@@ -1,7 +1,9 @@
+mod ambient;
 mod app_detect;
 mod audio;
 mod backtrack;
 mod boilerplate;
+mod capture;
 mod clipboard;
 mod config;
 mod doubletap;
@@ -10,7 +12,9 @@ mod history;
 mod insights;
 mod isolate;
 mod llm;
+mod lifecycle;
 mod logging;
+mod mic_usage;
 mod models;
 mod modes;
 mod paste;
@@ -25,7 +29,6 @@ mod voice_isolation;
 mod webhook;
 mod widget;
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -50,7 +53,7 @@ use logging::{clear_logs, get_logs};
 use models::{download_model, list_models, set_active_model};
 use modes::{get_modes, list_running_apps, set_modes};
 use recording::{
-    get_active_input_device, get_copy_only, get_isolated_voice_enabled, get_last_frontmost_app,
+    get_active_input_device, get_audio_device_status, get_copy_only, get_isolated_voice_enabled, get_last_frontmost_app,
     get_next_mode_override, get_press_enter_enabled, get_vocabulary, list_input_devices,
     set_copy_only, set_input_device, set_isolated_voice_enabled, set_next_mode_override,
     set_press_enter_enabled, set_vocabulary, toggle_recording, toggle_recording_command,
@@ -90,6 +93,10 @@ pub fn tray_base_icon() -> tauri::image::Image<'static> {
 /// asset checked into the repo. Recomputed on each recording start rather
 /// than cached; a 32x32 pixel loop is sub-millisecond.
 pub fn recording_tray_icon(base: &tauri::image::Image) -> tauri::image::Image<'static> {
+    tray_icon_with_dot(base, [220, 38, 38])
+}
+
+fn tray_icon_with_dot(base: &tauri::image::Image, [r, g, b]: [u8; 3]) -> tauri::image::Image<'static> {
     let width = base.width();
     let height = base.height();
     let mut rgba = base.rgba().to_vec();
@@ -104,15 +111,40 @@ pub fn recording_tray_icon(base: &tauri::image::Image) -> tauri::image::Image<'s
             let dy = y as f32 + 0.5 - cy;
             if dx * dx + dy * dy <= radius * radius {
                 let idx = ((y * width + x) * 4) as usize;
-                rgba[idx] = 220;
-                rgba[idx + 1] = 38;
-                rgba[idx + 2] = 38;
+                rgba[idx] = r;
+                rgba[idx + 1] = g;
+                rgba[idx + 2] = b;
                 rgba[idx + 3] = 255;
             }
         }
     }
 
     tauri::image::Image::new_owned(rgba, width, height)
+}
+
+/// Sets the tray icon from current state: red dot while recording, green
+/// dot while ambient listening is awake, plain template glyph otherwise.
+/// Template mode is off for the colored variants since template images
+/// can't show color. Best-effort: a missing tray is skipped.
+pub fn refresh_tray_indicator(app: &tauri::AppHandle) {
+    let Some(tray) = app.tray_by_id(TRAY_ICON_ID) else {
+        return;
+    };
+    let recording = app
+        .try_state::<RecordingState>()
+        .is_some_and(|s| !matches!(s.capture.state(), capture::CaptureState::Idle));
+    let listening = app
+        .try_state::<ambient::AmbientState>()
+        .is_some_and(|s| s.phase() == ambient::AmbientPhase::Listening);
+    let base = tray_base_icon();
+    let (icon, template) = if recording {
+        (recording_tray_icon(&base), false)
+    } else if listening {
+        (tray_icon_with_dot(&base, [34, 170, 120]), false)
+    } else {
+        (base, true)
+    };
+    let _ = tray.set_icon_with_as_template(Some(icon), template);
 }
 
 #[tauri::command]
@@ -205,8 +237,11 @@ pub fn run() {
                     let state = app.state::<PushToTalkState>();
                     let cfg = state.current.lock().unwrap().clone();
                     if let Ok(expected) = shortcut::to_shortcut(&cfg) {
+                        if *triggered == expected {
+                            crate::applog!("hotkey: {:?}", event.state);
+                        }
                         if *triggered == expected && event.state == PressState::Pressed {
-                            toggle_recording(app);
+                            toggle_recording(app, capture::Trigger::Hotkey);
                         }
                     }
                 })
@@ -214,11 +249,15 @@ pub fn run() {
         )
         .invoke_handler(tauri::generate_handler![
             toggle_recording_command,
+            ambient::get_ambient_enabled,
+            ambient::set_ambient_enabled,
+            ambient::get_ambient_phase,
             open_settings,
             get_autostart_enabled,
             set_autostart_enabled,
             list_input_devices,
             get_active_input_device,
+            get_audio_device_status,
             set_input_device,
             get_shortcut,
             set_shortcut,
@@ -276,6 +315,22 @@ pub fn run() {
             get_insights,
         ])
         .setup(|app| {
+            use tauri::Manager;
+            match app.path().app_data_dir() {
+                Ok(dir) => {
+                    if let Err(err) = logging::init_file(dir.join("app.log")) {
+                        eprintln!("logging: could not open app.log: {err}");
+                    }
+                }
+                Err(err) => eprintln!("logging: no app data dir: {err}"),
+            }
+            crate::applog!(
+                "lifecycle: started version={} pid={}",
+                app.package_info().version,
+                std::process::id()
+            );
+            lifecycle::spawn_watchers();
+
             #[cfg(target_os = "macos")]
             {
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -296,8 +351,10 @@ pub fn run() {
                 doubletap::ensure_listener_started(app.handle());
             }
 
-            let audio = AudioHandle::spawn();
-            audio.set_device(saved_config.input_device.clone());
+            let status_app = app.handle().clone();
+            let audio = AudioHandle::spawn(saved_config.input_device.clone(), move |status| {
+                let _ = status_app.emit("audio-device-status", status);
+            });
 
             let model_id = saved_config
                 .active_model
@@ -312,36 +369,44 @@ pub fn run() {
             app.manage(RecordingState {
                 audio,
                 whisper,
-                is_recording: AtomicBool::new(false),
+                capture: capture::CaptureController::new(),
+                capture_op: Mutex::new(()),
                 active_app: Mutex::new(None),
                 mode_override: Mutex::new(None),
-                recording_purpose: Mutex::new(None),
             });
 
             let voice_isolation = VoiceIsolationState::new();
             voice_isolation.load_persisted(app.handle());
             app.manage(voice_isolation);
 
+            app.manage(ambient::AmbientState::new());
+            if saved_config.ambient_enabled {
+                if let Err(err) = ambient::start(app.handle()) {
+                    crate::applog!("ambient: enabled in config but couldn't start: {err}");
+                }
+            }
+
             // Deep-link hooks for external automation (Raycast, Hammerspoon,
             // Alfred, shell scripts): `open devwhisper://toggle-recording`
-            // and friends. start/stop are idempotent — calling
-            // start-recording while already recording is a no-op rather
-            // than toggling it off, so a script doesn't need to track state
-            // itself.
+            // and friends. start/stop are idempotent — start while already
+            // recording is rejected (and logged) rather than toggling off,
+            // so a script doesn't need to track state itself.
             let deep_link_app = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
+                use capture::{Request, Trigger::DeepLink};
                 for url in event.urls() {
                     let action = url.host_str().unwrap_or("");
                     crate::applog!("deep-link: received action={action:?} url={url}");
-                    let state = deep_link_app.state::<RecordingState>();
-                    let is_recording = state.is_recording.load(std::sync::atomic::Ordering::SeqCst);
-                    match action {
-                        "toggle-recording" => recording::toggle_recording(&deep_link_app),
-                        "start-recording" if !is_recording => recording::toggle_recording(&deep_link_app),
-                        "stop-recording" if is_recording => recording::toggle_recording(&deep_link_app),
-                        "start-recording" | "stop-recording" => {}
-                        other => crate::applog!("deep-link: unrecognized action {other:?}"),
-                    }
+                    let request = match action {
+                        "toggle-recording" => Request::ToggleDictation(DeepLink),
+                        "start-recording" => Request::StartDictation(DeepLink),
+                        "stop-recording" => Request::StopDictation(DeepLink),
+                        other => {
+                            crate::applog!("deep-link: unrecognized action {other:?}");
+                            continue;
+                        }
+                    };
+                    recording::request_dictation(&deep_link_app, request);
                 }
             });
 
@@ -433,7 +498,7 @@ pub fn run() {
                 .icon_as_template(true)
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "toggle_recording" => toggle_recording(app),
+                    "toggle_recording" => toggle_recording(app, capture::Trigger::Tray),
                     "toggle_widget" => {
                         if let Some(window) = app.get_webview_window("widget") {
                             let visible = window.is_visible().unwrap_or(false);
@@ -455,8 +520,9 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app, event| lifecycle::log_run_event(&event));
 }
 
 #[cfg(test)]

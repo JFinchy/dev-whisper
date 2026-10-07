@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -75,14 +76,25 @@ fn read_all(app: &AppHandle) -> Vec<HistoryEntry> {
         .collect()
 }
 
+/// Serializes every write to `history.jsonl`. Rewrites (summary fill-in,
+/// edits, deletes, purges) are read-modify-write; without this, a new
+/// dictation appended mid-rewrite — e.g. while the journal summary for the
+/// previous one was being saved — was silently dropped when the rewrite
+/// landed.
+static HISTORY_LOCK: Mutex<()> = Mutex::new(());
+
+/// Caller must hold `HISTORY_LOCK`. Writes a temp file and renames it into
+/// place so readers never see a half-written file.
 fn write_all(app: &AppHandle, entries: &[HistoryEntry]) -> Result<(), String> {
     let path = history_path(app)?;
-    let mut file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("jsonl.tmp");
+    let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
     for entry in entries {
         let line = serde_json::to_string(entry).map_err(|e| e.to_string())?;
         writeln!(file, "{line}").map_err(|e| e.to_string())?;
     }
-    Ok(())
+    file.sync_all().map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
 
 /// Appends one entry — only called after a transcript actually got pasted,
@@ -116,6 +128,7 @@ pub fn append_entry(
     let Ok(line) = serde_json::to_string(&entry) else {
         return timestamp_ms;
     };
+    let _guard = HISTORY_LOCK.lock().unwrap();
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = writeln!(file, "{line}");
         // The Settings window (if open) has no other way to know a new
@@ -131,6 +144,7 @@ pub fn append_entry(
 /// the background summarization call can finish after the user cleared
 /// their history, and that shouldn't resurrect it.
 pub fn set_entry_summary(app: &AppHandle, timestamp_ms: u64, summary: String) {
+    let _guard = HISTORY_LOCK.lock().unwrap();
     let mut entries = read_all(app);
     let Some(entry) = entries.iter_mut().find(|e| e.timestamp_ms == timestamp_ms) else {
         return;
@@ -152,6 +166,7 @@ pub fn all_entries(app: &AppHandle) -> Vec<HistoryEntry> {
 /// Deletes entries older than the configured retention window. Called at
 /// startup; also safe to call after the user changes the retention setting.
 pub fn purge_old_entries(app: &AppHandle, retention_days: u32) {
+    let _guard = HISTORY_LOCK.lock().unwrap();
     let cutoff_ms = now_ms().saturating_sub(retention_days as u64 * 24 * 60 * 60 * 1000);
     let entries = read_all(app);
     let kept: Vec<HistoryEntry> = entries
@@ -230,6 +245,7 @@ pub fn reprocess_history_text(
 /// there.
 #[tauri::command]
 pub fn update_history_entry_text(app: AppHandle, timestamp_ms: u64, text: String) {
+    let _guard = HISTORY_LOCK.lock().unwrap();
     let mut entries = read_all(&app);
     let Some(entry) = entries.iter_mut().find(|e| e.timestamp_ms == timestamp_ms) else {
         return;
@@ -243,11 +259,13 @@ pub fn update_history_entry_text(app: AppHandle, timestamp_ms: u64, text: String
 
 #[tauri::command]
 pub fn clear_history(app: AppHandle) {
+    let _guard = HISTORY_LOCK.lock().unwrap();
     let _ = write_all(&app, &[]);
 }
 
 #[tauri::command]
 pub fn delete_history_entry(app: AppHandle, timestamp_ms: u64) {
+    let _guard = HISTORY_LOCK.lock().unwrap();
     let entries = read_all(&app);
     let kept: Vec<HistoryEntry> = entries
         .into_iter()

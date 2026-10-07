@@ -164,11 +164,16 @@ struct TagEntry {
 
 fn prompt_for_mode(mode: crate::modes::Behavior, text: &str, custom_instructions: Option<&str>) -> String {
     let instruction = match mode {
+        // Terminal text is usually a message to a coding agent or prose,
+        // not a command to synthesize. The old "rewrite as a single shell
+        // command" prompt turned ordinary sentences into `ls -la` and
+        // invented grep pipelines; the deterministic `format_as_cli`
+        // patterns already cover the real spoken-command cases.
         crate::modes::Behavior::Cli => {
-            "Rewrite the following dictated text as a single shell command. Output ONLY the \
-             command itself — no explanation, no markdown code fences, no surrounding quotes. \
-             If it doesn't actually describe a command, just clean up filler words and output \
-             the cleaned text instead."
+            "Clean up this dictated text: fix filler words, false starts, and obvious \
+             transcription errors. Never turn it into a shell command or add anything that \
+             wasn't said. Keep file names, paths, flags, code, and technical terms exactly as \
+             written. Output ONLY the cleaned text, nothing else."
         }
         crate::modes::Behavior::Casual => {
             "Clean up this dictated text: fix filler words, false starts, and grammar, but keep \
@@ -238,6 +243,41 @@ pub fn refine(
     } else {
         Ok(cleaned)
     }
+}
+
+/// Why a refinement result shouldn't be used, if it looks broken rather
+/// than cleaned: a chat-style preamble, leftover fences, words glued into
+/// one blob, or most of the message gone. Small local models do all of
+/// these occasionally; falling back to the unrefined (already formatted)
+/// text is always safer than pasting them.
+pub fn degenerate_output(input: &str, output: &str) -> Option<String> {
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return Some("empty output".to_string());
+    }
+    if trimmed.contains("```") {
+        return Some("markdown fences".to_string());
+    }
+    let lower = trimmed.to_lowercase();
+    if ["sure,", "sure!", "here's", "here is", "certainly", "of course"]
+        .iter()
+        .any(|m| lower.starts_with(m))
+    {
+        return Some("conversational preamble".to_string());
+    }
+
+    let input_words = input.split_whitespace().count();
+    let output_words = trimmed.split_whitespace().count();
+    if input_words >= 4 && trimmed.split_whitespace().any(|w| w.chars().count() > 30) {
+        return Some("words glued together".to_string());
+    }
+    if input_words >= 8 && output_words < input_words / 3 {
+        return Some(format!("dropped from {input_words} to {output_words} words"));
+    }
+    if input_words >= 4 && output_words > input_words * 2 + 10 {
+        return Some(format!("grew from {input_words} to {output_words} words"));
+    }
+    None
 }
 
 /// Below this word count, a dictation is already about as short as a
@@ -462,76 +502,17 @@ mod tests {
         }
     }
 
-    /// Loose, structural quality gates for `refine()` output — not
-    /// exact-match assertions (the model's wording varies run to run), but
-    /// checks shaped specifically around failure modes actually observed in
-    /// manual testing:
-    /// - a chat-tuned model wrapping its answer in a conversational
-    ///   preamble ("Sure, here's...") instead of just returning the
-    ///   cleaned text the prompt asked for,
-    /// - leftover markdown fences,
-    /// - collapsing free-form prose into a single-token slug (2026-09-09:
-    ///   CLI mode's "rewrite as a single shell command" prompt did this to
-    ///   ordinary agent-chat dictation — see `modes::is_literal_cli_directive`,
-    ///   which now stops that input from reaching `refine()` at all in the
-    ///   real pipeline, but the eval case below is kept to track whether the
-    ///   underlying prompt/model combo itself ever gets more reliable),
-    /// - gutting the message under a plain "clean up filler words" prompt
-    ///   rather than lightly editing it.
-    fn check_refinement_quality(
-        mode: crate::modes::Behavior,
-        input: &str,
-        output: &str,
-    ) -> Result<(), String> {
-        if output.trim().is_empty() {
-            return Err("output is empty".to_string());
-        }
-        if output.contains("```") {
-            return Err(format!("output still has markdown fences: {output:?}"));
-        }
-        let lower = output.trim().to_lowercase();
-        let preamble_markers = ["sure,", "sure!", "here's", "here is", "certainly", "of course"];
-        if preamble_markers.iter().any(|m| lower.starts_with(m)) {
-            return Err(format!(
-                "output looks like a conversational preamble, not cleaned dictation: {output:?}"
-            ));
-        }
-
-        let input_words = input.split_whitespace().count();
-        let output_words = output.split_whitespace().count();
-        match mode {
-            crate::modes::Behavior::Cli => {
-                // A real single-command rewrite is expected to be short —
-                // but collapsing several words of prose into one no-space
-                // token isn't a command, it's the slug failure mode.
-                if input_words > 4 && output_words <= 1 && output.trim().len() > 20 {
-                    return Err(format!(
-                        "output collapsed {input_words} input words into a single token: {output:?}"
-                    ));
-                }
-            }
-            crate::modes::Behavior::Plain | crate::modes::Behavior::Casual => {
-                // Cleanup should trim filler, not gut the message — a >70%
-                // reduction on anything but a very short input reads as a
-                // rewrite rather than a cleanup.
-                if input_words >= 8 && output_words < input_words / 3 {
-                    return Err(format!(
-                        "output dropped from {input_words} to {output_words} words, looks \
-                         rewritten rather than cleaned: {output:?}"
-                    ));
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Representative dictations per mode, picked from real manual-testing
-    /// reports rather than invented examples. Not exhaustive — add to this
-    /// as new quality issues turn up in actual use, the same way the
-    /// deterministic passes' unit tests grew from real Whisper output.
+    /// reports rather than invented examples. The CLI prose case is the
+    /// exact sentence the old "rewrite as a shell command" prompt turned
+    /// into a bogus command. Add to this as new issues turn up.
     const EVAL_CASES: &[(crate::modes::Behavior, &str)] = &[
-        (crate::modes::Behavior::Cli, "git commit update the readme file"),
-        (crate::modes::Behavior::Cli, "make directory for the new service"),
+        (
+            crate::modes::Behavior::Cli,
+            "Let's test and see what happens when we try and paste in here. If it truly is just a \
+             problem with this terminal, we still need to work it out.",
+        ),
+        (crate::modes::Behavior::Cli, "um look at recording.rs and uh fix the paste function"),
         (
             crate::modes::Behavior::Plain,
             "um so I think we should probably go with the the second approach because it's \
@@ -543,12 +524,14 @@ mod tests {
         ),
     ];
 
-    /// Runs `EVAL_CASES` against a real, locally-running Ollama instance and
-    /// checks each output with `check_refinement_quality`. A smoke-test net
-    /// for real-world prompt/model quality regressions — not a strict
-    /// correctness check, since LLM output isn't deterministic — matching
-    /// the "skip if Ollama unreachable" convention of the other live tests
-    /// in this file rather than gating on it with `#[ignore]`.
+    /// Runs `EVAL_CASES` against a real, locally-running Ollama instance,
+    /// checking each output with the same `degenerate_output` guard the
+    /// real pipeline uses, plus: CLI output must never look like a shell
+    /// command synthesized from prose, and file names must survive.
+    /// Not a strict correctness check (LLM output isn't deterministic);
+    /// skips if Ollama isn't reachable, like the other live tests here.
+    /// Set `DW_EVAL_MODEL=qwen3.5:4b` (or whatever Settings uses) to eval
+    /// the model you actually dictate with instead of Ollama's first one.
     #[test]
     fn eval_suite_against_real_ollama() {
         let models = list_ollama_models();
@@ -556,23 +539,28 @@ mod tests {
             eprintln!("skipping: no Ollama models found (is `ollama serve` running?)");
             return;
         }
-        let model = &models[0];
+        let model = &std::env::var("DW_EVAL_MODEL").unwrap_or_else(|_| models[0].clone());
 
         let mut failures = Vec::new();
         for &(mode, input) in EVAL_CASES {
-            // Mirrors `recording.rs`'s real pipeline: `apply_mode`'s
-            // mechanical pass runs first, and `refine()` only ever sees
-            // its output, never the raw transcript directly — skipping
-            // this step here made an earlier version of this suite
-            // exercise `refine()` on text production never actually sends
-            // it (e.g. literal "make directory ..." instead of the
-            // already-`mkdir`-formatted string).
+            // Mirrors the real pipeline: `refine()` only ever sees
+            // `apply_mode`'s output, never the raw transcript.
             let pre_formatted = crate::modes::apply_mode(mode, input);
             match refine(mode, &pre_formatted, model, None) {
                 Ok(output) => {
-                    eprintln!("[{mode:?}] {input:?} -> (pre-formatted: {pre_formatted:?}) -> {output:?}");
-                    if let Err(reason) = check_refinement_quality(mode, &pre_formatted, &output) {
-                        failures.push(format!("{mode:?} {input:?}: {reason}"));
+                    eprintln!("[{mode:?}] {input:?} -> {output:?}");
+                    if let Some(reason) = degenerate_output(&pre_formatted, &output) {
+                        failures.push(format!("{mode:?} {input:?}: {reason}: {output:?}"));
+                    }
+                    let first = output.split_whitespace().next().unwrap_or("").to_lowercase();
+                    if mode == crate::modes::Behavior::Cli
+                        && ["ls", "grep", "cd", "echo", "cat", "find", "awk", "sed"].contains(&first.as_str())
+                        && !pre_formatted.to_lowercase().starts_with(&first)
+                    {
+                        failures.push(format!("{mode:?} {input:?}: turned prose into a command: {output:?}"));
+                    }
+                    if pre_formatted.contains("recording.rs") && !output.contains("recording.rs") {
+                        failures.push(format!("{mode:?} {input:?}: lost the file reference: {output:?}"));
                     }
                 }
                 Err(err) => failures.push(format!("{mode:?} {input:?}: refine() failed: {err}")),
@@ -582,36 +570,26 @@ mod tests {
         assert!(failures.is_empty(), "eval suite failures:\n{}", failures.join("\n"));
     }
 
-    /// Documents a known, still-open weakness in the raw Cli prompt/model
-    /// combo rather than the pipeline as a whole: `refine()` called
-    /// directly (bypassing `modes::is_literal_cli_directive`'s production
-    /// gate) on ordinary agent-chat prose reliably reproduces the
-    /// 2026-09-09 slug bug. `#[ignore]`d so a perpetually-known model
-    /// limitation doesn't keep the default suite red — run explicitly
-    /// (`cargo test --lib -- --ignored eval_suite_prompt_weakness`) after a
-    /// model/prompt change to see whether this has actually improved.
     #[test]
-    #[ignore]
-    fn eval_suite_prompt_weakness_cli_mode_mishandles_agent_chat_prose() {
-        let models = list_ollama_models();
-        if models.is_empty() {
-            eprintln!("skipping: no Ollama models found (is `ollama serve` running?)");
-            return;
-        }
-        let model = &models[0];
-        let input = "Let's test and see what happens when we try and paste in here. If it \
-                     truly is just a problem with this terminal, we still need to work it out.";
+    fn degenerate_output_flags_real_failure_shapes() {
+        let prose = "Let's test and see what happens when we try and paste in here";
+        assert!(degenerate_output(prose, "test_paste_what_happens_truly_problem_terminal_work_out").is_some());
+        assert!(degenerate_output(prose, "```bash\nls -la\n```").is_some());
+        assert!(degenerate_output(prose, "Sure, here's the cleaned text: ...").is_some());
+        assert!(degenerate_output(prose, "ls -la").is_some());
+        assert!(degenerate_output(prose, "").is_some());
+    }
 
-        let pre_formatted = crate::modes::apply_mode(crate::modes::Behavior::Cli, input);
-        let output = refine(crate::modes::Behavior::Cli, &pre_formatted, model, None)
-            .expect("refine() call itself should succeed");
-        eprintln!("[Cli] {input:?} -> (pre-formatted: {pre_formatted:?}) -> {output:?}");
-
-        // Intentionally asserting the *bad* outcome still reproduces —
-        // this test passing means the underlying weakness is still present
-        // (expected today); it failing is good news worth investigating.
-        check_refinement_quality(crate::modes::Behavior::Cli, &pre_formatted, &output)
-            .expect_err("expected the known slug-collapse weakness to still reproduce");
+    #[test]
+    fn degenerate_output_accepts_a_normal_cleanup() {
+        assert_eq!(
+            degenerate_output(
+                "um so I think we should probably go with the the second approach",
+                "I think we should probably go with the second approach."
+            ),
+            None
+        );
+        assert_eq!(degenerate_output("fix bug", "Fix the bug."), None);
     }
 
     #[test]

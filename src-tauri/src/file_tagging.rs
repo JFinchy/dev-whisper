@@ -97,7 +97,25 @@ fn tag_token(token: &str) -> String {
 /// the pasted text picks it up as a real file reference instead of plain
 /// prose.
 pub fn tag_file_references(text: &str) -> String {
-    text.split_whitespace().map(tag_token).collect::<Vec<_>>().join(" ")
+    // Walk runs of non-whitespace and keep the whitespace between them as-is:
+    // re-joining with single spaces used to flatten dictated new lines and
+    // numbered lists into one line in terminals.
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut word_start = None;
+    for (i, c) in text.char_indices() {
+        if c.is_whitespace() {
+            if let Some(start) = word_start.take() {
+                out.push_str(&tag_token(&text[start..i]));
+            }
+            out.push(c);
+        } else if word_start.is_none() {
+            word_start = Some(i);
+        }
+    }
+    if let Some(start) = word_start {
+        out.push_str(&tag_token(&text[start..]));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -153,5 +171,18 @@ mod tests {
     #[test]
     fn empty_string_returns_empty() {
         assert_eq!(tag_file_references(""), "");
+    }
+
+    #[test]
+    fn keeps_line_breaks_and_list_structure() {
+        assert_eq!(
+            tag_file_references("todo:\n1. fix paste.rs\n2. ship it"),
+            "todo:\n1. fix @paste.rs\n2. ship it"
+        );
+    }
+
+    #[test]
+    fn already_tagged_references_are_left_alone() {
+        assert_eq!(tag_file_references("look at @recording.rs now"), "look at @recording.rs now");
     }
 }

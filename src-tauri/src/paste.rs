@@ -1,6 +1,8 @@
 use rdev::{simulate, EventType, Key};
 use std::{thread, time::Duration};
 
+const PASTE_SETTLE_BEFORE_ENTER: Duration = Duration::from_millis(150);
+
 #[cfg(target_os = "macos")]
 fn accessibility_trusted() -> bool {
     macos_accessibility_client::accessibility::application_is_trusted()
@@ -35,14 +37,12 @@ pub fn paste_text(text: &str) -> Result<(), String> {
 
     copy_text(text)?;
 
-    // `arboard::Clipboard::set_text` above can return `Ok` before macOS has
-    // actually propagated the write to the pasteboard — a fixed sleep alone
-    // doesn't guarantee it's landed, and the frontmost app's Cmd+V can then
-    // win the race and paste whatever was on the clipboard *before* this
-    // call (observed as dictated text mysteriously coming out as stale,
-    // unrelated clipboard content). Read the clipboard back and confirm it
-    // matches before pasting, re-issuing the write if it doesn't rather
-    // than trusting a single guessed delay.
+    // Read the clipboard back and confirm it holds this text before sending
+    // Cmd+V, re-issuing the write if not, rather than trusting one fixed
+    // sleep for the pasteboard write to land. Defensive: the stale-looking
+    // terminal pastes this was first added for turned out to be the old CLI
+    // LLM prompt rewriting dictation into shell commands, not a clipboard
+    // race.
     let mut verified = false;
     for attempt in 0..5 {
         thread::sleep(Duration::from_millis(if attempt == 0 { 50 } else { 30 }));
@@ -89,6 +89,10 @@ pub fn press_enter() -> Result<(), String> {
         );
     }
 
+    // Electron/xterm.js-based terminals (VS Code, Orca, Hyper) and Warp
+    // handle a paste asynchronously; a Return sent right behind Cmd+V can be
+    // processed first and submit an empty or partial line.
+    thread::sleep(PASTE_SETTLE_BEFORE_ENTER);
     send(EventType::KeyPress(Key::Return))?;
     send(EventType::KeyRelease(Key::Return))?;
     Ok(())

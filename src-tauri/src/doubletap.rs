@@ -77,7 +77,13 @@ pub fn ensure_listener_started(app: &AppHandle) {
                     // rather than immediately re-triggering.
                     last_tap = None;
                     crate::applog!("doubletap: Fn double-tap detected, toggling recording");
-                    crate::recording::toggle_recording(&app);
+                    // Off the event-tap callback thread: stopping a recording
+                    // blocks on writing the WAV, and macOS disables an event
+                    // tap whose callback stalls, silently killing double-tap.
+                    let app = app.clone();
+                    std::thread::spawn(move || {
+                        crate::recording::toggle_recording(&app, crate::capture::Trigger::DoubleTapFn);
+                    });
                 } else {
                     last_tap = Some(now);
                 }

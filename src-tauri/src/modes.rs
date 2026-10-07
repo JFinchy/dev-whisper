@@ -236,18 +236,8 @@ fn normalize_cli_input(text: &str) -> &str {
 /// dictating into a terminal-based coding agent rather than a literal
 /// shell command.
 ///
-/// Used to gate `llm::refine`'s Cli prompt ("rewrite as a single shell
-/// command"): a small local model doesn't reliably honor that prompt's own
-/// "if it doesn't describe a command, just clean up filler words"
-/// fallback, and instead mangles ordinary agent-chat prose into a bogus
-/// single-token slug — observed 2026-09-09 manual testing, dictating into
-/// Orca (a coding-agent terminal assigned to CLI mode): "Let's test and
-/// see what happens when we try and paste in here. If it truly is just a
-/// problem with this terminal, we still need to work it out." came back as
-/// `test_paste_what_happens_truly_problem_terminal_work_out`. Skipping the
-/// LLM step for anything that isn't a recognized literal directive avoids
-/// that entirely, since `format_as_cli`'s fallthrough (file tagging) is
-/// already the correct, fully-resolved output for prose.
+/// Used to keep those already-final commands away from LLM refinement,
+/// which can only corrupt them.
 pub fn is_literal_cli_directive(text: &str) -> bool {
     let trimmed = normalize_cli_input(text);
     strip_prefix_ci(trimmed, "git commit ").is_some()
@@ -416,11 +406,8 @@ mod tests {
 
     #[test]
     fn is_literal_cli_directive_rejects_agent_chat_prose() {
-        // The exact repro from 2026-09-09 manual testing: dictating a
-        // conversational message into a coding-agent terminal (assigned to
-        // CLI mode) must not be treated as a shell-command directive, or
-        // it gets sent through the LLM's "rewrite as a single shell
-        // command" prompt and comes back mangled.
+        // Real 2026-09-09 dictation into a coding-agent terminal: prose
+        // must not be mistaken for a literal shell command.
         assert!(!is_literal_cli_directive(
             "Let's test and see what happens when we try and paste in here. \
              If it truly is just a problem with this terminal, we still need to work it out."

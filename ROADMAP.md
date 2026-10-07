@@ -7,6 +7,38 @@ estimates). Shipped work moves out of this file into `FEATURES.md` instead
 of lingering here struck through — this file is meant to answer "what's
 left," not "what's the history."
 
+## In progress — always-on foundation (agreed 2026-10-05)
+
+Groundwork for always-listening dictation, in build order. Extends
+`BACKLOG.md`'s "Ambient/hands-free listening mode" entry; a wake phrase is
+required before ambient speech pastes, since auto-pasting every detected
+utterance would eventually type a side conversation into an editor.
+
+- [x] Persistent `app.log`, 30s heartbeat, signal + exit logging (to
+  diagnose the dev process dying silently)
+- [x] Capture state machine (`capture.rs`) replacing the `is_recording`
+  flag; every trigger (hotkey, double-tap Fn, tray, deep link) goes
+  through one request API, transitions/rejections logged
+- [x] Device status: picked mic missing → keep falling back, but surface
+  it (event + widget pill), log only on change
+- [x] Codebase bug review pass (fix what's found)
+- [x] Silero VAD (already in linked `sherpa-onnx`) for ambient speech
+  detection
+- [x] Pre-roll buffer (1s) + silence endpointing (700ms, 30s cap)
+- [x] Ambient mode: speaker-gated (existing voice enrollment), wake
+  phrase required before anything pastes, paste guard (same frontmost
+  app), green tray dot + widget label, voice sleep/wake, 10-min
+  auto-sleep
+- [x] Pause while another app is using the mic (calls, incl. browser
+  Meet), via CoreAudio's per-process input list; resumes on its own
+- [x] Ambient metrics in `app.log` (segments, speaker rejects, wake hits)
+- [x] Terminal paste review: CLI-mode LLM no longer synthesizes shell
+  commands (root cause of every bad terminal paste), refinement output is
+  logged and sanity-checked, file tags survive refinement, line breaks
+  survive file tagging, "press enter" waits for async terminal pastes
+- [ ] Manual verification: enroll, enable, tune VAD/voice-match thresholds
+  from `app.log` metrics (needs real speech, see manual-testing-inbox)
+
 ## Now — from competitive research (SuperWhisper 2026-08-16, broader landscape 2026-08-17)
 
 Ranked by leverage; see `BACKLOG.md` for the full research writeups. #2

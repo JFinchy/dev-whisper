@@ -33,7 +33,7 @@ const EXIT_RMS: f32 = 0.01;
 /// WeSpeaker embeddings is typically well above this and different-speaker
 /// pairs well below, but the real threshold needs empirical tuning during
 /// manual verification (see the phase-2 plan).
-const SIMILARITY_THRESHOLD: f32 = 0.5;
+pub(crate) const SIMILARITY_THRESHOLD: f32 = 0.5;
 
 /// Below this, a voiced range is too short for a reliable standalone
 /// embedding. It's still masked based on its own boundaries, but the
@@ -155,6 +155,22 @@ fn widen_for_scoring(range: (usize, usize), total_len: usize) -> (usize, usize) 
     let new_end = (start + target).min(total_len);
     let new_start = new_end.saturating_sub(target);
     (new_start, new_end)
+}
+
+/// Cosine similarity between one utterance (16kHz mono) and the enrolled
+/// voice, scored over its voiced portion. `None` when no voice is enrolled.
+pub fn enrolled_speaker_similarity(app: &AppHandle, samples: &[f32]) -> Option<Result<f32, String>> {
+    let vi_state = app.state::<VoiceIsolationState>();
+    let enrolled = vi_state.enrolled_embedding()?;
+    let mut voiced = energy_gate(samples);
+    if voiced.is_empty() {
+        voiced.push((0, samples.len()));
+    }
+    Some(
+        vi_state
+            .compute_embedding(app, samples, &voiced)
+            .map(|embedding| cosine_similarity(&embedding, &enrolled)),
+    )
 }
 
 /// No-op passthrough if Isolated Voice is off. Otherwise masks out

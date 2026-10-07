@@ -10,6 +10,27 @@ type WidgetMode = "minimal" | "compact" | "detailed";
 // backend resolves the full mode (behavior/models) by name when the
 // override is consumed. See `modes::ModeDefinition` for the full shape.
 type ModeSummary = { name: string };
+// Mirrors `audio::DeviceStatus` (serde tag = "kind").
+type DeviceStatus =
+  | { kind: "preferred"; using: string }
+  | { kind: "fallback"; wanted: string; using: string }
+  | { kind: "system_default"; using: string }
+  | { kind: "unavailable"; wanted: string | null };
+
+// Only the cases worth interrupting the idle label for: the picked mic is
+// missing (so you're silently on another one), or there's no mic at all.
+function deviceWarning(status: DeviceStatus | null): { short: string; full: string } | null {
+  if (status?.kind === "fallback") {
+    return {
+      short: `Using ${status.using}`,
+      full: `${status.wanted} isn't connected, so recording is using ${status.using}.`,
+    };
+  }
+  if (status?.kind === "unavailable") {
+    return { short: "No microphone", full: "No microphone is available. Connect one or pick another in Settings." };
+  }
+  return null;
+}
 
 const STATUS_LABEL: Record<Phase, string> = {
   idle: "Ready",
@@ -102,6 +123,9 @@ function WidgetView() {
   // a stale "last thing you said was loud" reading doesn't linger once
   // idle/transcribing.
   const [levels, setLevels] = useState<number[]>(SILENT_LEVELS);
+  const [deviceStatus, setDeviceStatus] = useState<DeviceStatus | null>(null);
+  const [ambientPhase, setAmbientPhase] = useState<"off" | "listening" | "asleep" | "paused">("off");
+  const warning = deviceWarning(deviceStatus);
 
   useEffect(() => {
     if (phase !== "recording") setLevels(SILENT_LEVELS);
@@ -119,6 +143,16 @@ function WidgetView() {
     invoke<ModeSummary[]>("get_modes")
       .then(setModes)
       .catch((err) => console.error("get_modes failed:", err));
+
+    invoke<DeviceStatus | null>("get_audio_device_status")
+      .then(setDeviceStatus)
+      .catch((err) => console.error("get_audio_device_status failed:", err));
+    const unlistenDevice = listen<DeviceStatus>("audio-device-status", (e) => setDeviceStatus(e.payload));
+
+    invoke<"off" | "listening" | "asleep" | "paused">("get_ambient_phase")
+      .then(setAmbientPhase)
+      .catch((err) => console.error("get_ambient_phase failed:", err));
+    const unlistenAmbient = listen<"off" | "listening" | "asleep" | "paused">("ambient-phase", (e) => setAmbientPhase(e.payload));
 
     invoke<ThemeId>("get_theme")
       .then(applyTheme)
@@ -159,6 +193,11 @@ function WidgetView() {
       setOverrideMode(null);
       announce(event.payload, true);
     });
+    const unlistenCopied = listen<string>("transcript-copied", (event) => {
+      setPhase("idle");
+      setOverrideMode(null);
+      announce(event.payload, false);
+    });
     const unlistenUpdateAvailable = listen<string>("update-available", (event) => {
       setUpdateAvailable(event.payload);
     });
@@ -174,6 +213,9 @@ function WidgetView() {
       unlistenTranscriptReady.then((f) => f());
       unlistenTranscriptError.then((f) => f());
       unlistenUpdateAvailable.then((f) => f());
+      unlistenDevice.then((f) => f());
+      unlistenAmbient.then((f) => f());
+      unlistenCopied.then((f) => f());
     };
   }, []);
 
@@ -227,17 +269,27 @@ function WidgetView() {
   }
 
   const busy = phase === "transcribing" || phase === "refining";
+  const idleLabel =
+    phase !== "idle"
+      ? STATUS_LABEL[phase]
+      : ambientPhase === "listening"
+        ? "Listening for “Dev Whisper”"
+        : ambientPhase === "asleep"
+          ? "Asleep"
+          : ambientPhase === "paused"
+            ? "Paused (mic in use)"
+            : STATUS_LABEL.idle;
   const flashing = flashVisible && message !== null;
 
   const recordButton = (
     <button
       className={`btn btn-circle border-none ${mode === "minimal" ? "btn-md" : "btn-sm"} ${
         phase === "recording" ? "bg-white/15" : "bg-white/8 hover:bg-white/15"
-      } ${flashing && isError ? "ring-2 ring-error" : ""}`}
+      } ${flashing && isError ? "ring-2 ring-error" : warning && mode === "minimal" ? "ring-2 ring-warning" : ""}`}
       onClick={toggleRecording}
       disabled={busy}
       aria-label={phase === "idle" ? "Start recording" : "Stop recording"}
-      title={message ?? STATUS_LABEL[phase]}
+      title={message ?? warning?.full ?? STATUS_LABEL[phase]}
     >
       {busy ? (
         <span className="loading loading-spinner loading-xs" />
@@ -284,7 +336,7 @@ function WidgetView() {
               className="flex-1 cursor-grab truncate text-sm font-medium active:cursor-grabbing"
               onMouseDown={startDrag}
             >
-              {STATUS_LABEL[phase]}
+              {idleLabel}
             </span>
           )}
           <button
@@ -301,10 +353,10 @@ function WidgetView() {
         </div>
         <p
           className={`flex-1 overflow-y-auto whitespace-pre-wrap text-xs ${
-            isError ? "text-error" : "opacity-60"
+            isError ? "text-error" : !message && warning ? "text-warning" : "opacity-60"
           }`}
         >
-          {message ?? "Ready to dictate. Press the hotkey or click the button to start."}
+          {message ?? warning?.full ?? "Ready to dictate. Press the hotkey or click the button to start."}
         </p>
       </main>
     );
@@ -327,12 +379,13 @@ function WidgetView() {
           </div>
         ) : (
           <span
-            className={`flex-1 cursor-grab text-sm opacity-75 active:cursor-grabbing ${
+            className={`flex-1 cursor-grab text-sm active:cursor-grabbing ${
               flashing && isError ? "whitespace-normal" : "truncate"
-            }`}
+            } ${!flashing && phase === "idle" && warning ? "text-warning" : "opacity-75"}`}
             onMouseDown={startDrag}
+            title={!flashing && phase === "idle" ? warning?.full : undefined}
           >
-            {flashing ? message : STATUS_LABEL[phase]}
+            {flashing ? message : phase === "idle" && warning ? warning.short : idleLabel}
           </span>
         )}
         <button
