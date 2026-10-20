@@ -21,7 +21,10 @@ case "$(basename "$bin")" in
         waited=$((waited + 1))
       done
       if kill -0 "$pid" 2>/dev/null; then
+        # codesign ignores SIGTERM while it's blocked on the keychain.
         kill "$pid" 2>/dev/null
+        sleep 1
+        kill -9 "$pid" 2>/dev/null
         echo "dev-sign-runner: codesign is waiting on a keychain dialog; running UNSIGNED this time (paste will need Accessibility re-granted). Approve the dialog next launch." >&2
       elif ! wait "$pid"; then
         echo "dev-sign-runner: codesign failed; running unsigned" >&2

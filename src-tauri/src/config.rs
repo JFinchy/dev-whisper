@@ -201,7 +201,7 @@ fn migrate_legacy_mode_rules(cfg: &mut AppConfig) -> bool {
         return false;
     }
 
-    for rule in cfg.mode_rules.drain(..).collect::<Vec<_>>() {
+    for rule in std::mem::take(&mut cfg.mode_rules) {
         let Some(target) = cfg.modes.iter_mut().find(|m| m.behavior == rule.mode) else {
             continue;
         };
