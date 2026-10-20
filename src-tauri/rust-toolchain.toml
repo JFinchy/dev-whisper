@@ -1,6 +1,7 @@
 # Pinned so CI, release builds and local builds compile with the same
 # compiler and clippy. Unpinned, a new stable release added a lint and
-# failed CI on code that passed locally. Bump deliberately.
+# failed CI on code that passed locally. Bump deliberately, together with
+# the `toolchain:` lines in .github/workflows/*.yml.
 [toolchain]
 channel = "1.97.1"
 components = ["clippy", "rustfmt"]

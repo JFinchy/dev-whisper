@@ -15,12 +15,16 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Must match src-tauri/rust-toolchain.toml, so the cache key below
+      # (computed from the active rustc) agrees with what cargo builds with.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.97.1
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          prefix-key: v1-${{ hashFiles('src-tauri/rust-toolchain.toml') }}
       - uses: oven-sh/setup-bun@v2
       # tauri::generate_context! embeds the frontend build, so clippy and the
       # tests need dist/ to exist.
@@ -39,10 +43,13 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          prefix-key: v1-${{ hashFiles('src-tauri/rust-toolchain.toml') }}
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run build
