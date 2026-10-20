@@ -30,8 +30,9 @@ the actual window.
 
 1. From repo root: `bun run tauri dev`. Click the menu bar mic icon →
    Settings (or however you normally open it).
-2. Land on the **Dictation** page (default). Confirm General, Voice
-   Commands, Microphone, and Push-to-talk key each render as a distinct
+2. Land on the **Dictation** page (default). Confirm General, Microphone,
+   Push-to-talk key, and Voice Commands (that order, per
+   `dictation-reorder-model-bars.md`) each render as a distinct
    bordered card with visible padding — not raw text stacked with thin
    divider lines.
 3. Confirm checkboxes, the push-to-talk button (click it to enter

@@ -53,8 +53,7 @@ widget — that's what this pass is for.
    - **Voice** → Whisper model list (download/activate), Voice Isolation
      toggle.
    - **Vocabulary** → term chips (add/remove).
-   - **Modes** → app rules list (add/edit/remove, per-rule model + LLM
-     refinement toggle).
+   - **Modes** → named mode cards (see `modes-rework.md` for details).
    - **LLM** → Ollama model catalog (download/activate, latency).
    - **History** → transcript list, retention picker, work journal toggle,
      per-entry copy/delete. Confirm this is reachable directly from the
@@ -83,7 +82,8 @@ widget — that's what this pass is for.
    style).
 9. Hover the mouse over the floating widget pill (don't click). Confirm it
    grows downward to reveal "Mic mode" (Standard/Voice Isolation) and
-   "Next dictation" (Plain/Casual/CLI) rows, and shrinks back to normal
+   "Next dictation" (one row per mode: Default, Voice to Text, Messaging,
+   CLI, plus any you've added) rows, and shrinks back to normal
    when the mouse leaves.
 10. Click "Voice Isolation" in the flyout, then open Settings → Voice and
     confirm the Voice Isolation toggle is now on (same underlying

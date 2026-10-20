@@ -18,13 +18,15 @@ speaker doesn't end up in the transcript. Two paths, auto-selected: an
 energy/VAD heuristic (phase 1) that only suppresses quiet background
 noise, and a speaker-embedding cosine-similarity match (phase 2) that can
 actually reject a second real voice once you've enrolled yours. Both are
-covered by 86 automated unit/integration tests, but neither has been
-exercised with a live mic yet.
+covered by automated unit/integration tests, but neither has been
+exercised with a live mic yet. Enrolling here (step 5) is also what
+unlocks always-on listening, so do this file early.
 
 ## Steps
 
 1. `bun run tauri dev`. Settings → Voice Isolation section should show
-   the toggle (off by default) and "Not enrolled".
+   the toggle (off by default), "Not enrolled", and a disabled
+   "Always-on listening" toggle (it needs enrollment).
 2. **Baseline (toggle off)**: dictate a normal sentence with the toggle
    off. Confirm it transcribes exactly as it would today — no regression.
 3. **Phase 1, quiet room (toggle on, not enrolled)**: turn Isolated Voice
@@ -54,7 +56,8 @@ exercised with a live mic yet.
 9. **Enrollment hotkey guard**: start voice enrollment (recording
    indicator active), then press the push-to-talk hotkey mid-enrollment.
    Confirm nothing happens — dictation should not fire on the enrollment
-   clip. Then press "Stop" to finish enrollment normally.
+   clip, and `app.log` shows `capture: rejected ... microphone is in use
+   for voice enrollment`. Then press "Stop" to finish enrollment normally.
 10. **Not-enough-speech error**: start enrollment and immediately press
     "Stop" (under ~1s of talking). Confirm a friendly error appears
     (not a crash) asking you to speak longer.

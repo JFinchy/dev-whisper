@@ -87,30 +87,51 @@ mod tests {
 
     fn sample() -> Vec<Snippet> {
         vec![
-            Snippet { trigger: "pr checklist".to_string(), body: "- [ ] Tests pass".to_string() },
-            Snippet { trigger: "standup update".to_string(), body: "Yesterday:\nToday:".to_string() },
+            Snippet {
+                trigger: "pr checklist".to_string(),
+                body: "- [ ] Tests pass".to_string(),
+            },
+            Snippet {
+                trigger: "standup update".to_string(),
+                body: "Yesterday:\nToday:".to_string(),
+            },
         ]
     }
 
     #[test]
     fn expands_an_exact_trigger_match() {
-        assert_eq!(try_expand("pr checklist", &sample()), Some("- [ ] Tests pass".to_string()));
+        assert_eq!(
+            try_expand("pr checklist", &sample()),
+            Some("- [ ] Tests pass".to_string())
+        );
     }
 
     #[test]
     fn is_case_insensitive() {
-        assert_eq!(try_expand("PR Checklist", &sample()), Some("- [ ] Tests pass".to_string()));
+        assert_eq!(
+            try_expand("PR Checklist", &sample()),
+            Some("- [ ] Tests pass".to_string())
+        );
     }
 
     #[test]
     fn tolerates_whispers_trailing_sentence_punctuation() {
-        assert_eq!(try_expand("pr checklist.", &sample()), Some("- [ ] Tests pass".to_string()));
-        assert_eq!(try_expand("standup update?", &sample()), Some("Yesterday:\nToday:".to_string()));
+        assert_eq!(
+            try_expand("pr checklist.", &sample()),
+            Some("- [ ] Tests pass".to_string())
+        );
+        assert_eq!(
+            try_expand("standup update?", &sample()),
+            Some("Yesterday:\nToday:".to_string())
+        );
     }
 
     #[test]
     fn does_not_match_a_trigger_used_mid_sentence() {
-        assert_eq!(try_expand("can you give me the pr checklist please", &sample()), None);
+        assert_eq!(
+            try_expand("can you give me the pr checklist please", &sample()),
+            None
+        );
     }
 
     #[test]

@@ -1,0 +1,67 @@
+[
+  {
+    "name": "natural sentence",
+    "say": "I want to refactor the authentication middleware so that it validates tokens before hitting the database.",
+    "mode": "plain",
+    "max_wer": 0.15,
+    "expect": "I want to refactor the authentication middleware so that it validates tokens before hitting the database."
+  },
+  {
+    "name": "developer jargon",
+    "say": "Run kubectl get pods and check the JSON output in the terminal.",
+    "mode": "plain",
+    "max_wer": 0.35,
+    "expect": "Run kubectl get pods and check the JSON output in the terminal.",
+    "note": "base.en sometimes glues a spoken command into one token (heard \"Runkubectl-get-pods\"); an ASR limit, tracked here so a model or prompt change that fixes it shows up as a lower WER."
+  },
+  {
+    "name": "spoken punctuation",
+    "say": "Hello comma world period",
+    "mode": "plain",
+    "expect": "Hello, world."
+  },
+  {
+    "name": "backtrack",
+    "say": "Send the invite to Bob, actually Alice.",
+    "mode": "plain",
+    "expect": "Send the invite to Alice."
+  },
+  {
+    "name": "snake case",
+    "say": "Snake case error response handler",
+    "mode": "plain",
+    "expect": "error_response_handler"
+  },
+  {
+    "name": "camel case",
+    "say": "Camel case user profile I D",
+    "mode": "plain",
+    "expect": "userProfileId"
+  },
+  {
+    "name": "spoken list",
+    "say": "One, fix the tests. Two, ship it.",
+    "mode": "plain",
+    "expect": "1. Fix the tests.\n2. Ship it."
+  },
+  {
+    "name": "press enter",
+    "say": "Run the tests, press enter.",
+    "mode": "plain",
+    "press_enter_enabled": true,
+    "expect": "Run the tests",
+    "expect_press_enter": true
+  },
+  {
+    "name": "terminal git commit",
+    "say": "Git commit update readme",
+    "mode": "cli",
+    "expect": "git commit -m \"update readme\""
+  },
+  {
+    "name": "terminal prose stays prose",
+    "say": "Let's test and see what happens when we paste in here.",
+    "mode": "cli",
+    "expect": "Let's test and see what happens when we paste in here"
+  }
+]

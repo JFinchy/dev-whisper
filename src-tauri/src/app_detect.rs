@@ -75,7 +75,8 @@ fn icon_to_data_uri(icon: &NSImage) -> Option<String> {
     let rep = rep.downcast::<NSBitmapImageRep>().ok()?;
 
     let props = NSDictionary::new();
-    let png = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &props) }?;
+    let png =
+        unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &props) }?;
     let bytes = png.to_vec();
     Some(format!(
         "data:image/png;base64,{}",
@@ -121,13 +122,18 @@ pub fn frontmost_app_blocking(app: &tauri::AppHandle) -> Option<(String, String)
         let workspace = NSWorkspace::sharedWorkspace();
         let info = workspace.frontmostApplication().and_then(|a| {
             let bundle_id = a.bundleIdentifier()?.to_string();
-            let name = a.localizedName().map(|n| n.to_string()).unwrap_or_else(|| bundle_id.clone());
+            let name = a
+                .localizedName()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| bundle_id.clone());
             Some((bundle_id, name))
         });
         let _ = tx.send(info);
     })
     .ok()?;
-    rx.recv_timeout(std::time::Duration::from_secs(1)).ok().flatten()
+    rx.recv_timeout(std::time::Duration::from_secs(1))
+        .ok()
+        .flatten()
 }
 
 pub fn frontmost_bundle_id_blocking(app: &tauri::AppHandle) -> Option<String> {

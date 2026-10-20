@@ -48,6 +48,23 @@ pub struct HistoryEntry {
     /// counting `text` for those, the best available approximation.
     #[serde(default)]
     pub spoken_words: Option<u32>,
+    /// Time from the end of recording to the text being delivered: what the
+    /// user actually waits for. `None` for older entries and for ambient
+    /// dictation, which has no explicit stop.
+    #[serde(default)]
+    pub latency_ms: Option<u64>,
+}
+
+/// A transcript about to be recorded in history (`timestamp_ms` and
+/// `summary` are filled in by `append_entry`).
+pub struct NewEntry {
+    pub text: String,
+    pub app_name: Option<String>,
+    pub mode: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub features_used: Vec<String>,
+    pub spoken_words: Option<u32>,
+    pub latency_ms: Option<u64>,
 }
 
 fn history_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -102,34 +119,31 @@ fn write_all(app: &AppHandle, entries: &[HistoryEntry]) -> Result<(), String> {
 /// Returns the timestamp it stored the entry under, so a caller that wants
 /// to fill in `summary` afterward (see `set_entry_summary`) has a key to
 /// find it again without re-reading the whole file first.
-pub fn append_entry(
-    app: &AppHandle,
-    text: &str,
-    app_name: Option<String>,
-    mode: Option<String>,
-    duration_ms: Option<u64>,
-    features_used: Vec<String>,
-    spoken_words: Option<u32>,
-) -> u64 {
+pub fn append_entry(app: &AppHandle, new: NewEntry) -> u64 {
     let timestamp_ms = now_ms();
     let Ok(path) = history_path(app) else {
         return timestamp_ms;
     };
     let entry = HistoryEntry {
         timestamp_ms,
-        text: text.to_string(),
-        app_name,
-        mode,
+        text: new.text,
+        app_name: new.app_name,
+        mode: new.mode,
         summary: None,
-        duration_ms,
-        features_used,
-        spoken_words,
+        duration_ms: new.duration_ms,
+        features_used: new.features_used,
+        spoken_words: new.spoken_words,
+        latency_ms: new.latency_ms,
     };
     let Ok(line) = serde_json::to_string(&entry) else {
         return timestamp_ms;
     };
     let _guard = HISTORY_LOCK.lock().unwrap();
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = writeln!(file, "{line}");
         // The Settings window (if open) has no other way to know a new
         // entry landed — it only fetches on mount / explicit refresh.
@@ -176,7 +190,8 @@ pub fn purge_old_entries(app: &AppHandle, retention_days: u32) {
     let _ = write_all(app, &kept);
 }
 
-#[tauri::command]
+// Off the main thread: sync commands run on it, and this one does I/O.
+#[tauri::command(async)]
 pub fn list_history_entries(app: AppHandle) -> Vec<HistoryEntry> {
     let mut entries = read_all(&app);
     entries.reverse(); // most recent first
@@ -191,15 +206,18 @@ pub fn list_history_entries(app: AppHandle) -> Vec<HistoryEntry> {
 /// retention window (365 days max), so even a busy user's file is at most
 /// a few thousand short lines — an index would be solving a problem this
 /// app doesn't have yet.
-#[tauri::command]
+// Off the main thread: sync commands run on it, and this one does I/O.
+#[tauri::command(async)]
 pub fn search_history_entries(app: AppHandle, query: String) -> Vec<HistoryEntry> {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
         return list_history_entries(app);
     }
 
-    let mut entries: Vec<HistoryEntry> =
-        read_all(&app).into_iter().filter(|e| entry_matches(e, &query)).collect();
+    let mut entries: Vec<HistoryEntry> = read_all(&app)
+        .into_iter()
+        .filter(|e| entry_matches(e, &query))
+        .collect();
     entries.reverse(); // most recent first
     entries.truncate(MAX_ENTRIES_RETURNED);
     entries
@@ -211,8 +229,14 @@ pub fn search_history_entries(app: AppHandle, query: String) -> Vec<HistoryEntry
 /// query = show everything" case before this ever runs).
 fn entry_matches(entry: &HistoryEntry, query_lower: &str) -> bool {
     entry.text.to_lowercase().contains(query_lower)
-        || entry.summary.as_deref().is_some_and(|s| s.to_lowercase().contains(query_lower))
-        || entry.app_name.as_deref().is_some_and(|a| a.to_lowercase().contains(query_lower))
+        || entry
+            .summary
+            .as_deref()
+            .is_some_and(|s| s.to_lowercase().contains(query_lower))
+        || entry
+            .app_name
+            .as_deref()
+            .is_some_and(|a| a.to_lowercase().contains(query_lower))
 }
 
 /// Re-runs `text` through a different Mode's formatting (and, if
@@ -222,7 +246,8 @@ fn entry_matches(entry: &HistoryEntry, query_lower: &str) -> bool {
 /// recording is a transient temp file (see `audio::write_wav`), never
 /// retained past the original transcription, so "reprocessing" here means
 /// re-formatting the saved transcript, not re-running Whisper.
-#[tauri::command]
+// Off the main thread: sync commands run on it, and this one does I/O.
+#[tauri::command(async)]
 pub fn reprocess_history_text(
     app: AppHandle,
     text: String,
@@ -313,6 +338,7 @@ mod tests {
             duration_ms: None,
             features_used: Vec::new(),
             spoken_words: None,
+            latency_ms: None,
         }
     }
 

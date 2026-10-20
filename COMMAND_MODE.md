@@ -117,7 +117,7 @@ both "a command to execute" and "text to format and paste" at once.
   Vec<Command>`.
 - [ ] Settings UI: a new "Commands" section — add/edit/delete phrase →
   action pairs, following the existing Vocabulary/Mode Rules editor
-  pattern already in `SettingsView.tsx`.
+  pattern already in `src/settings/sections/modes.tsx`.
 - [ ] Mode switch: a hotkey or tray menu item to toggle between Dictation
   Mode (today's push-to-talk) and Command Mode (continuous). Mutually
   exclusive, not layered.

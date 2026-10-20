@@ -42,6 +42,9 @@ const COMMANDS: &[(&str, &str, Spacing)] = &[
     ("period", ".", Spacing::Trailing),
     ("full stop", ".", Spacing::Trailing),
     ("comma", ",", Spacing::Trailing),
+    // Whisper's most common mishearing of a spoken "comma" (seen in the
+    // real-audio e2e suite); not an English word, so safe to treat as one.
+    ("kama", ",", Spacing::Trailing),
     ("question mark", "?", Spacing::Trailing),
     ("exclamation point", "!", Spacing::Trailing),
     ("exclamation mark", "!", Spacing::Trailing),
@@ -110,7 +113,11 @@ fn normalize(token: &str) -> String {
 
 /// Tries to match a command phrase starting at `tokens[i]`, longest first.
 /// Returns `(words_consumed, replacement, spacing)`.
-fn match_at(tokens: &[&str], i: usize, quote_open: &mut bool) -> Option<(usize, &'static str, Spacing)> {
+fn match_at(
+    tokens: &[&str],
+    i: usize,
+    quote_open: &mut bool,
+) -> Option<(usize, &'static str, Spacing)> {
     for len in (1..=MAX_PHRASE_WORDS.min(tokens.len() - i)).rev() {
         let phrase = tokens[i..i + len]
             .iter()
@@ -119,7 +126,11 @@ fn match_at(tokens: &[&str], i: usize, quote_open: &mut bool) -> Option<(usize, 
             .join(" ");
 
         if phrase == QUOTE_PHRASE {
-            let spacing = if *quote_open { Spacing::Opening } else { Spacing::Closing };
+            let spacing = if *quote_open {
+                Spacing::Opening
+            } else {
+                Spacing::Closing
+            };
             *quote_open = !*quote_open;
             return Some((len, "\"", spacing));
         }
@@ -139,7 +150,12 @@ fn push_word(out: &mut String, word: &str, suppress_space: &mut bool) {
     *suppress_space = false;
 }
 
-fn push_replacement(out: &mut String, replacement: &str, spacing: Spacing, suppress_space: &mut bool) {
+fn push_replacement(
+    out: &mut String,
+    replacement: &str,
+    spacing: Spacing,
+    suppress_space: &mut bool,
+) {
     match spacing {
         Spacing::Trailing => {
             // Whisper's own auto-punctuation frequently lands right before
@@ -202,17 +218,27 @@ pub fn expand_punctuation(text: &str) -> String {
     let mut out = String::new();
     let mut suppress_space = false;
     let mut quote_open = true;
+    // A spoken "period"/"question mark" ends a sentence Whisper didn't
+    // know had ended, so the next word arrives lowercase.
+    let mut capitalize_next = false;
     let mut i = 0;
 
     while i < tokens.len() {
         if tokens[i] == "\n" {
             push_replacement(&mut out, "\n", Spacing::LineBreak(1), &mut suppress_space);
             i += 1;
-        } else if let Some((consumed, replacement, spacing)) = match_at(&tokens, i, &mut quote_open) {
+        } else if let Some((consumed, replacement, spacing)) = match_at(&tokens, i, &mut quote_open)
+        {
             push_replacement(&mut out, replacement, spacing, &mut suppress_space);
+            capitalize_next = matches!(replacement, "." | "?" | "!");
             i += consumed;
         } else {
-            push_word(&mut out, tokens[i], &mut suppress_space);
+            if capitalize_next {
+                push_word(&mut out, &capitalize_first(tokens[i]), &mut suppress_space);
+            } else {
+                push_word(&mut out, tokens[i], &mut suppress_space);
+            }
+            capitalize_next = false;
             i += 1;
         }
     }
@@ -246,28 +272,92 @@ fn tokenize(text: &str) -> Vec<&str> {
 }
 
 const CARDINAL_WORDS: &[&str] = &[
-    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
-    "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
     "twenty",
 ];
 
 const ORDINAL_WORDS: &[&str] = &[
-    "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth",
-    "tenth", "eleventh", "twelfth", "thirteenth", "fourteenth", "fifteenth", "sixteenth",
-    "seventeenth", "eighteenth", "nineteenth", "twentieth",
+    "first",
+    "second",
+    "third",
+    "fourth",
+    "fifth",
+    "sixth",
+    "seventh",
+    "eighth",
+    "ninth",
+    "tenth",
+    "eleventh",
+    "twelfth",
+    "thirteenth",
+    "fourteenth",
+    "fifteenth",
+    "sixteenth",
+    "seventeenth",
+    "eighteenth",
+    "nineteenth",
+    "twentieth",
 ];
 
 /// Scans `tokens` for a strictly consecutive run of `family` words starting
 /// at index 0 ("one"/"first"), in order but not necessarily adjacent.
 /// Returns `(token_index, 1-based_value)` for each marker found.
-fn find_sequence(tokens: &[&str], family: &[&str]) -> Vec<(usize, usize)> {
+///
+/// With `at_boundaries`, a word only counts as a marker where a list item
+/// could start: first in the text, after punctuation, or carrying its own
+/// ("One, fix the tests."). That's what keeps "I have one question about
+/// the two failing tests." from turning into a list.
+fn find_sequence(tokens: &[&str], family: &[&str], at_boundaries: bool) -> Vec<(usize, usize)> {
+    let ends_with_punct = |tok: &str| tok.ends_with([',', '.', ':', ';', '!', '?']);
     let mut positions = Vec::new();
     let mut expected = 1usize;
     for (i, tok) in tokens.iter().enumerate() {
-        if expected - 1 >= family.len() {
+        if expected > family.len() {
             break;
         }
+        let at_boundary = i == 0 || ends_with_punct(tokens[i - 1]) || ends_with_punct(tok);
+        if at_boundaries && !at_boundary {
+            continue;
+        }
         if normalize(tok) == family[expected - 1] {
+            positions.push((i, expected));
+            expected += 1;
+        }
+    }
+    positions
+}
+
+/// Whisper usually writes a spoken "One, ... Two, ..." as "1. ... 2. ...",
+/// all on one line. Digit markers count only with their own punctuation
+/// ("1." / "1," / "1)") and at an item boundary, so "version 2" or
+/// "3 tests" never start a list.
+fn find_digit_sequence(tokens: &[&str]) -> Vec<(usize, usize)> {
+    let mut positions = Vec::new();
+    let mut expected = 1usize;
+    for (i, tok) in tokens.iter().enumerate() {
+        let Some(number) = tok.strip_suffix(['.', ',', ')', ':']) else {
+            continue;
+        };
+        let at_boundary = i == 0 || tokens[i - 1].ends_with(['.', ',', ':', ';', '!', '?']);
+        if at_boundary && number == expected.to_string() {
             positions.push((i, expected));
             expected += 1;
         }
@@ -281,24 +371,29 @@ fn find_sequence(tokens: &[&str], family: &[&str]) -> Vec<(usize, usize)> {
 /// lone "one" or "first" is far too common a word on its own to treat as
 /// a list start. If both families produce a run, the longer one wins.
 ///
-/// Known false positive, accepted: an ordinary sentence using "one" and
-/// "two" as plain numbers ("one item for two dollars") also matches —
-/// there's no surrounding-context signal available to rule that out in a
-/// deterministic, non-LLM pass. Same tradeoff as the symbol-spacing rough
-/// edge in `expand_punctuation`.
+/// Whisper punctuates normal speech, and a spoken list arrives with a
+/// pause (a comma or period) at each marker. So when the text has any
+/// punctuation, markers must sit at those boundaries (see
+/// `find_sequence`); plain numbers mid-sentence are left alone. Text with
+/// no punctuation at all gives no such signal, and keeps the looser match,
+/// with its known false positive ("one item for two dollars").
 ///
-/// Doesn't capitalize item text or punctuate the lead-in with a colon the
-/// way Wispr's (context-aware, LLM-assisted) version does — out of scope
-/// for a pure deterministic pass, see BACKLOG.md.
+/// Item text is capitalized. Doesn't punctuate the lead-in with a colon
+/// the way Wispr's (context-aware, LLM-assisted) version does.
 pub fn expand_lists(text: &str) -> String {
     let tokens: Vec<&str> = text.split_whitespace().collect();
     if tokens.is_empty() {
         return String::new();
     }
 
-    let cardinal = find_sequence(&tokens, CARDINAL_WORDS);
-    let ordinal = find_sequence(&tokens, ORDINAL_WORDS);
-    let positions = if ordinal.len() > cardinal.len() { ordinal } else { cardinal };
+    let punctuated = text.contains(['.', ',', '!', '?', ';', ':']);
+    let cardinal = find_sequence(&tokens, CARDINAL_WORDS, punctuated);
+    let ordinal = find_sequence(&tokens, ORDINAL_WORDS, punctuated);
+    let digits = find_digit_sequence(&tokens);
+    let positions = [cardinal, ordinal, digits]
+        .into_iter()
+        .reduce(|best, next| if next.len() > best.len() { next } else { best })
+        .unwrap_or_default();
 
     if positions.len() < 2 {
         return tokens.join(" ");
@@ -311,8 +406,11 @@ pub fn expand_lists(text: &str) -> String {
     }
 
     for (idx, &(pos, value)) in positions.iter().enumerate() {
-        let item_end = positions.get(idx + 1).map(|(p, _)| *p).unwrap_or(tokens.len());
-        let item_text = tokens[pos + 1..item_end].join(" ");
+        let item_end = positions
+            .get(idx + 1)
+            .map(|(p, _)| *p)
+            .unwrap_or(tokens.len());
+        let item_text = capitalize_first(&tokens[pos + 1..item_end].join(" "));
         if !out.is_empty() {
             out.push('\n');
         }
@@ -320,6 +418,14 @@ pub fn expand_lists(text: &str) -> String {
     }
 
     out
+}
+
+fn capitalize_first(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
 }
 
 /// Detects a trailing "press enter" and strips it, so the caller can paste
@@ -354,7 +460,10 @@ pub fn extract_press_enter(text: &str) -> (String, bool) {
     // same technique as `syntax::try_apply_casing_command`.
     if let Some(prefix) = lower.strip_suffix(PHRASE) {
         if prefix.is_empty() || prefix.ends_with(' ') {
-            let remaining = without_trailing_punct[..prefix.len()].trim_end();
+            // Whisper puts a comma at the pause before "press enter"; with
+            // the phrase gone it would be the last character pasted.
+            let remaining =
+                without_trailing_punct[..prefix.len()].trim_end_matches([' ', ',', ';']);
             return (remaining.to_string(), true);
         }
     }
@@ -369,7 +478,9 @@ mod tests {
     #[test]
     fn terminal_punctuation_glues_to_preceding_word() {
         assert_eq!(
-            expand_punctuation("I can't wait to see you exclamation point Let's meet at seven period"),
+            expand_punctuation(
+                "I can't wait to see you exclamation point Let's meet at seven period"
+            ),
             "I can't wait to see you! Let's meet at seven."
         );
     }
@@ -389,11 +500,20 @@ mod tests {
         // two existing ones — that distinction needs context this pass
         // doesn't have. Known rough edge, not a bug: "cd tilde slash
         // projects" -> "cd~/projects", not "cd ~/projects".
-        assert_eq!(expand_punctuation("cd tilde slash dot config"), "cd~/dot config");
-        assert_eq!(expand_punctuation("import from src slash lib"), "import from src/lib");
+        assert_eq!(
+            expand_punctuation("cd tilde slash dot config"),
+            "cd~/dot config"
+        );
+        assert_eq!(
+            expand_punctuation("import from src slash lib"),
+            "import from src/lib"
+        );
         assert_eq!(expand_punctuation("x equals sign y"), "x=y");
         assert_eq!(expand_punctuation("user at sign example"), "user@example");
-        assert_eq!(expand_punctuation("max underscore retry underscore count"), "max_retry_count");
+        assert_eq!(
+            expand_punctuation("max underscore retry underscore count"),
+            "max_retry_count"
+        );
     }
 
     #[test]
@@ -406,7 +526,10 @@ mod tests {
 
     #[test]
     fn hashtag_is_opening_only() {
-        assert_eq!(expand_punctuation("check out hashtag coding today"), "check out #coding today");
+        assert_eq!(
+            expand_punctuation("check out hashtag coding today"),
+            "check out #coding today"
+        );
     }
 
     #[test]
@@ -419,7 +542,10 @@ mod tests {
 
     #[test]
     fn new_line_and_new_paragraph() {
-        assert_eq!(expand_punctuation("reading club new line should be tomorrow"), "reading club\nshould be tomorrow");
+        assert_eq!(
+            expand_punctuation("reading club new line should be tomorrow"),
+            "reading club\nshould be tomorrow"
+        );
         assert_eq!(
             expand_punctuation("first section new paragraph second section"),
             "first section\n\nsecond section"
@@ -428,7 +554,10 @@ mod tests {
 
     #[test]
     fn no_commands_round_trips_with_normalized_whitespace() {
-        assert_eq!(expand_punctuation("just a normal sentence"), "just a normal sentence");
+        assert_eq!(
+            expand_punctuation("just a normal sentence"),
+            "just a normal sentence"
+        );
     }
 
     #[test]
@@ -461,8 +590,10 @@ mod tests {
     #[test]
     fn cardinal_list_from_wispr_example() {
         assert_eq!(
-            expand_lists("my top goals this week are one finish the report two send the presentation"),
-            "my top goals this week are\n1. finish the report\n2. send the presentation"
+            expand_lists(
+                "my top goals this week are one finish the report two send the presentation"
+            ),
+            "my top goals this week are\n1. Finish the report\n2. Send the presentation"
         );
     }
 
@@ -470,7 +601,7 @@ mod tests {
     fn ordinal_list() {
         assert_eq!(
             expand_lists("first check the logs second restart the service third verify"),
-            "1. check the logs\n2. restart the service\n3. verify"
+            "1. Check the logs\n2. Restart the service\n3. Verify"
         );
     }
 
@@ -481,28 +612,58 @@ mod tests {
         // ordinal wins outright, not just on a length comparison.
         assert_eq!(
             expand_lists("first grab one coffee second then get to work third done"),
-            "1. grab one coffee\n2. then get to work\n3. done"
+            "1. Grab one coffee\n2. Then get to work\n3. Done"
         );
     }
 
     #[test]
     fn a_single_marker_is_not_a_list() {
-        assert_eq!(expand_lists("i only need one thing"), "i only need one thing");
+        assert_eq!(
+            expand_lists("i only need one thing"),
+            "i only need one thing"
+        );
     }
 
     #[test]
     fn no_markers_round_trips() {
-        assert_eq!(expand_lists("just a normal sentence"), "just a normal sentence");
+        assert_eq!(
+            expand_lists("just a normal sentence"),
+            "just a normal sentence"
+        );
+    }
+
+    #[test]
+    fn punctuated_list_from_whisper() {
+        assert_eq!(
+            expand_lists("One, fix the tests. Two, ship it."),
+            "1. Fix the tests.\n2. Ship it."
+        );
+        assert_eq!(
+            expand_lists("Two things. First, check the logs. Second, restart the service."),
+            "Two things.\n1. Check the logs.\n2. Restart the service."
+        );
+    }
+
+    #[test]
+    fn plain_numbers_in_a_punctuated_sentence_are_not_a_list() {
+        for text in [
+            "I have one question about the two failing tests.",
+            "The first thing is the build, and the second thing is the tests.",
+            "I bought one item for two dollars.",
+        ] {
+            assert_eq!(expand_lists(text), text);
+        }
     }
 
     #[test]
     fn documented_false_positive_two_plain_numbers() {
-        // Accepted limitation: this isn't a list, but the deterministic
-        // pass has no way to tell without more context. See the doc
-        // comment on `expand_lists`.
+        // Accepted limitation for unpunctuated text only: this isn't a
+        // list, but with no punctuation there's no boundary signal. Whisper
+        // punctuates this sentence, which `plain_numbers_in_a_punctuated_
+        // sentence_are_not_a_list` covers.
         assert_eq!(
             expand_lists("i bought one item for two dollars"),
-            "i bought\n1. item for\n2. dollars"
+            "i bought\n1. Item for\n2. Dollars"
         );
     }
 
@@ -515,7 +676,7 @@ mod tests {
         let listed = expand_lists("todo items are one fix bug period two write tests period");
         assert_eq!(
             expand_punctuation(&listed),
-            "todo items are\n1. fix bug.\n2. write tests."
+            "todo items are\n1. Fix bug.\n2. Write tests."
         );
     }
 
@@ -559,5 +720,43 @@ mod tests {
             extract_press_enter("just a normal sentence"),
             ("just a normal sentence".to_string(), false)
         );
+    }
+
+    #[test]
+    fn press_enter_drops_the_comma_left_before_it() {
+        assert_eq!(
+            extract_press_enter("Run the tests, press enter."),
+            ("Run the tests".to_string(), true)
+        );
+    }
+
+    #[test]
+    fn spoken_sentence_end_capitalizes_the_next_word() {
+        assert_eq!(
+            expand_punctuation("Hello comma world period this is a test question mark yes"),
+            "Hello, world. This is a test? Yes"
+        );
+    }
+
+    #[test]
+    fn whisper_digit_list_gets_line_breaks() {
+        assert_eq!(
+            expand_lists("1. Fix the tests. 2. Ship it."),
+            "1. Fix the tests.\n2. Ship it."
+        );
+        assert_eq!(
+            expand_lists("Plan for today: 1, review the PR. 2, deploy."),
+            "Plan for today:\n1. Review the PR.\n2. Deploy."
+        );
+    }
+
+    #[test]
+    fn digits_in_a_sentence_are_not_a_list() {
+        for text in [
+            "We have 3 tests and 2 failures.",
+            "Bump it to version 1. Then 2 more fixes.",
+        ] {
+            assert_eq!(expand_lists(text), text);
+        }
     }
 }

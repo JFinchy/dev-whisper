@@ -205,7 +205,9 @@ mod tests {
             SpeakerEmbeddingExtractor::create(&config).expect("failed to create extractor");
 
         let samples: Vec<f32> = (0..WHISPER_SAMPLE_RATE * 2)
-            .map(|i| (i as f32 * 220.0 * std::f32::consts::TAU / WHISPER_SAMPLE_RATE as f32).sin() * 0.3)
+            .map(|i| {
+                (i as f32 * 220.0 * std::f32::consts::TAU / WHISPER_SAMPLE_RATE as f32).sin() * 0.3
+            })
             .collect();
 
         let stream = extractor.create_stream().expect("failed to create stream");
@@ -236,7 +238,10 @@ pub fn start_voice_enrollment(app: AppHandle) -> Result<(), String> {
 pub fn stop_voice_enrollment(app: AppHandle) {
     let state = app.state::<RecordingState>();
     let _op = state.capture_op.lock().unwrap();
-    if !matches!(state.capture.request(Request::StopEnrollment), Transition::StoppedEnrollment { .. }) {
+    if !matches!(
+        state.capture.request(Request::StopEnrollment),
+        Transition::StoppedEnrollment { .. }
+    ) {
         return;
     }
 

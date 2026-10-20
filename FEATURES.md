@@ -155,3 +155,73 @@ built yet.
 - **Warm model pre-load on startup**, so the first real recording doesn't
   pay for Metal shader compilation during the user's first
   "transcribing…".
+- **Setup checklist (readiness)** — one set of checks (speech model
+  downloaded, paste permission, hotkey registered, microphone, Ollama and
+  the models your modes use) shown at the top of Settings with a fix
+  button each, and as "Finish setup" on the widget when something blocks
+  dictation. Hidden once everything is ready.
+- **Survives a taken hotkey** — if another app owns the shortcut, the app
+  still starts (it used to fail to launch) and the checklist says so.
+- **Single instance** — a second launch hands off to the running copy
+  instead of starting another one that fights over the hotkey and mic.
+- **Verified model downloads** — pinned to a fixed whisper.cpp revision,
+  checked against SHA-256, with stall timeouts and no leftover partial
+  files.
+- **Refine only when it's needed** (on by default, Settings → LLM) —
+  a clean transcript skips the LLM and pastes right away; filler words, a
+  stutter or an unpunctuated run-on still go through it. Casual mode and
+  modes with custom instructions always refine. Refinement used to add
+  3-10s per dictation while mostly returning the text unchanged.
+- **Two-stage progress in the widget** — "Transcribing 64%" in the theme
+  accent, then "✦ Refining 40%" in violet with a shimmer and the model
+  name on hover. Transcription progress comes from Whisper plus the
+  model's learned speed on your Mac; refinement progress is exact, from
+  Ollama's streamed answer. Minimal mode shows the same as a colored ring.
+- **Paste as-is** — click the violet Refining bar, or press the hotkey
+  plus Shift (⌘D → ⇧⌘D; plus Option if the hotkey already has Shift), to
+  skip LLM cleanup. While recording, the shortcut stops and pastes without
+  refining.
+- **Your vocabulary reaches the LLM** — refinement is told your terms
+  (Firestore, kubectl, project names), so a misheard one comes back
+  spelled your way.
+- **Bad LLM answers stop early** — a reply that opens with chatter
+  ("Sure! Here's…") or runs far longer than what you said is cut off as
+  it starts, and the unrefined text pastes.
+- **Every speech model a mode uses is warmed at launch**, not just the
+  default, so the first dictation in that mode isn't slow.
+- **Recording timer** next to the level meter.
+- **Faster LLM cleanup** — Ollama keeps the model loaded for 30 minutes,
+  and recording start pre-warms every model a mode uses, so the load
+  overlaps with you talking instead of being added after.
+- **Nothing blocks the UI** — commands that do I/O (Ollama, history,
+  insights, device enumeration) run off the main thread, so a slow Ollama
+  or a History reprocess no longer freezes the widget, tray and hotkey.
+- **Latency you can see** — every dictation logs
+  `perf: stt=… llm=… deliver=… total=…`, history records the wait, and
+  Insights shows the typical and slowest-1-in-10 time to paste.
+- **Crash and log hygiene** — panics on any thread are written to
+  `app.log` with a backtrace; `app.log` rotates at 5MB.
+- **Failed settings changes are visible** — a save the backend rejects
+  shows a toast instead of silently not sticking.
+- **Content Security Policy** on the webview, verified by running the
+  production build under it in the e2e suite.
+
+## Dictation accuracy (2026-10-19)
+
+Found by running real speech through Whisper in the audio e2e suite:
+
+- **Casing commands work with real Whisper output** — Whisper often writes
+  "snake case error response handler" as `snake_case_error_response_handler`
+  (and "camel case user ID" as `camelCase user ID`); both are recognized.
+- **Lists from real transcripts** — Whisper writes "One, … Two, …" as
+  "1. … 2. …" on one line; those become a line-broken list. Numbers and
+  ordinals mid-sentence ("one question about the two failing tests") no
+  longer turn into a list. List items are capitalized.
+- **Backtrack keeps your sentence** — "Let's meet at two, actually three"
+  gives "Let's meet at three." (it used to leave only "three."). Longer
+  corrections replace just the sentence they interrupt.
+- **Spoken "period"/"question mark" capitalize the next sentence**, and
+  "comma" misheard as "Kama" still becomes a comma.
+- **"…, press enter."** no longer leaves a dangling comma.
+- **Terminal file tags include paths** — `src/lib.rs` becomes
+  `@src/lib.rs` for terminal coding agents.

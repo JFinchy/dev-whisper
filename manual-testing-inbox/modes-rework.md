@@ -42,8 +42,8 @@ below, since it only runs once.
 6. Confirm Default has no delete button (it's the fallback and shouldn't
    be removable), but every other mode does.
 7. Dictate from an app assigned to a mode with a specific LLM model
-   pinned — check Settings → Logs / Ollama activity to confirm that
-   specific model actually got used, not the global default.
+   pinned. Settings → Logs (or `app.log`) shows `llm: <model> refined
+   ...`; confirm `<model>` is the pinned one, not the global default.
 8. Hover the widget (Compact mode). Confirm "Next dictation" now shows
    one full-width row per mode (not the old cramped single row of 3
    truncated pills) and the flyout grows tall enough to fit all of them
@@ -73,7 +73,10 @@ below, since it only runs once.
     "always sign off with my name" into CLI or Messaging's box, dictate
     from one of its assigned apps, and confirm Settings → Logs / the
     actual pasted output reflects that extra instruction being followed
-    by the LLM (not just the mode's normal refinement behavior).
+    by the LLM (not just the mode's normal refinement behavior). For CLI,
+    dictate prose: spoken commands like "git commit ..." skip the LLM on
+    purpose. And CLI refinement should only ever clean up wording, never
+    turn a sentence into a shell command (changed 2026-10-06).
 
 ## Pass criteria
 

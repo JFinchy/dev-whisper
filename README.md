@@ -1,101 +1,98 @@
 # Dev Whisper
 
-Local, privacy-first dictation for developers. See `FEATURES.md` for
-everything currently built, `PRODUCT_SPEC.md` for the product vision, and
-`ROADMAP.md`/`BACKLOG.md` for what's next.
+Local, private dictation for developers on Apple Silicon. Hold a hotkey,
+talk, and the text lands at your cursor, formatted for the app you're in:
+prose in Slack, commands and `@file` tags in a terminal coding agent,
+`snake_case` when you ask for it. Speech recognition (whisper.cpp on
+Metal) and optional cleanup (Ollama) both run on your Mac; nothing is sent
+anywhere.
 
-## Install (the app itself, not the source)
+- What it does today: [`FEATURES.md`](FEATURES.md)
+- Where it's going: [`ROADMAP.md`](ROADMAP.md), [`BACKLOG.md`](BACKLOG.md),
+  [`PRODUCT_SPEC.md`](PRODUCT_SPEC.md)
+- How it's tested: [`TESTING.md`](TESTING.md)
+- Cutting a release: [`RELEASING.md`](RELEASING.md)
 
-There's no signed/notarized release yet — no DMG to download, no GitHub
-Releases page. For now, "installing" means building it once and keeping
-the resulting app; you don't need to touch this again after that.
+## Install
 
-```sh
-bun install
-bun run tauri build
-```
+**[Download Dev Whisper for Mac (Apple Silicon)](https://github.com/JFinchy/dev-whisper/releases/latest/download/Dev-Whisper.dmg)**:
+open it and drag Dev Whisper into Applications. Always the newest
+version; older ones are on the
+[Releases](https://github.com/JFinchy/dev-whisper/releases) page. The app isn't notarized yet, so the first
+launch needs right-click (Control-click) → **Open**.
 
-That produces `Dev Whisper.app` in `src-tauri/target/release/bundle/macos/`,
-plus a `Dev Whisper_0.1.0_aarch64.dmg` in
-`src-tauri/target/release/bundle/dmg/` (drag-to-Applications, like any other
-Mac app) — open the DMG and drag `Dev Whisper.app` into `/Applications`.
+On first launch, Settings shows a setup checklist until everything's in
+place:
 
-**First launch**: the app isn't notarized, so Gatekeeper will refuse to
-open it normally ("Apple could not verify..."). Right-click (Control-click)
-`Dev Whisper.app` in Applications and choose **Open** — this extra prompt
-only happens once. macOS will then separately ask for Microphone access
-(for recording) and Accessibility access (for pasting the transcript);
-both are required for the app to actually work, not optional extras.
+1. **Speech model**: download one under Voice (Base, ~57MB, is a good
+   default).
+2. **Pasting**: allow Dev Whisper under System Settings → Privacy &
+   Security → Accessibility (the checklist's button opens that page).
+   Not needed if you turn on copy-only delivery.
+3. **Microphone**: macOS asks on the first recording.
+4. **Optional, LLM cleanup**: install [Ollama](https://ollama.com) and
+   download a small model from Settings → LLM.
 
-**Download a Whisper model**: a fresh install has no speech model on disk
-yet (the `./scripts/download-model.sh` step below is a dev-only shortcut,
-not something a real install runs). Open Settings — gear icon on the
-floating widget — → Dictation → Models, and download one; Base (~57MB) is
-a reasonable default. Nothing will transcribe until that finishes.
+Updates install themselves: the app checks GitHub on launch, shows a dot
+on the widget's gear when a new version is out, and Settings → About
+installs it. Update packages are signature-checked.
 
-**Optional — LLM refinement**: install [Ollama](https://ollama.com) and
-pull a small model (Settings → Dictation → LLM refinement offers one-click
-downloads for a few small models) if you want app-aware cleanup/tone
-refinement. The app works without it, just with plainer/unrefined output.
-
-**After that first install, updates are automatic** (once a release has
-actually been published — see `RELEASING.md`): the app checks GitHub for
-a newer version on launch and shows a small dot on the widget's gear icon
-if one's available. Settings → About has the same status plus a "Check
-for updates"/"Update to vX.Y.Z" button — clicking it downloads, verifies,
-installs, and relaunches on its own. No manual rebuild-and-replace needed
-from here on. Update packages are cryptographically signed (not just served over
-HTTPS) so a compromised GitHub account alone couldn't push a malicious
-auto-installed update. The app itself still isn't notarized, though, so
-Gatekeeper may or may not re-flag the app after an in-place update swap —
-not yet verified against a real two-version update cycle; if it does,
-the same right-click-Open fix from the first install applies.
-
-## Dev setup
-
-For working on the app itself — runs from source with hot reload instead
-of building a standalone `.app`.
+## Development
 
 ```sh
 bun install
-./scripts/download-model.sh   # downloads the ggml whisper model (~57MB)
-bun run tauri dev
+./scripts/download-model.sh   # Whisper base.en into src-tauri/models (checksum-verified)
+bun run tauri dev             # the app, with hot reload
+bun run dev:mock              # just the UI in a browser, on a fake backend (http://localhost:1430/?window=settings)
+bun run test                  # typecheck + Rust tests + UI e2e
 ```
 
-The global push-to-talk hotkey doesn't need Accessibility permission (it
-uses Carbon's `RegisterEventHotKey`, not an event tap), but pasting the
-transcript does, since that's a simulated Cmd+V. macOS prompts for it on
-first launch; microphone capture prompts separately on first recording.
+`dev:mock` runs the React UI against the in-memory backend in
+`src/testing/mockBackend.ts`, so UI work doesn't need a Rust rebuild.
+Append `?window=widget` or `?window=settings` to pick the window.
 
-**Dev-mode quirk**: each `cargo`/`tauri build` produces a freshly (ad-hoc)
-signed binary, and macOS ties the Accessibility grant to that exact
-signature. So after every rebuild, paste may silently stop working until
-you re-grant it in System Settings > Privacy & Security > Accessibility —
-remove the stale "Dev Whisper" entry and re-add it, or just toggle it off
-and on. The app now detects this and shows an error instead of pasting
-silently, which is what surfaces this. Signed release builds won't have
-this problem.
+### Stable dev signing
 
-The push-to-talk shortcut and Whisper model are configurable from the
-Settings window (gear icon on the widget) and persist across restarts.
+macOS ties Accessibility and Input Monitoring grants to an app's code
+signature, and every `cargo` build is signed with a new ad-hoc one, so
+each rebuild used to lose those grants. `.cargo/config.toml` runs
+`scripts/dev-sign-runner.sh`, which re-signs the dev binary with a fixed
+local identity before launching it. One-time setup, in your own Terminal
+(the trust step asks for your Mac password):
 
-**Known limitation — iPhone Microphone (Continuity)**: selecting your
-iPhone as the input device is unreliable. In testing, the stream would
-sometimes open and play but deliver zero audio frames to the capture
-callback for the entire recording (confirmed via `audio: first callback
-received` logging — sometimes it never printed at all), while other
-attempts with the identical device worked fine. This looks like a race in
-Continuity's connection handshake interacting with `cpal`'s low-level
-CoreAudio `AudioUnit` input path, which is a different code path than the
-one Apple's own apps use (`AVAudioEngine`) — not a bug in this app's
-start/stop lifecycle, which was verified clean (open → play → pause →
-drop) in every case. `audio.rs` retries opening the device a few times
-and falls back to the system default if it still won't open, which fixes
-the "stale device handle right after selecting it" failure mode, but not
-this "opens fine, delivers no data" one. If you want to use your iPhone
-as the mic, expect to retry the recording a time or two; for anything
-important, use a built-in/USB/Bluetooth mic instead.
+```sh
+./scripts/setup-dev-signing.sh
+```
 
-## Recommended IDE Setup
+Then run `bun run tauri dev`, click **Always Allow** if `codesign` asks to
+use the key, and grant Accessibility to the dev app one last time.
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+Without the certificate the runner launches unsigned and says so. If
+signing stalls on a keychain prompt, it gives up after 20 seconds and
+launches unsigned rather than hanging.
+
+### Project layout
+
+| Path | What's there |
+|---|---|
+| `src-tauri/src/recording.rs` | The dictation flow: record → transcribe → format → deliver |
+| `src-tauri/src/pipeline.rs` | Text formatting, pure and testable (lists, punctuation, backtrack, commands, modes, LLM) |
+| `src-tauri/src/readiness.rs` | Setup checklist |
+| `src-tauri/src/{audio,stt,llm,paste}.rs` | Mic capture, Whisper, Ollama, paste |
+| `src-tauri/src/ambient.rs` | Hands-free "Dev Whisper, …" listening |
+| `src/WidgetView.tsx` | The floating widget |
+| `src/SettingsView.tsx`, `src/settings/` | Settings window, one file per page |
+| `e2e/` | Playwright UI tests |
+| `src-tauri/tests/fixtures/` | Golden dictation cases and real-audio cases |
+
+Logs: `~/Library/Application Support/com.devwhisper.app/app.log` (also
+Settings → Advanced → Logs).
+
+## Known limitations
+
+- **iPhone (Continuity) microphone** is unreliable: the stream sometimes
+  opens but delivers no audio. The widget now flags this as "No sound from
+  mic" within ~2 seconds; use a built-in, USB or Bluetooth mic for
+  anything important.
+- **Not notarized**, so Gatekeeper needs the right-click → Open step on
+  first install.

@@ -66,6 +66,10 @@ pub struct InsightsPayload {
     /// entries, or a wav whose header failed to read, won't have one).
     pub avg_words_per_minute: Option<f64>,
     pub personal_best_wpm: Option<f64>,
+    /// Median and 90th-percentile time from releasing the hotkey to the
+    /// text landing, over the most recent `LATENCY_WINDOW` dictations that
+    /// recorded it. `None` until there's at least one.
+    pub latency: Option<LatencyStats>,
     pub app_usage: Vec<AppUsage>,
     pub streak: StreakInfo,
     pub adoption: AdoptionInfo,
@@ -82,7 +86,10 @@ fn word_count(text: &str) -> usize {
 /// to count for entries that went through a snippet/casing/boilerplate
 /// substitution.
 fn spoken_word_count(entry: &HistoryEntry) -> u64 {
-    entry.spoken_words.map(|n| n as u64).unwrap_or_else(|| word_count(&entry.text) as u64)
+    entry
+        .spoken_words
+        .map(|n| n as u64)
+        .unwrap_or_else(|| word_count(&entry.text) as u64)
 }
 
 /// Days since the Unix epoch (1970-01-01) for a UTC millisecond timestamp.
@@ -154,6 +161,36 @@ fn compute_streak(days_with_activity: &std::collections::BTreeSet<i64>, today: i
     (current, longest)
 }
 
+#[derive(Serialize, Debug, PartialEq)]
+pub struct LatencyStats {
+    pub median_ms: u64,
+    pub p90_ms: u64,
+    pub samples: u32,
+}
+
+/// Recent enough to reflect the current model/LLM setup, large enough that
+/// one slow cold start doesn't dominate the median.
+const LATENCY_WINDOW: usize = 50;
+
+fn compute_latency(entries: &[HistoryEntry]) -> Option<LatencyStats> {
+    let mut recent: Vec<u64> = entries
+        .iter()
+        .rev()
+        .filter_map(|e| e.latency_ms)
+        .take(LATENCY_WINDOW)
+        .collect();
+    if recent.is_empty() {
+        return None;
+    }
+    recent.sort_unstable();
+    let at = |q: f64| recent[((recent.len() - 1) as f64 * q).round() as usize];
+    Some(LatencyStats {
+        median_ms: at(0.5),
+        p90_ms: at(0.9),
+        samples: recent.len() as u32,
+    })
+}
+
 pub fn compute(entries: &[HistoryEntry], cfg: &AppConfig, now_ms: u64) -> InsightsPayload {
     let total_dictations = entries.len() as u64;
     let total_words: u64 = entries.iter().map(spoken_word_count).sum();
@@ -162,7 +199,10 @@ pub fn compute(entries: &[HistoryEntry], cfg: &AppConfig, now_ms: u64) -> Insigh
         .iter()
         .filter(|e| {
             !e.features_used.is_empty()
-                || matches!(e.mode.as_deref(), Some("casing") | Some("snippet") | Some("boilerplate"))
+                || matches!(
+                    e.mode.as_deref(),
+                    Some("casing") | Some("snippet") | Some("boilerplate")
+                )
         })
         .count() as u64;
 
@@ -182,13 +222,19 @@ pub fn compute(entries: &[HistoryEntry], cfg: &AppConfig, now_ms: u64) -> Insigh
     } else {
         Some(wpm_samples.iter().sum::<f64>() / wpm_samples.len() as f64)
     };
-    let personal_best_wpm = wpm_samples.iter().cloned().fold(None, |best: Option<f64>, v| {
-        Some(best.map_or(v, |b| b.max(v)))
-    });
+    let personal_best_wpm = wpm_samples
+        .iter()
+        .cloned()
+        .fold(None, |best: Option<f64>, v| {
+            Some(best.map_or(v, |b| b.max(v)))
+        });
 
     let mut app_counts: HashMap<String, u64> = HashMap::new();
     for entry in entries {
-        let name = entry.app_name.clone().unwrap_or_else(|| "Unknown".to_string());
+        let name = entry
+            .app_name
+            .clone()
+            .unwrap_or_else(|| "Unknown".to_string());
         *app_counts.entry(name).or_insert(0) += 1;
     }
     let mut app_usage: Vec<AppUsage> = app_counts
@@ -203,7 +249,11 @@ pub fn compute(entries: &[HistoryEntry], cfg: &AppConfig, now_ms: u64) -> Insigh
             dictations,
         })
         .collect();
-    app_usage.sort_by(|a, b| b.dictations.cmp(&a.dictations).then_with(|| a.app_name.cmp(&b.app_name)));
+    app_usage.sort_by(|a, b| {
+        b.dictations
+            .cmp(&a.dictations)
+            .then_with(|| a.app_name.cmp(&b.app_name))
+    });
 
     let mut daily_counts: HashMap<String, u32> = HashMap::new();
     let mut days_with_activity: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
@@ -223,6 +273,7 @@ pub fn compute(entries: &[HistoryEntry], cfg: &AppConfig, now_ms: u64) -> Insigh
         smart_formatting_count,
         avg_words_per_minute,
         personal_best_wpm,
+        latency: compute_latency(entries),
         app_usage,
         streak: StreakInfo {
             current_days,
@@ -234,7 +285,9 @@ pub fn compute(entries: &[HistoryEntry], cfg: &AppConfig, now_ms: u64) -> Insigh
 }
 
 fn used_feature(entries: &[HistoryEntry], key: &str) -> bool {
-    entries.iter().any(|e| e.features_used.iter().any(|f| f == key))
+    entries
+        .iter()
+        .any(|e| e.features_used.iter().any(|f| f == key))
 }
 
 fn used_mode(entries: &[HistoryEntry], mode: &str) -> bool {
@@ -301,10 +354,14 @@ fn compute_adoption(entries: &[HistoryEntry], cfg: &AppConfig) -> AdoptionInfo {
         (done_count * 100 / items.len()) as u32
     };
 
-    AdoptionInfo { score_percent, items }
+    AdoptionInfo {
+        score_percent,
+        items,
+    }
 }
 
-#[tauri::command]
+// Off the main thread: sync commands run on it, and this one does I/O.
+#[tauri::command(async)]
 pub fn get_insights(app: tauri::AppHandle) -> InsightsPayload {
     let entries = crate::history::all_entries(&app);
     let cfg = crate::config::load(&app);
@@ -320,7 +377,13 @@ mod tests {
     use super::*;
     use crate::modes::AppRef;
 
-    fn entry(text: &str, app_name: &str, mode: &str, days_ago: i64, duration_ms: Option<u64>) -> HistoryEntry {
+    fn entry(
+        text: &str,
+        app_name: &str,
+        mode: &str,
+        days_ago: i64,
+        duration_ms: Option<u64>,
+    ) -> HistoryEntry {
         let now: u64 = 1_700_000_000_000; // fixed reference instant
         HistoryEntry {
             timestamp_ms: (now as i64 - days_ago * 86_400_000) as u64,
@@ -331,6 +394,7 @@ mod tests {
             duration_ms,
             features_used: Vec::new(),
             spoken_words: None,
+            latency_ms: None,
         }
     }
 
@@ -454,11 +518,26 @@ mod tests {
         let entries = vec![entry("a", "Terminal", "casing", 0, None)];
         let payload = compute(&entries, &cfg, NOW);
 
-        let casing = payload.adoption.items.iter().find(|i| i.key == "casing").unwrap();
+        let casing = payload
+            .adoption
+            .items
+            .iter()
+            .find(|i| i.key == "casing")
+            .unwrap();
         assert!(casing.done);
-        let modes = payload.adoption.items.iter().find(|i| i.key == "modes").unwrap();
+        let modes = payload
+            .adoption
+            .items
+            .iter()
+            .find(|i| i.key == "modes")
+            .unwrap();
         assert!(modes.done);
-        let backtrack = payload.adoption.items.iter().find(|i| i.key == "backtrack").unwrap();
+        let backtrack = payload
+            .adoption
+            .items
+            .iter()
+            .find(|i| i.key == "backtrack")
+            .unwrap();
         assert!(!backtrack.done);
         // 2 of 6 default items done (vocabulary/snippets untouched, punctuation unused).
         assert_eq!(payload.adoption.score_percent, 33);
@@ -469,5 +548,23 @@ mod tests {
         assert_eq!(civil_from_days(0), (1970, 1, 1));
         assert_eq!(civil_from_days(19_723), (2024, 1, 1));
         assert_eq!(date_key(0), "1970-01-01");
+    }
+
+    #[test]
+    fn latency_uses_recent_entries_that_recorded_it() {
+        let mut entries: Vec<HistoryEntry> = (0..5)
+            .map(|i| {
+                let mut e = entry("hi", "Terminal", "Plain", i, None);
+                e.latency_ms = Some([900, 300, 500, 400, 2000][i as usize]);
+                e
+            })
+            .collect();
+        entries.push(entry("old format", "Terminal", "Plain", 6, None));
+
+        let stats = compute_latency(&entries).unwrap();
+        assert_eq!(stats.samples, 5);
+        assert_eq!(stats.median_ms, 500);
+        assert_eq!(stats.p90_ms, 2000);
+        assert_eq!(compute_latency(&entries[5..]), None);
     }
 }

@@ -22,7 +22,8 @@
 /// branch, not its literal shell-command directives like `git commit` —
 /// tagging a file mention inside an actual commit message would corrupt
 /// it). Known limitations, both accepted rather than solved:
-/// - Bare filenames only, no paths — spoken "src slash lib dot rs" isn't
+/// - Relative paths are tagged when Whisper already wrote them as one
+///   token (`src/lib.rs`), but spoken "src slash lib dot rs" isn't
 ///   reliably reconstructable through the existing punctuation pipeline
 ///   (`extract_word` doesn't have a "dot" command, so a spoken path
 ///   doesn't glue into one taggable token the way `~/`, `src/lib` etc.
@@ -63,7 +64,14 @@ fn looks_like_file(token: &str) -> Option<&str> {
     if base.is_empty() || ext.is_empty() {
         return None;
     }
-    if !base.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+    // Relative paths (`src/lib.rs`) are fine; absolute ones, URLs and
+    // empty segments (`a//b.rs`) aren't something an agent resolves.
+    let path_ok = !base.starts_with('/') && !base.contains("//") && !base.ends_with('/');
+    if !path_ok
+        || !base
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '/')
+    {
         return None;
     }
     if !EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
@@ -140,7 +148,10 @@ mod tests {
 
     #[test]
     fn strips_whisper_sentence_period_but_keeps_it_after_tagging() {
-        assert_eq!(tag_file_references("check recording.rs."), "check @recording.rs.");
+        assert_eq!(
+            tag_file_references("check recording.rs."),
+            "check @recording.rs."
+        );
     }
 
     #[test]
@@ -153,19 +164,31 @@ mod tests {
 
     #[test]
     fn unrecognized_extension_is_left_alone() {
-        assert_eq!(tag_file_references("email me at user.xyz please"), "email me at user.xyz please");
+        assert_eq!(
+            tag_file_references("email me at user.xyz please"),
+            "email me at user.xyz please"
+        );
     }
 
     #[test]
     fn does_not_misfire_on_ordinary_words_or_abbreviations() {
-        assert_eq!(tag_file_references("for example e.g. this one"), "for example e.g. this one");
-        assert_eq!(tag_file_references("just a normal sentence"), "just a normal sentence");
+        assert_eq!(
+            tag_file_references("for example e.g. this one"),
+            "for example e.g. this one"
+        );
+        assert_eq!(
+            tag_file_references("just a normal sentence"),
+            "just a normal sentence"
+        );
     }
 
     #[test]
     fn single_letter_extensions_still_match() {
         // .c and .h are real, common source extensions.
-        assert_eq!(tag_file_references("edit main.c and main.h"), "edit @main.c and @main.h");
+        assert_eq!(
+            tag_file_references("edit main.c and main.h"),
+            "edit @main.c and @main.h"
+        );
     }
 
     #[test]
@@ -183,6 +206,25 @@ mod tests {
 
     #[test]
     fn already_tagged_references_are_left_alone() {
-        assert_eq!(tag_file_references("look at @recording.rs now"), "look at @recording.rs now");
+        assert_eq!(
+            tag_file_references("look at @recording.rs now"),
+            "look at @recording.rs now"
+        );
+    }
+
+    #[test]
+    fn tags_relative_paths_but_not_absolute_ones() {
+        assert_eq!(
+            tag_file_references("check src/lib.rs and fix it"),
+            "check @src/lib.rs and fix it"
+        );
+        assert_eq!(
+            tag_file_references("see /etc/app.conf"),
+            "see /etc/app.conf"
+        );
+        assert_eq!(
+            tag_file_references("open https://x.io/a.js"),
+            "open https://x.io/a.js"
+        );
     }
 }

@@ -12,6 +12,10 @@ enum AudioCommand {
     /// Attach (`Some`) or detach (`None`) the ambient listener. While
     /// attached the stream keeps running between recordings.
     SetTap(Option<Sender<AudioChunk>>),
+    /// The selected device changed: open it now (paused, unless something
+    /// is listening) so its status is known immediately, not at the next
+    /// recording.
+    Refresh,
 }
 
 /// Handle stored in Tauri state. The `cpal::Stream` itself is not `Send`/`Sync`
@@ -70,7 +74,10 @@ impl AudioHandle {
                 level: level_thread.clone(),
             };
             let publish = |stream: &Option<WarmStream>, wanted: &Option<String>| {
-                let next = device_status(stream.as_ref().map(WarmStream::facts).as_ref(), wanted.as_deref());
+                let next = device_status(
+                    stream.as_ref().map(WarmStream::facts).as_ref(),
+                    wanted.as_deref(),
+                );
                 let mut last = status_thread.lock().unwrap();
                 if last.as_ref() != Some(&next) {
                     crate::applog!("audio: device status -> {next:?}");
@@ -101,12 +108,18 @@ impl AudioHandle {
                     *current = build_warm_stream(&sinks, device_name.clone());
                 }
 
-                if current.as_ref().and_then(|cs| cs.stream.play().ok()).is_none() {
+                if current
+                    .as_ref()
+                    .and_then(|cs| cs.stream.play().ok())
+                    .is_none()
+                {
                     crate::applog!("audio: resuming warm stream failed, rebuilding fresh");
                     *current = build_warm_stream(&sinks, device_name.clone());
                     match current.as_ref().map(|cs| cs.stream.play()) {
                         Some(Ok(())) => crate::applog!("audio: stream playing (rebuilt)"),
-                        Some(Err(err)) => crate::applog!("audio: stream.play() failed after rebuild: {err}"),
+                        Some(Err(err)) => {
+                            crate::applog!("audio: stream.play() failed after rebuild: {err}")
+                        }
                         None => crate::applog!("audio: failed to start capture"),
                     }
                 }
@@ -157,6 +170,31 @@ impl AudioHandle {
                         };
                         let _ = reply.send(result);
                     }
+                    AudioCommand::Refresh => {
+                        // Mid-recording, swapping streams would splice two
+                        // devices (maybe at different sample rates) into one
+                        // clip; the next Start picks the new device up.
+                        if sinks.buffering.load(Ordering::SeqCst) {
+                            continue;
+                        }
+                        if sinks.tap.lock().unwrap().is_some() {
+                            ensure_playing(&mut current);
+                        } else {
+                            let device_name = selected_device_thread.lock().unwrap().clone();
+                            let facts = current.as_ref().map(WarmStream::facts);
+                            if let Some(reason) = rebuild_reason(
+                                facts.as_ref(),
+                                device_name.as_deref(),
+                                |name| list_device_names().iter().any(|d| d == name),
+                                default_device_name,
+                            ) {
+                                crate::applog!("audio: rebuilding stream ({reason})");
+                                current = build_warm_stream(&sinks, device_name.clone());
+                            }
+                            pause_if_unused(&current);
+                            publish(&current, &device_name);
+                        }
+                    }
                     AudioCommand::SetTap(tap) => {
                         let attach = tap.is_some();
                         *sinks.tap.lock().unwrap() = tap;
@@ -203,6 +241,7 @@ impl AudioHandle {
     /// `None` resets to the system default input device.
     pub fn set_device(&self, name: Option<String>) {
         *self.selected_device.lock().unwrap() = name;
+        let _ = self.tx.send(AudioCommand::Refresh);
     }
 
     /// The explicitly selected device, if any (does not resolve the default).
@@ -248,12 +287,17 @@ struct Sinks {
 
 impl Sinks {
     fn deliver(&self, data: &[f32], channels: u16, sample_rate: u32) {
-        self.level.store(rms_level(data).to_bits(), Ordering::Relaxed);
+        self.level
+            .store(rms_level(data).to_bits(), Ordering::Relaxed);
         if self.buffering.load(Ordering::Relaxed) {
             self.samples.lock().unwrap().extend_from_slice(data);
         }
         if let Some(tap) = self.tap.lock().unwrap().as_ref() {
-            let _ = tap.send(AudioChunk { samples: data.to_vec(), channels, sample_rate });
+            let _ = tap.send(AudioChunk {
+                samples: data.to_vec(),
+                channels,
+                sample_rate,
+            });
         }
     }
 }
@@ -319,20 +363,31 @@ fn rebuild_reason(
     }
     match requested {
         Some(name) if facts.fallback && preferred_present(name) => Some("preferred device is back"),
-        None if default_now().as_deref() != Some(facts.resolved.as_str()) => Some("system default device changed"),
+        None if default_now().as_deref() != Some(facts.resolved.as_str()) => {
+            Some("system default device changed")
+        }
         _ => None,
     }
 }
 
 fn device_status(stream: Option<&StreamFacts>, wanted: Option<&str>) -> DeviceStatus {
     match (stream, wanted) {
-        (None, wanted) => DeviceStatus::Unavailable { wanted: wanted.map(str::to_string) },
-        (Some(s), Some(wanted)) if s.fallback => DeviceStatus::Fallback {
+        (None, wanted) => DeviceStatus::Unavailable {
+            wanted: wanted.map(str::to_string),
+        },
+        // A fallback that landed on the wanted device anyway (it wasn't
+        // enumerated yet at launch, but is the system default) isn't a
+        // fallback from the user's point of view.
+        (Some(s), Some(wanted)) if s.fallback && s.resolved != wanted => DeviceStatus::Fallback {
             wanted: wanted.to_string(),
             using: s.resolved.clone(),
         },
-        (Some(s), Some(_)) => DeviceStatus::Preferred { using: s.resolved.clone() },
-        (Some(s), None) => DeviceStatus::SystemDefault { using: s.resolved.clone() },
+        (Some(s), Some(_)) => DeviceStatus::Preferred {
+            using: s.resolved.clone(),
+        },
+        (Some(s), None) => DeviceStatus::SystemDefault {
+            using: s.resolved.clone(),
+        },
     }
 }
 
@@ -364,6 +419,47 @@ fn build_warm_stream(sinks: &Sinks, device_name: Option<String>) -> Option<WarmS
             None
         }
     }
+}
+
+/// Input quieter than this (on the widget meter's 0–1 scale) is treated as
+/// "nothing coming through": about -84 dBFS, below the self-noise of any
+/// working mic in a quiet room. A muted or disconnected device delivers
+/// exact zeros, and a device that never starts delivering stays at 0.
+const DEAD_LEVEL: f32 = 0.03;
+const DEAD_FOR: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Watches the live input level during one recording and says when to
+/// raise (`Some(true)`) or clear (`Some(false)`) the "no sound from your
+/// mic" warning.
+#[derive(Default)]
+pub struct SilenceWatch {
+    quiet_since: Option<std::time::Instant>,
+    warned: bool,
+}
+
+impl SilenceWatch {
+    pub fn observe(&mut self, level: f32, now: std::time::Instant) -> Option<bool> {
+        if level >= DEAD_LEVEL {
+            self.quiet_since = None;
+            return std::mem::take(&mut self.warned).then_some(false);
+        }
+        let since = *self.quiet_since.get_or_insert(now);
+        if !self.warned && now.duration_since(since) >= DEAD_FOR {
+            self.warned = true;
+            return Some(true);
+        }
+        None
+    }
+}
+
+/// A finished recording with essentially no signal (RMS ≈ the same -84
+/// dBFS floor): the mic delivered nothing, as opposed to you not speaking.
+pub fn is_dead_air(samples: &[f32]) -> bool {
+    if samples.is_empty() {
+        return true;
+    }
+    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+    rms < 6e-5
 }
 
 /// Names of all available input devices, for the settings picker.
@@ -398,26 +494,40 @@ struct OpenedStream {
 /// headset off) skips the retries, since sleeping won't bring it back and
 /// they'd only delay recording. Either way, fall back to the system default
 /// rather than silently capturing nothing.
-fn open_with_retry_and_fallback(sinks: &Sinks, device_name: Option<&str>) -> Result<OpenedStream, String> {
+fn open_with_retry_and_fallback(
+    sinks: &Sinks,
+    device_name: Option<&str>,
+) -> Result<OpenedStream, String> {
     const RETRIES: u32 = 3;
     let mut last_err = String::new();
 
-    let present = device_name.map_or(true, |name| list_device_names().iter().any(|d| d == name));
+    let present = device_name.is_none_or(|name| list_device_names().iter().any(|d| d == name));
     let attempts = if present { RETRIES } else { 0 };
     if !present {
-        last_err = format!("input device '{}' is not connected", device_name.unwrap_or_default());
+        last_err = format!(
+            "input device '{}' is not connected",
+            device_name.unwrap_or_default()
+        );
     }
 
     for attempt in 0..attempts {
         if attempt > 0 {
             let delay = std::time::Duration::from_millis(300 * attempt as u64);
-            crate::applog!("audio: retrying '{}' in {delay:?} (attempt {})", device_name.unwrap_or("<default>"), attempt + 1);
+            crate::applog!(
+                "audio: retrying '{}' in {delay:?} (attempt {})",
+                device_name.unwrap_or("<default>"),
+                attempt + 1
+            );
             std::thread::sleep(delay);
         }
         match build_input_stream(sinks, device_name) {
             Ok(opened) => return Ok(opened),
             Err(err) => {
-                crate::applog!("audio: attempt {} to open '{}' failed: {err}", attempt + 1, device_name.unwrap_or("<default>"));
+                crate::applog!(
+                    "audio: attempt {} to open '{}' failed: {err}",
+                    attempt + 1,
+                    device_name.unwrap_or("<default>")
+                );
                 last_err = err;
             }
         }
@@ -425,7 +535,10 @@ fn open_with_retry_and_fallback(sinks: &Sinks, device_name: Option<&str>) -> Res
 
     if let Some(name) = device_name {
         crate::applog!("audio: '{name}' unavailable ({last_err}), falling back to system default");
-        return build_input_stream(sinks, None).map(|opened| OpenedStream { fallback: true, ..opened });
+        return build_input_stream(sinks, None).map(|opened| OpenedStream {
+            fallback: true,
+            ..opened
+        });
     }
 
     Err(last_err)
@@ -465,9 +578,7 @@ fn build_input_stream(sinks: &Sinks, device_name: Option<&str>) -> Result<Opened
             .ok_or_else(|| "no input device available".to_string())?,
     };
     let resolved_name = device.name().unwrap_or_else(|_| "<unknown>".to_string());
-    let config = device
-        .default_input_config()
-        .map_err(|e| e.to_string())?;
+    let config = device.default_input_config().map_err(|e| e.to_string())?;
 
     let sample_rate = config.sample_rate().0;
     let channels = config.channels();
@@ -507,7 +618,8 @@ fn build_input_stream(sinks: &Sinks, device_name: Option<&str>) -> Result<Opened
             &stream_config,
             move |data: &[i16], _| {
                 note_first(data.len());
-                let converted: Vec<f32> = data.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
+                let converted: Vec<f32> =
+                    data.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
                 sinks.deliver(&converted, channels, sample_rate);
             },
             err_fn,
@@ -517,8 +629,10 @@ fn build_input_stream(sinks: &Sinks, device_name: Option<&str>) -> Result<Opened
             &stream_config,
             move |data: &[u16], _| {
                 note_first(data.len());
-                let converted: Vec<f32> =
-                    data.iter().map(|s| (*s as f32 / u16::MAX as f32) * 2.0 - 1.0).collect();
+                let converted: Vec<f32> = data
+                    .iter()
+                    .map(|s| (*s as f32 / u16::MAX as f32) * 2.0 - 1.0)
+                    .collect();
                 sinks.deliver(&converted, channels, sample_rate);
             },
             err_fn,
@@ -583,7 +697,10 @@ mod tests {
         // not a barely-there flicker near the floor.
         let quiet = vec![0.02; 100];
         let level = rms_level(&quiet);
-        assert!(level > 0.4 && level < 1.0, "expected a clearly visible but unsaturated level, got {level}");
+        assert!(
+            level > 0.4 && level < 1.0,
+            "expected a clearly visible but unsaturated level, got {level}"
+        );
     }
 
     #[test]
@@ -623,35 +740,67 @@ mod tests {
     #[test]
     fn healthy_preferred_stream_is_reused_without_probing() {
         let f = facts(Some("AIRHUG 28"), "AIRHUG 28", false);
-        assert_eq!(rebuild_reason(Some(&f), Some("AIRHUG 28"), never_called_present, never_called_default), None);
+        assert_eq!(
+            rebuild_reason(
+                Some(&f),
+                Some("AIRHUG 28"),
+                never_called_present,
+                never_called_default
+            ),
+            None
+        );
     }
 
     #[test]
     fn an_errored_stream_is_rebuilt() {
         let mut f = facts(Some("AIRHUG 28"), "AIRHUG 28", false);
         f.invalid = true;
-        assert!(rebuild_reason(Some(&f), Some("AIRHUG 28"), never_called_present, never_called_default).is_some());
+        assert!(rebuild_reason(
+            Some(&f),
+            Some("AIRHUG 28"),
+            never_called_present,
+            never_called_default
+        )
+        .is_some());
     }
 
     #[test]
     fn picking_a_different_device_rebuilds() {
         let f = facts(None, "MacBook Pro Microphone", false);
-        assert!(rebuild_reason(Some(&f), Some("AIRHUG 28"), never_called_present, never_called_default).is_some());
+        assert!(rebuild_reason(
+            Some(&f),
+            Some("AIRHUG 28"),
+            never_called_present,
+            never_called_default
+        )
+        .is_some());
     }
 
     #[test]
     fn fallback_recovers_once_the_preferred_device_returns() {
         let f = facts(Some("AIRHUG 28"), "MacBook Pro Microphone", true);
-        assert!(rebuild_reason(Some(&f), Some("AIRHUG 28"), |_| true, never_called_default).is_some());
-        assert_eq!(rebuild_reason(Some(&f), Some("AIRHUG 28"), |_| false, never_called_default), None);
+        assert!(
+            rebuild_reason(Some(&f), Some("AIRHUG 28"), |_| true, never_called_default).is_some()
+        );
+        assert_eq!(
+            rebuild_reason(Some(&f), Some("AIRHUG 28"), |_| false, never_called_default),
+            None
+        );
     }
 
     #[test]
     fn system_default_change_rebuilds_only_when_no_device_is_picked() {
         let f = facts(None, "MacBook Pro Microphone", false);
-        assert!(rebuild_reason(Some(&f), None, never_called_present, || Some("AirPods".to_string())).is_some());
+        assert!(
+            rebuild_reason(Some(&f), None, never_called_present, || Some(
+                "AirPods".to_string()
+            ))
+            .is_some()
+        );
         assert_eq!(
-            rebuild_reason(Some(&f), None, never_called_present, || Some("MacBook Pro Microphone".to_string())),
+            rebuild_reason(Some(&f), None, never_called_present, || Some(
+                "MacBook Pro Microphone".to_string()
+            )),
             None
         );
     }
@@ -659,17 +808,93 @@ mod tests {
     #[test]
     fn status_distinguishes_fallback_from_preferred_and_default() {
         assert_eq!(
-            device_status(Some(&facts(Some("AIRHUG 28"), "MacBook Pro Microphone", true)), Some("AIRHUG 28")),
-            DeviceStatus::Fallback { wanted: "AIRHUG 28".into(), using: "MacBook Pro Microphone".into() }
+            device_status(
+                Some(&facts(Some("AIRHUG 28"), "MacBook Pro Microphone", true)),
+                Some("AIRHUG 28")
+            ),
+            DeviceStatus::Fallback {
+                wanted: "AIRHUG 28".into(),
+                using: "MacBook Pro Microphone".into()
+            }
         );
         assert_eq!(
-            device_status(Some(&facts(Some("AIRHUG 28"), "AIRHUG 28", false)), Some("AIRHUG 28")),
-            DeviceStatus::Preferred { using: "AIRHUG 28".into() }
+            device_status(
+                Some(&facts(Some("AIRHUG 28"), "AIRHUG 28", false)),
+                Some("AIRHUG 28")
+            ),
+            DeviceStatus::Preferred {
+                using: "AIRHUG 28".into()
+            }
+        );
+        assert_eq!(
+            device_status(
+                Some(&facts(Some("AIRHUG 28"), "AIRHUG 28", true)),
+                Some("AIRHUG 28")
+            ),
+            DeviceStatus::Preferred {
+                using: "AIRHUG 28".into()
+            }
         );
         assert_eq!(
             device_status(Some(&facts(None, "MacBook Pro Microphone", false)), None),
-            DeviceStatus::SystemDefault { using: "MacBook Pro Microphone".into() }
+            DeviceStatus::SystemDefault {
+                using: "MacBook Pro Microphone".into()
+            }
         );
-        assert_eq!(device_status(None, Some("AIRHUG 28")), DeviceStatus::Unavailable { wanted: Some("AIRHUG 28".into()) });
+        assert_eq!(
+            device_status(None, Some("AIRHUG 28")),
+            DeviceStatus::Unavailable {
+                wanted: Some("AIRHUG 28".into())
+            }
+        );
+    }
+    #[test]
+    fn silence_watch_warns_after_two_quiet_seconds_and_clears_on_sound() {
+        let t0 = std::time::Instant::now();
+        let mut w = SilenceWatch::default();
+        assert_eq!(w.observe(0.0, t0), None);
+        assert_eq!(
+            w.observe(0.0, t0 + std::time::Duration::from_millis(1900)),
+            None
+        );
+        assert_eq!(
+            w.observe(0.01, t0 + std::time::Duration::from_secs(2)),
+            Some(true)
+        );
+        assert_eq!(
+            w.observe(0.0, t0 + std::time::Duration::from_secs(3)),
+            None,
+            "warns only once"
+        );
+        assert_eq!(
+            w.observe(0.4, t0 + std::time::Duration::from_secs(4)),
+            Some(false)
+        );
+        assert_eq!(w.observe(0.4, t0 + std::time::Duration::from_secs(5)), None);
+    }
+
+    #[test]
+    fn silence_watch_ignores_a_normal_quiet_room() {
+        let t0 = std::time::Instant::now();
+        let mut w = SilenceWatch::default();
+        // A real mic's self-noise in a quiet room (~-65 dBFS) reads ~0.1.
+        let room = rms_level(&[0.0006; 512]);
+        for i in 0..100 {
+            assert_eq!(
+                w.observe(room, t0 + std::time::Duration::from_millis(i * 50)),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn dead_air_is_digital_silence_not_a_quiet_room() {
+        assert!(is_dead_air(&[0.0; 16000]));
+        assert!(is_dead_air(&[]));
+        assert!(
+            !is_dead_air(&[0.0006; 16000]),
+            "quiet room noise is not dead air"
+        );
+        assert!(!is_dead_air(&[0.1; 16000]));
     }
 }

@@ -39,6 +39,16 @@ utterance would eventually type a side conversation into an editor.
 - [ ] Manual verification: enroll, enable, tune VAD/voice-match thresholds
   from `app.log` metrics (needs real speech, see manual-testing-inbox)
 
+## Production readiness (from `AUDIT.md`, 2026-10-19)
+
+The 2026-10-19 audit pass is done (see `AUDIT.md` and `FEATURES.md`).
+Still open, in order:
+
+1. Verify the hardening in the built app (`manual-testing-inbox/production-hardening.md`)
+2. Notarization (needs an Apple Developer account)
+3. Opt-out for deep links starting a recording
+4. Microphone permission in the setup checklist
+
 ## Now — from competitive research (SuperWhisper 2026-08-16, broader landscape 2026-08-17)
 
 Ranked by leverage; see `BACKLOG.md` for the full research writeups. #2

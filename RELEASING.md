@@ -28,16 +28,16 @@ once, since that's the whole point of the signature check.
 
 ## Per-release checklist
 
-1. Bump the version in all three places (there's no tooling to do this
-   automatically, so it's a manual step — a stale one silently breaks
-   the update check):
-   - `package.json`
-   - `src-tauri/Cargo.toml` (`version = "..."`)
-   - `src-tauri/tauri.conf.json` (`"version": "..."`)
+1. Bump the version everywhere it lives (`package.json`, `Cargo.toml`,
+   `tauri.conf.json`; CI fails if they disagree):
+   ```sh
+   ./scripts/bump-version.sh 0.3.0
+   ```
 2. Commit that, then tag and push:
    ```sh
-   git tag v0.2.0
-   git push origin v0.2.0
+   git commit -am "Bump version to 0.3.0"
+   git tag v0.3.0
+   git push origin main v0.3.0
    ```
 3. Watch the `Release` workflow run in the Actions tab. When it's green,
    go to the repo's Releases page and **publish the draft it created** —
@@ -49,3 +49,8 @@ once, since that's the whole point of the signature check.
 Once published, any running copy of the app will see it on its next
 launch (or immediately, if someone clicks "Check for updates" in
 Settings → About).
+
+The workflow also attaches `Dev-Whisper.dmg`, a copy of the installer
+under a fixed name. Once the release is published,
+<https://github.com/JFinchy/dev-whisper/releases/latest/download/Dev-Whisper.dmg>
+downloads it; that's the link in the README.

@@ -7,8 +7,8 @@
 use coreaudio_sys::{
     kAudioHardwarePropertyProcessObjectList, kAudioObjectPropertyElementMain,
     kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject, kAudioProcessPropertyIsRunningInput,
-    kAudioProcessPropertyPID, AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize, AudioObjectID,
-    AudioObjectPropertyAddress,
+    kAudioProcessPropertyPID, AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize,
+    AudioObjectID, AudioObjectPropertyAddress,
 };
 use std::ffi::c_void;
 
@@ -25,7 +25,14 @@ fn read_u32(object: AudioObjectID, selector: u32) -> Option<u32> {
     let mut value: u32 = 0;
     let mut size = std::mem::size_of::<u32>() as u32;
     let status = unsafe {
-        AudioObjectGetPropertyData(object, &addr, 0, std::ptr::null(), &mut size, &mut value as *mut u32 as *mut c_void)
+        AudioObjectGetPropertyData(
+            object,
+            &addr,
+            0,
+            std::ptr::null(),
+            &mut size,
+            &mut value as *mut u32 as *mut c_void,
+        )
     };
     (status == 0).then_some(value)
 }
@@ -36,7 +43,13 @@ pub fn other_processes_using_mic() -> Option<Vec<i32>> {
     let addr = address(kAudioHardwarePropertyProcessObjectList);
     let mut size: u32 = 0;
     let status = unsafe {
-        AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &addr, 0, std::ptr::null(), &mut size)
+        AudioObjectGetPropertyDataSize(
+            kAudioObjectSystemObject,
+            &addr,
+            0,
+            std::ptr::null(),
+            &mut size,
+        )
     };
     if status != 0 {
         return None;
@@ -63,7 +76,9 @@ pub fn other_processes_using_mic() -> Option<Vec<i32>> {
     Some(
         processes
             .into_iter()
-            .filter(|&p| read_u32(p, kAudioProcessPropertyIsRunningInput).is_some_and(|running| running != 0))
+            .filter(|&p| {
+                read_u32(p, kAudioProcessPropertyIsRunningInput).is_some_and(|running| running != 0)
+            })
             .filter_map(|p| read_u32(p, kAudioProcessPropertyPID).map(|pid| pid as i32))
             .filter(|&pid| pid != own)
             .collect(),

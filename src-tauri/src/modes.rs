@@ -94,7 +94,10 @@ pub struct AppModeRule {
 /// an invisible second resolution path.
 pub fn seed_default_modes() -> Vec<ModeDefinition> {
     fn app(bundle_id: &str, app_name: &str) -> AppRef {
-        AppRef { bundle_id: bundle_id.to_string(), app_name: app_name.to_string() }
+        AppRef {
+            bundle_id: bundle_id.to_string(),
+            app_name: app_name.to_string(),
+        }
     }
 
     vec![
@@ -277,7 +280,10 @@ mod tests {
             behavior,
             apps: apps
                 .into_iter()
-                .map(|id| AppRef { bundle_id: id.to_string(), app_name: id.to_string() })
+                .map(|id| AppRef {
+                    bundle_id: id.to_string(),
+                    app_name: id.to_string(),
+                })
                 .collect(),
             stt_model: None,
             llm_refinement: LlmRefinement::Off,
@@ -293,28 +299,50 @@ mod tests {
 
     #[test]
     fn unknown_app_with_no_modes_resolves_to_plain() {
-        assert_eq!(resolve_settings(Some("com.example.unknown"), &[]).mode, Behavior::Plain);
+        assert_eq!(
+            resolve_settings(Some("com.example.unknown"), &[]).mode,
+            Behavior::Plain
+        );
     }
 
     #[test]
     fn app_assigned_to_a_mode_resolves_to_it() {
         let modes = vec![mode("CLI", Behavior::Cli, vec!["com.apple.Terminal"])];
-        assert_eq!(resolve_settings(Some("com.apple.Terminal"), &modes).mode, Behavior::Cli);
+        assert_eq!(
+            resolve_settings(Some("com.apple.Terminal"), &modes).mode,
+            Behavior::Cli
+        );
     }
 
     #[test]
     fn multiple_apps_can_share_one_mode() {
-        let modes = vec![mode("Messaging", Behavior::Casual, vec!["com.tinyspeck.slackmacgap", "com.hnc.Discord"])];
-        assert_eq!(resolve_settings(Some("com.tinyspeck.slackmacgap"), &modes).mode, Behavior::Casual);
-        assert_eq!(resolve_settings(Some("com.hnc.Discord"), &modes).mode, Behavior::Casual);
+        let modes = vec![mode(
+            "Messaging",
+            Behavior::Casual,
+            vec!["com.tinyspeck.slackmacgap", "com.hnc.Discord"],
+        )];
+        assert_eq!(
+            resolve_settings(Some("com.tinyspeck.slackmacgap"), &modes).mode,
+            Behavior::Casual
+        );
+        assert_eq!(
+            resolve_settings(Some("com.hnc.Discord"), &modes).mode,
+            Behavior::Casual
+        );
     }
 
     #[test]
     fn unassigned_app_falls_back_to_the_default_mode() {
         let mut fallback = mode("Default", Behavior::Plain, vec![]);
         fallback.is_default = true;
-        let modes = vec![mode("CLI", Behavior::Cli, vec!["com.apple.Terminal"]), fallback];
-        assert_eq!(resolve_settings(Some("com.example.unknown"), &modes).mode, Behavior::Plain);
+        let modes = vec![
+            mode("CLI", Behavior::Cli, vec!["com.apple.Terminal"]),
+            fallback,
+        ];
+        assert_eq!(
+            resolve_settings(Some("com.example.unknown"), &modes).mode,
+            Behavior::Plain
+        );
     }
 
     #[test]
@@ -327,10 +355,17 @@ mod tests {
 
     #[test]
     fn llm_refinement_resolves_per_mode() {
-        let mut m = mode("Messaging", Behavior::Casual, vec!["com.tinyspeck.slackmacgap"]);
+        let mut m = mode(
+            "Messaging",
+            Behavior::Casual,
+            vec!["com.tinyspeck.slackmacgap"],
+        );
         m.llm_refinement = LlmRefinement::Global;
         let modes = vec![m];
-        assert_eq!(resolve_settings(Some("com.tinyspeck.slackmacgap"), &modes).llm_refinement, LlmRefinement::Global);
+        assert_eq!(
+            resolve_settings(Some("com.tinyspeck.slackmacgap"), &modes).llm_refinement,
+            LlmRefinement::Global
+        );
     }
 
     #[test]
@@ -338,12 +373,19 @@ mod tests {
         let mut m = mode("CLI", Behavior::Cli, vec!["com.apple.Terminal"]);
         m.stt_model = Some("small.en".to_string());
         let modes = vec![m];
-        assert_eq!(resolve_settings(Some("com.apple.Terminal"), &modes).stt_model, Some("small.en".to_string()));
+        assert_eq!(
+            resolve_settings(Some("com.apple.Terminal"), &modes).stt_model,
+            Some("small.en".to_string())
+        );
     }
 
     #[test]
     fn custom_instructions_resolve_per_mode() {
-        let mut m = mode("Messaging", Behavior::Casual, vec!["com.tinyspeck.slackmacgap"]);
+        let mut m = mode(
+            "Messaging",
+            Behavior::Casual,
+            vec!["com.tinyspeck.slackmacgap"],
+        );
         m.custom_instructions = Some("Always sign off with 'thanks, Jake'".to_string());
         let modes = vec![m];
         assert_eq!(
@@ -413,7 +455,9 @@ mod tests {
              If it truly is just a problem with this terminal, we still need to work it out."
         ));
         assert!(!is_literal_cli_directive("this doesn't match any pattern"));
-        assert!(!is_literal_cli_directive("look at recording.rs and fix the bug"));
+        assert!(!is_literal_cli_directive(
+            "look at recording.rs and fix the bug"
+        ));
     }
 
     #[test]
@@ -427,8 +471,14 @@ mod tests {
     #[test]
     fn behavior_serializes_as_snake_case() {
         assert_eq!(serde_json::to_string(&Behavior::Cli).unwrap(), "\"cli\"");
-        assert_eq!(serde_json::to_string(&Behavior::Casual).unwrap(), "\"casual\"");
-        assert_eq!(serde_json::to_string(&Behavior::Plain).unwrap(), "\"plain\"");
+        assert_eq!(
+            serde_json::to_string(&Behavior::Casual).unwrap(),
+            "\"casual\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Behavior::Plain).unwrap(),
+            "\"plain\""
+        );
     }
 }
 

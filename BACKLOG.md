@@ -67,7 +67,7 @@ build phases.
 
 - **Insights section** (shipped 2026-08-18, loosely modeled on Wispr
   Flow's "Your usage" tab, adapted for a local single-user app) — a new
-  Settings page (`InsightsSection` in `SettingsView.tsx`) with total
+  Settings page (`InsightsSection` in `src/settings/sections/insights.tsx`) with total
   words dictated, a "smart formatting applied" count (punctuation/lists/
   casing/snippets/Backtrack), words-per-minute, per-app usage breakdown,
   and a streak calendar heatmap. Two of Flow's cards don't have an honest
@@ -242,7 +242,7 @@ build phases.
   commands: the output is already fully resolved. Logged to history
   tagged with a `"snippet"` mode label (matching the existing
   `"casing"`/`"boilerplate"` label convention). Settings gets a new
-  Snippets section (`SnippetsSection` in `SettingsView.tsx`) with
+  Snippets section (`SnippetsSection` in `src/settings/sections/vocabulary.tsx`) with
   click-to-edit-in-place and delete, persisted via a single
   full-list-replace `set_snippets` command (simpler than a keyed
   add/update/remove trio, since a snippet's trigger — its only natural

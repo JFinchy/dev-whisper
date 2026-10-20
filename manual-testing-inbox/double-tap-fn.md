@@ -2,7 +2,8 @@
 
 Branch: `JFinchy/hippocamp`
 Files changed: `src-tauri/src/doubletap.rs` (new), `src-tauri/src/config.rs`,
-`src-tauri/src/lib.rs`, `src/SettingsView.tsx`
+`src-tauri/src/lib.rs`, `src/SettingsView.tsx`. Listener rewritten
+2026-10-14 (`doubletap.rs`, `Cargo.toml`).
 
 ## What to verify
 
@@ -12,7 +13,14 @@ running alongside the existing shortcut rather than replacing it. This
 needs a real keyboard and macOS's Input Monitoring permission — neither
 can be exercised by an automated test. Automated coverage
 (`cargo test --lib doubletap::`) only checks the double-tap timing window
-(400ms) as a pure function.
+(400ms) and Fn-press detection as pure functions.
+
+**Why this is Critical now:** the original listener (`rdev::listen`)
+crashed the whole app (SIGTRAP) whenever it saw a keystroke on current
+macOS, including the synthetic Cmd+V from pasting, so every dictation could
+crash with this setting on. Crash report:
+`~/Library/Logs/DiagnosticReports/tauri-app-2026-10-14-142109.ips`. It's
+now a listen-only CoreGraphics event tap that only sees modifier changes.
 
 ## Steps
 
@@ -23,7 +31,9 @@ can be exercised by an automated test. Automated coverage
 3. macOS should prompt for **Input Monitoring** permission the first time
    (System Settings → Privacy & Security → Input Monitoring) — confirm the
    prompt appears and grant it. If it doesn't appear automatically, check
-   there manually and add/enable Dev Whisper yourself, then retry.
+   there manually and add/enable Dev Whisper yourself, then retry. Under
+   `tauri dev` the entry is the dev binary, listed as **tauri-app**
+   (`src-tauri/target/debug/tauri-app`).
 4. Double-tap the Fn/Globe key (bottom-left of most Mac keyboards) quickly,
    twice. Confirm recording starts — widget shows the recording state.
 5. Double-tap Fn again. Confirm recording stops and the dictation pastes
@@ -44,6 +54,10 @@ can be exercised by an automated test. Automated coverage
 10. Quit and relaunch the app with the setting left checked. Confirm
     double-tap Fn still works without needing to re-check the box (i.e.
     the listener restarts automatically at launch when it was left on).
+11. **Crash regression:** with the setting on, dictate 3–4 times with
+    push-to-talk (Cmd+D) into Notes and a terminal. Every one pastes and
+    the app stays running (`pgrep -x tauri-app`), with no new
+    `tauri-app-*.ips` in `~/Library/Logs/DiagnosticReports`.
 
 ## Pass criteria
 
@@ -51,4 +65,4 @@ Steps 3-5 establish the core flow works end-to-end on real hardware;
 step 6 confirms the timing window isn't too generous; step 7 confirms
 repeated taps don't misfire; step 8 confirms no interference with Fn's
 normal OS behavior; steps 9-10 confirm the toggle and persistence both
-work correctly.
+work correctly; step 11 confirms pasting no longer crashes the app.

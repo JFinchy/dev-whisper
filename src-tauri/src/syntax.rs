@@ -39,7 +39,8 @@ const DIRECTIVES: &[(&str, CaseStyle)] = &[
 /// directive and has content after it to transform; `None` otherwise
 /// (meaning: not a casing command, fall through to normal mode handling).
 pub fn try_apply_casing_command(text: &str) -> Option<String> {
-    let trimmed = text.trim();
+    let respelled = respell(text);
+    let trimmed = respelled.trim();
     let lower = trimmed.to_lowercase();
 
     let (phrase, style) = DIRECTIVES
@@ -50,7 +51,9 @@ pub fn try_apply_casing_command(text: &str) -> Option<String> {
     // `to_lowercase()` on ASCII directive words doesn't change byte length,
     // so slicing the original-casing `trimmed` at `phrase.len()` stays
     // aligned with what we matched in `lower`.
-    let rest = trimmed[phrase.len()..].trim_start_matches([':', ',']).trim();
+    let rest = trimmed[phrase.len()..]
+        .trim_start_matches([':', ','])
+        .trim();
     let rest = rest.trim_end_matches('.');
 
     let words = extract_words(rest);
@@ -59,6 +62,29 @@ pub fn try_apply_casing_command(text: &str) -> Option<String> {
     }
 
     Some(apply_case_style(*style, &words))
+}
+
+/// Undoes the code spellings Whisper produces for spoken casing commands.
+/// Primed with developer vocabulary, it often writes "snake case error
+/// response handler" as `snake_case_error_response_handler` and "camel
+/// case user ID" as `camelCase user ID`, so the directive never matched.
+/// Separators become spaces and camelCase humps are split; the case style
+/// is then reapplied from the plain words anyway.
+fn respell(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut prev: Option<char> = None;
+    for c in text.chars() {
+        if c == '_' || c == '-' {
+            out.push(' ');
+        } else {
+            if c.is_uppercase() && prev.is_some_and(char::is_lowercase) {
+                out.push(' ');
+            }
+            out.push(c);
+        }
+        prev = Some(c);
+    }
+    out
 }
 
 fn extract_words(text: &str) -> Vec<String> {
@@ -81,7 +107,11 @@ fn apply_case_style(style: CaseStyle, words: &[String]) -> String {
         CaseStyle::Snake => words.join("_"),
         CaseStyle::ScreamingSnake => words.join("_").to_uppercase(),
         CaseStyle::Kebab => words.join("-"),
-        CaseStyle::Title => words.iter().map(|w| capitalize(w)).collect::<Vec<_>>().join(" "),
+        CaseStyle::Title => words
+            .iter()
+            .map(|w| capitalize(w))
+            .collect::<Vec<_>>()
+            .join(" "),
         CaseStyle::Pascal => words.iter().map(|w| capitalize(w)).collect(),
         CaseStyle::Camel => words
             .iter()
@@ -190,5 +220,25 @@ mod tests {
     #[test]
     fn empty_string_returns_none() {
         assert_eq!(try_apply_casing_command(""), None);
+    }
+
+    #[test]
+    fn recognizes_whisper_code_spellings_of_the_directive() {
+        assert_eq!(
+            try_apply_casing_command("snake_case_error_response_handler"),
+            Some("error_response_handler".to_string())
+        );
+        assert_eq!(
+            try_apply_casing_command("camelCase user profile ID"),
+            Some("userProfileId".to_string())
+        );
+        assert_eq!(
+            try_apply_casing_command("kebab-case dev whisper settings."),
+            Some("dev-whisper-settings".to_string())
+        );
+        assert_eq!(
+            try_apply_casing_command("PascalCase user card"),
+            Some("UserCard".to_string())
+        );
     }
 }

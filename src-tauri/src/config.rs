@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
-#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ShortcutConfig {
     pub meta: bool,
     pub ctrl: bool,
@@ -114,6 +114,11 @@ pub struct AppConfig {
     /// just working out of the box like the other punctuation commands.
     #[serde(default)]
     pub press_enter_enabled: bool,
+    /// Skip LLM refinement when the transcript is already clean (see
+    /// `pipeline::refinement_needed`). Refinement costs seconds per
+    /// dictation and mostly returned the text unchanged. On by default.
+    #[serde(default = "default_true")]
+    pub llm_only_when_needed: bool,
     /// Always-on listening (see `ambient.rs`). Off by default — it keeps
     /// the mic open, so it's an explicit opt-in, and it also requires an
     /// enrolled voice.
@@ -137,6 +142,10 @@ pub struct AppConfig {
     /// — see `theme::Layout`. Defaults to Sidebar.
     #[serde(default)]
     pub layout: crate::theme::Layout,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_history_retention_days() -> u32 {
@@ -163,6 +172,7 @@ impl Default for AppConfig {
             webhook_url: None,
             theme: crate::theme::Theme::default(),
             press_enter_enabled: false,
+            llm_only_when_needed: true,
             ambient_enabled: false,
             snippets: crate::snippets::default_snippets(),
             double_tap_fn_enabled: false,
@@ -387,7 +397,10 @@ mod tests {
         assert!(!migrate_legacy_mode_rules(&mut cfg));
     }
     fn scratch_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("dev-whisper-config-test-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "dev-whisper-config-test-{name}-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -417,7 +430,10 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().contains("corrupt-"))
             .collect();
         assert_eq!(aside.len(), 1);
-        assert_eq!(std::fs::read_to_string(aside[0].path()).unwrap(), "{ \"vocabulary\": [\"kub");
+        assert_eq!(
+            std::fs::read_to_string(aside[0].path()).unwrap(),
+            "{ \"vocabulary\": [\"kub"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -425,8 +441,10 @@ mod tests {
     fn save_then_load_round_trips_and_leaves_no_temp_file() {
         let dir = scratch_dir("save");
         let path = dir.join("config.json");
-        let mut cfg = AppConfig::default();
-        cfg.vocabulary = vec!["kubectl".to_string()];
+        let cfg = AppConfig {
+            vocabulary: vec!["kubectl".to_string()],
+            ..AppConfig::default()
+        };
 
         save_to(&path, &cfg).unwrap();
 

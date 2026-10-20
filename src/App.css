@@ -27,6 +27,23 @@ body,
      instead of daisyui's unrelated stock violet. */
   --color-primary: var(--dw-accent);
   --color-primary-content: var(--dw-accent-fg);
+
+  /* daisyUI's surfaces too. Left alone, they follow the OS light/dark
+     setting while the app theme sets everything else, so a Mac in light
+     mode got white cards under Terminal's light text (unreadable). */
+  --color-base-100: var(--dw-card);
+  --color-base-200: var(--dw-bg);
+  --color-base-300: var(--dw-border);
+  --color-base-content: var(--dw-fg);
+
+  /* LLM refinement's color in the widget, distinct from every theme's
+     accent so the two processing stages never look alike. */
+  --dw-refine: #a78bfa;
+
+  /* The widget is a dark floating HUD in every theme and appearance. */
+  --color-neutral: #1b1d21;
+  --color-neutral-content: #ecebe7;
+  color-scheme: dark;
 }
 
 /* ---------- Settings: Signal sidebar shell ---------- */
@@ -396,8 +413,208 @@ body,
   color: rgba(255, 255, 255, 0.7);
 }
 
+.dw-fly-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Selected: tinted, not a solid block, so a column of options doesn't
+   read as a wall of orange. */
 .dw-fly-btn.sel {
+  background: color-mix(in srgb, var(--dw-accent) 18%, transparent);
+  color: var(--dw-accent);
+  border-color: color-mix(in srgb, var(--dw-accent) 70%, transparent);
+}
+
+/* Setup checklist (settings/ReadinessPanel.tsx). Built from the theme
+   tokens plus daisyUI's semantic warning/error colors, so it reads right
+   on every theme, light or dark. */
+.dw-readiness {
+  border: 1px solid var(--dw-border);
+  border-left: 3px solid var(--color-warning);
+  background: var(--dw-card);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dw-readiness.is-blocking {
+  border-left-color: var(--color-error);
+}
+
+.dw-readiness h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--dw-fg);
+}
+
+.dw-readiness ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dw-readiness-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.dw-readiness-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-warning);
+}
+
+.dw-readiness-item.level-error .dw-readiness-dot {
+  background: var(--color-error);
+}
+
+.dw-readiness-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.dw-readiness-text strong {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--dw-fg);
+}
+
+.dw-readiness-text span {
+  font-size: 12px;
+  color: var(--dw-muted);
+}
+
+.dw-readiness-fix {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 5px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--dw-accent);
+  color: var(--dw-accent);
+  background: transparent;
+  cursor: pointer;
+}
+
+.dw-readiness-fix:hover {
   background: var(--dw-accent);
   color: var(--dw-accent-fg);
-  border-color: var(--dw-accent);
+}
+
+.dw-readiness-fix:focus-visible,
+.dw-toast-close:focus-visible {
+  outline: 2px solid var(--dw-accent);
+  outline-offset: 2px;
+}
+
+.dw-chain-readiness {
+  padding: 0 20px 12px;
+}
+
+.dw-chain-readiness:empty {
+  display: none;
+}
+
+/* Error toasts (ui/toast.tsx), bottom-right of the Settings window. */
+.dw-toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(380px, calc(100vw - 32px));
+}
+
+.dw-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--dw-border);
+  border-left: 3px solid var(--color-error);
+  background: var(--dw-card);
+  color: var(--dw-fg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  animation: dw-toast-in 160ms ease-out;
+}
+
+.dw-toast-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 12.5px;
+}
+
+.dw-toast-text span {
+  color: var(--dw-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.dw-toast-close {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--dw-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+@keyframes dw-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dw-toast {
+    animation: none;
+  }
+}
+
+/* A light sweeping across the refining bar: the LLM is working, not stuck.
+   Off for reduced motion. */
+.dw-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.55) 50%,
+    transparent 100%
+  ) !important;
+  background-color: var(--dw-refine);
+  background-size: 200% 100%;
+  animation: dw-shimmer 1.4s linear infinite;
+}
+
+@keyframes dw-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dw-shimmer {
+    animation: none;
+  }
 }

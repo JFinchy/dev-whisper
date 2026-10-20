@@ -82,10 +82,15 @@ const VAR_MAP: Record<keyof ThemeTokens, string> = {
 // Applies a theme's tokens as CSS custom properties on the document root
 // so both plain CSS (`var(--dw-*)`) and inline styles can read them —
 // used by both SettingsView (full theme) and WidgetView (accent only).
+const LIGHT_THEMES: ThemeId[] = ["signal", "quiet"];
+
 export function applyTheme(id: ThemeId) {
   const tokens = THEMES[id];
   const root = document.documentElement.style;
   (Object.keys(VAR_MAP) as (keyof ThemeTokens)[]).forEach((key) => {
     root.setProperty(VAR_MAP[key], tokens[key]);
   });
+  // Native controls (scrollbars, inputs, selects) follow the theme, not
+  // the OS appearance.
+  root.colorScheme = LIGHT_THEMES.includes(id) ? "light" : "dark";
 }

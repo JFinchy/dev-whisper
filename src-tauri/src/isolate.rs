@@ -159,7 +159,10 @@ fn widen_for_scoring(range: (usize, usize), total_len: usize) -> (usize, usize) 
 
 /// Cosine similarity between one utterance (16kHz mono) and the enrolled
 /// voice, scored over its voiced portion. `None` when no voice is enrolled.
-pub fn enrolled_speaker_similarity(app: &AppHandle, samples: &[f32]) -> Option<Result<f32, String>> {
+pub fn enrolled_speaker_similarity(
+    app: &AppHandle,
+    samples: &[f32],
+) -> Option<Result<f32, String>> {
     let vi_state = app.state::<VoiceIsolationState>();
     let enrolled = vi_state.enrolled_embedding()?;
     let mut voiced = energy_gate(samples);
@@ -191,9 +194,14 @@ pub fn apply(app: &AppHandle, samples: Vec<f32>) -> Vec<f32> {
             .into_iter()
             .filter(|&range| {
                 let scoring_range = widen_for_scoring(range, samples.len());
-                match vi_state.compute_embedding(app, &samples, std::slice::from_ref(&scoring_range))
-                {
-                    Ok(embedding) => cosine_similarity(&embedding, &enrolled) >= SIMILARITY_THRESHOLD,
+                match vi_state.compute_embedding(
+                    app,
+                    &samples,
+                    std::slice::from_ref(&scoring_range),
+                ) {
+                    Ok(embedding) => {
+                        cosine_similarity(&embedding, &enrolled) >= SIMILARITY_THRESHOLD
+                    }
                     // Fail open: an embedding hiccup shouldn't silently
                     // drop real speech — worst case this segment just falls
                     // back to the energy-gate's judgment for this clip.
@@ -253,7 +261,10 @@ mod tests {
 
         let ranges = energy_gate(&samples);
         assert_eq!(ranges.len(), 2);
-        assert!(ranges[0].1 < ranges[1].0, "ranges should stay separated by the silence gap");
+        assert!(
+            ranges[0].1 < ranges[1].0,
+            "ranges should stay separated by the silence gap"
+        );
     }
 
     #[test]

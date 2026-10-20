@@ -19,18 +19,27 @@ formatting.
 
 1. `bun run tauri dev`, tray icon → mic should be idle.
 2. **Named punctuation**: dictate into any text field: "hello comma world
-   period new line this is a test". Confirm it pastes as:
+   period new line this is a test". Confirm it pastes as two lines:
    ```
-   hello, world.
-   this is a test
+   Hello, world.
+   This is a test.
    ```
+   Capitalization and the final period come from Whisper and can vary.
+   What matters: exactly one comma, a period after "world", a real line
+   break, and no literal words "comma"/"period"/"new line". (Failed
+   2026-09-09 with a doubled comma, `Hello,, world`; fixed since. Whisper
+   adds its own punctuation next to spoken command words, and the
+   command used to stack on top of it.)
 3. **Numbered lists**: dictate "one buy milk two walk the dog three call
    mom". Confirm it pastes as a real numbered list:
    ```
-   1. buy milk
-   2. walk the dog
-   3. call mom
+   1. Buy milk
+   2. Walk the dog
+   3. Call mom
    ```
+   (Items are capitalized since 2026-10-19. Whisper usually writes the
+   markers as "1. … 2. …", which also becomes this list. Numbers inside an
+   ordinary punctuated sentence no longer turn into a list.)
 4. **Press enter — off by default**: open Settings → confirm the "press
    enter" toggle exists and is **off**. Dictate "test message press
    enter" into a chat-style input (e.g. Messages, Slack). Confirm the
@@ -38,7 +47,9 @@ formatting.
    off) — no Enter should fire.
 5. **Press enter — enabled**: turn the toggle on in Settings. Repeat the
    same dictation. Confirm "press enter" is stripped from the pasted
-   text and Enter actually fires (message sends / newline advances).
+   text and Enter actually fires (message sends / newline advances). Also try it in a
+   terminal (Orca/Terminal): the pasted text should land *before* Enter,
+   not an empty line submitted first.
 6. **Press enter — copy-only interaction**: with "press enter" still on,
    also enable "Copy only" in Settings. Dictate "test press enter" again
    — confirm text is copied to the clipboard but Enter does **not**

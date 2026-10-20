@@ -1,8 +1,10 @@
 [package]
 name = "tauri-app"
 version = "0.1.2"
-description = "A Tauri App"
-authors = ["you"]
+# The package/binary name stays `tauri-app`: the dev code-signing setup and
+# macOS permission grants are tied to it (see scripts/dev-sign-runner.sh).
+description = "Dev Whisper: local, private dictation for developers"
+authors = ["Jake Finch"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -36,8 +38,12 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 sherpa-onnx = "1.13.5"
 signal-hook = "0.3"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+sha2 = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-graphics = "0.25"
 coreaudio-sys = { version = "0.2", default-features = false, features = ["core_audio"] }
 macos-accessibility-client = "0.0.1"
 objc2 = "0.6"

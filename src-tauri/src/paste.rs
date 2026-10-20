@@ -18,7 +18,9 @@ fn accessibility_trusted() -> bool {
 /// permission since it never sends a synthetic keystroke.
 pub fn copy_text(text: &str) -> Result<(), String> {
     let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-    clipboard.set_text(text.to_string()).map_err(|e| e.to_string())
+    clipboard
+        .set_text(text.to_string())
+        .map_err(|e| e.to_string())
 }
 
 /// Copies `text` to the clipboard and simulates Cmd+V so it lands at the
@@ -118,7 +120,17 @@ mod tests {
 
         let marker = "dev-whisper-copy-only-test-marker";
         copy_text(marker).expect("copy_text failed");
-        assert_eq!(clipboard.get_text().unwrap(), marker);
+        // The pasteboard is shared with every other app (clipboard
+        // managers re-read and sometimes re-write it), so allow the write
+        // a moment to settle rather than asserting on the first read.
+        let landed = (0..20).any(|_| {
+            let ok = clipboard.get_text().is_ok_and(|t| t == marker);
+            if !ok {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            ok
+        });
+        assert!(landed, "clipboard never showed the copied text");
 
         if let Some(previous) = previous {
             let _ = clipboard.set_text(previous);

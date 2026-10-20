@@ -114,10 +114,31 @@ mod tests {
             let Ok((mut stream, _)) = listener.accept() else {
                 return;
             };
+            // Read until the whole body has arrived: the client may send
+            // headers and body in separate writes, and one `read` would
+            // then see an empty body (an intermittent test failure).
+            let mut request = Vec::new();
             let mut buf = [0u8; 8192];
-            let n = stream.read(&mut buf).unwrap_or(0);
-            let request = String::from_utf8_lossy(&buf[..n]).into_owned();
-            let body = request.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+            let body = loop {
+                let n = stream.read(&mut buf).unwrap_or(0);
+                request.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&request).into_owned();
+                if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                    let expected = head
+                        .lines()
+                        .find_map(|l| {
+                            let (name, value) = l.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())?
+                        })
+                        .unwrap_or(0);
+                    if body.len() >= expected || n == 0 {
+                        break body.to_string();
+                    }
+                } else if n == 0 {
+                    break String::new();
+                }
+            };
             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
             let _ = tx.send(body);
         });
@@ -140,7 +161,8 @@ mod tests {
         let body = rx
             .recv_timeout(std::time::Duration::from_secs(2))
             .expect("mock server should have received a request");
-        let parsed: serde_json::Value = serde_json::from_str(&body).expect("body should be valid JSON");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&body).expect("body should be valid JSON");
         assert_eq!(parsed["timestamp_ms"], 1_700_000_000_000_u64);
         assert_eq!(parsed["text"], "git commit update the readme");
         assert_eq!(parsed["app_name"], "Terminal");

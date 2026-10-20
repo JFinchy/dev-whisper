@@ -4,7 +4,7 @@ use tauri::{AppHandle, Emitter, Manager};
 /// How much the floating widget shows. The window itself isn't
 /// user-resizable (no titlebar, no drag handles — see tauri.conf.json), so
 /// switching modes resizes it programmatically instead.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum WidgetMode {
     /// Icon-only recording button. No status text, no settings button —
@@ -15,18 +15,13 @@ pub enum WidgetMode {
     /// gear. Default. Auto-grows temporarily (see WidgetView.tsx) when an
     /// error/status message is too long to fit on one line, instead of
     /// silently truncating it.
+    #[default]
     Compact,
     /// Larger fixed panel: full status line, a persistent (not
     /// auto-dismissing) wrapped message area, and the active app-mode —
     /// for when you want the detail visible at a glance rather than
     /// digging through Settings > Logs after the fact.
     Detailed,
-}
-
-impl Default for WidgetMode {
-    fn default() -> Self {
-        WidgetMode::Compact
-    }
 }
 
 impl WidgetMode {
@@ -84,9 +79,18 @@ mod tests {
 
     #[test]
     fn serializes_as_lowercase_for_the_frontend() {
-        assert_eq!(serde_json::to_string(&WidgetMode::Minimal).unwrap(), "\"minimal\"");
-        assert_eq!(serde_json::to_string(&WidgetMode::Compact).unwrap(), "\"compact\"");
-        assert_eq!(serde_json::to_string(&WidgetMode::Detailed).unwrap(), "\"detailed\"");
+        assert_eq!(
+            serde_json::to_string(&WidgetMode::Minimal).unwrap(),
+            "\"minimal\""
+        );
+        assert_eq!(
+            serde_json::to_string(&WidgetMode::Compact).unwrap(),
+            "\"compact\""
+        );
+        assert_eq!(
+            serde_json::to_string(&WidgetMode::Detailed).unwrap(),
+            "\"detailed\""
+        );
     }
 
     #[test]

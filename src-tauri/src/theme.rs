@@ -5,11 +5,12 @@ use tauri::{AppHandle, Emitter};
 /// widget borrows for its non-recording highlights (mic-mode selection,
 /// gear hover, the quick-actions flyout). Purely cosmetic — no field here
 /// changes app behavior, only `config::AppConfig`'s other fields do that.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
     /// Dark graphite, amber accent, monospace-forward. Default — this is a
     /// local developer tool first, not a consumer dictation app.
+    #[default]
     Terminal,
     /// Warm paper, teal accent, editorial hero.
     Signal,
@@ -17,12 +18,6 @@ pub enum Theme {
     Quiet,
     /// Near-black, coral accent.
     Palette,
-}
-
-impl Default for Theme {
-    fn default() -> Self {
-        Theme::Terminal
-    }
 }
 
 #[tauri::command]
@@ -43,21 +38,16 @@ pub fn set_theme(app: AppHandle, theme: Theme) {
 /// Settings window navigation shape — independent of `Theme` (color) and
 /// purely about how sections are organized/reached. Both read the same
 /// section components; only the chrome around them differs.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Layout {
     /// Left sidebar with one page of content on the right. Default — most
     /// section content is reachable in a single click.
+    #[default]
     Sidebar,
     /// Horizontal pipeline of nodes (Input/Recognition/Mode/Refinement/
     /// Output/App); clicking a node expands a drawer beneath it.
     Chain,
-}
-
-impl Default for Layout {
-    fn default() -> Self {
-        Layout::Sidebar
-    }
 }
 
 #[tauri::command]
@@ -84,10 +74,16 @@ mod tests {
 
     #[test]
     fn serializes_as_lowercase_for_the_frontend() {
-        assert_eq!(serde_json::to_string(&Theme::Terminal).unwrap(), "\"terminal\"");
+        assert_eq!(
+            serde_json::to_string(&Theme::Terminal).unwrap(),
+            "\"terminal\""
+        );
         assert_eq!(serde_json::to_string(&Theme::Signal).unwrap(), "\"signal\"");
         assert_eq!(serde_json::to_string(&Theme::Quiet).unwrap(), "\"quiet\"");
-        assert_eq!(serde_json::to_string(&Theme::Palette).unwrap(), "\"palette\"");
+        assert_eq!(
+            serde_json::to_string(&Theme::Palette).unwrap(),
+            "\"palette\""
+        );
     }
 
     #[test]
@@ -97,7 +93,10 @@ mod tests {
 
     #[test]
     fn layout_serializes_as_lowercase_for_the_frontend() {
-        assert_eq!(serde_json::to_string(&Layout::Sidebar).unwrap(), "\"sidebar\"");
+        assert_eq!(
+            serde_json::to_string(&Layout::Sidebar).unwrap(),
+            "\"sidebar\""
+        );
         assert_eq!(serde_json::to_string(&Layout::Chain).unwrap(), "\"chain\"");
     }
 }

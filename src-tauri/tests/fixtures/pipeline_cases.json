@@ -1,0 +1,305 @@
+[
+  {
+    "name": "plain sentence passes through",
+    "input": "Okay, I'm testing this out now. I want to make sure everything looks right.",
+    "mode": "plain",
+    "expect": "Okay, I'm testing this out now. I want to make sure everything looks right."
+  },
+  {
+    "name": "spoken punctuation",
+    "input": "Hello comma world period this is a test.",
+    "mode": "plain",
+    "expect": "Hello, world. This is a test."
+  },
+  {
+    "name": "spoken question mark capitalizes the next sentence",
+    "input": "is it working question mark yes it is",
+    "mode": "plain",
+    "expect": "is it working? Yes it is"
+  },
+  {
+    "name": "parens",
+    "input": "call foo open paren bar close paren",
+    "mode": "plain",
+    "expect": "call foo (bar)"
+  },
+  {
+    "name": "punctuated spoken list",
+    "input": "One, fix the tests. Two, ship it.",
+    "mode": "plain",
+    "expect": "1. Fix the tests.\n2. Ship it."
+  },
+  {
+    "name": "ordinal list with lead-in",
+    "input": "Two things. First, check the logs. Second, restart the service.",
+    "mode": "plain",
+    "expect": "Two things.\n1. Check the logs.\n2. Restart the service."
+  },
+  {
+    "name": "numbers mid-sentence are not a list",
+    "input": "I have one question about the two failing tests.",
+    "mode": "plain",
+    "expect": "I have one question about the two failing tests."
+  },
+  {
+    "name": "ordinals mid-sentence are not a list",
+    "input": "The first thing is the build, and the second thing is the tests.",
+    "mode": "plain",
+    "expect": "The first thing is the build, and the second thing is the tests."
+  },
+  {
+    "name": "backtrack swaps the corrected word",
+    "input": "Let's meet at two, actually three.",
+    "mode": "plain",
+    "expect": "Let's meet at three."
+  },
+  {
+    "name": "backtrack keeps earlier sentences",
+    "input": "I fixed the build. We should use Postgres, actually let's go with SQLite for now.",
+    "mode": "plain",
+    "expect": "I fixed the build. Let's go with SQLite for now."
+  },
+  {
+    "name": "scratch that",
+    "input": "Book it for Monday, scratch that, Tuesday.",
+    "mode": "plain",
+    "expect": "Book it for Tuesday."
+  },
+  {
+    "name": "hedging actually without a correction stays",
+    "input": "I actually enjoyed the movie.",
+    "mode": "plain",
+    "expect": "I actually enjoyed the movie."
+  },
+  {
+    "name": "press enter is stripped and fires when enabled",
+    "input": "Run the tests, press enter.",
+    "mode": "plain",
+    "press_enter_enabled": true,
+    "expect": "Run the tests",
+    "expect_press_enter": true
+  },
+  {
+    "name": "press enter stays literal when disabled",
+    "input": "Run the tests, press enter.",
+    "mode": "plain",
+    "expect": "Run the tests, press enter.",
+    "expect_press_enter": false
+  },
+  {
+    "name": "paste clipboard sets the append flag",
+    "input": "Here is the error, paste clipboard.",
+    "mode": "plain",
+    "expect": "Here is the error,",
+    "expect_append_clipboard": true
+  },
+  {
+    "name": "snake case",
+    "input": "Snake case error response handler",
+    "mode": "plain",
+    "expect": "error_response_handler",
+    "expect_label": "casing"
+  },
+  {
+    "name": "camel case",
+    "input": "camel case user profile id",
+    "mode": "cli",
+    "expect": "userProfileId",
+    "expect_label": "casing"
+  },
+  {
+    "name": "kebab case",
+    "input": "kebab case dev whisper settings",
+    "mode": "plain",
+    "expect": "dev-whisper-settings",
+    "expect_label": "casing"
+  },
+  {
+    "name": "snippet trigger expands",
+    "input": "PR checklist.",
+    "mode": "plain",
+    "expect_prefix": "- [ ] Tests pass locally",
+    "expect_label": "snippet"
+  },
+  {
+    "name": "cli: spoken git commit",
+    "input": "Git commit update readme",
+    "mode": "cli",
+    "expect": "git commit -m \"update readme\""
+  },
+  {
+    "name": "cli: literal directive skips the LLM",
+    "input": "make directory for the new service",
+    "mode": "cli",
+    "llm": {
+      "returns": "mkdir"
+    },
+    "expect": "mkdir for the new service",
+    "expect_llm_called": false
+  },
+  {
+    "name": "cli: prose is never turned into a command",
+    "input": "Let's test and see what happens when we paste in here.",
+    "mode": "cli",
+    "expect": "Let's test and see what happens when we paste in here"
+  },
+  {
+    "name": "cli: file mention gets tagged",
+    "input": "Look at recording.rs and fix it.",
+    "mode": "cli",
+    "expect": "Look at @recording.rs and fix it"
+  },
+  {
+    "name": "cli: relative path gets tagged",
+    "input": "Check src/lib.rs for the bug.",
+    "mode": "cli",
+    "expect": "Check @src/lib.rs for the bug"
+  },
+  {
+    "name": "llm: refinement is used",
+    "input": "um so I think we should uh refactor this",
+    "mode": "casual",
+    "llm": {
+      "returns": "I think we should refactor this."
+    },
+    "expect": "I think we should refactor this.",
+    "expect_llm_called": true
+  },
+  {
+    "name": "llm: chatty preamble is rejected",
+    "input": "fix the login bug before lunch",
+    "mode": "casual",
+    "llm": {
+      "returns": "Sure! Here's the cleaned-up text: Fix the login bug before lunch."
+    },
+    "expect": "fix the login bug before lunch"
+  },
+  {
+    "name": "llm: glued words are rejected",
+    "input": "test paste what happens truly problem terminal",
+    "mode": "cli",
+    "llm": {
+      "returns": "test_paste_what_happens_truly_problem_terminal_work_out"
+    },
+    "expect": "test paste what happens truly problem terminal",
+    "always_refine": true,
+    "expect_llm_called": true
+  },
+  {
+    "name": "llm: Ollama down falls back to formatted text",
+    "input": "Ship the release tonight.",
+    "mode": "casual",
+    "llm": {
+      "error": "connection refused"
+    },
+    "expect": "Ship the release tonight."
+  },
+  {
+    "name": "llm: dropped @ is restored in cli",
+    "input": "Look at recording.rs and fix the crash.",
+    "mode": "cli",
+    "llm": {
+      "returns": "Look at recording.rs and fix the crash"
+    },
+    "expect": "Look at @recording.rs and fix the crash",
+    "always_refine": true,
+    "expect_llm_called": true
+  },
+  {
+    "name": "boilerplate goes to the LLM",
+    "input": "Generate boilerplate for a React component called UserCard",
+    "mode": "plain",
+    "llm": {
+      "returns": "export function UserCard() {}"
+    },
+    "expect": "export function UserCard() {}",
+    "expect_label": "boilerplate"
+  },
+  {
+    "name": "boilerplate falls back when the LLM is down",
+    "input": "Generate boilerplate for a React component called UserCard",
+    "mode": "plain",
+    "llm": {
+      "error": "connection refused"
+    },
+    "expect": "Generate boilerplate for a React component called UserCard",
+    "expect_label": "Plain"
+  },
+  {
+    "name": "whisper: code-spelled snake case command",
+    "input": "snake_case_error_response_handler",
+    "mode": "plain",
+    "expect": "error_response_handler",
+    "expect_label": "casing"
+  },
+  {
+    "name": "whisper: code-spelled camel case command",
+    "input": "camelCase user profile ID",
+    "mode": "cli",
+    "expect": "userProfileId",
+    "expect_label": "casing"
+  },
+  {
+    "name": "whisper: digit list on one line",
+    "input": "1. Fix the tests. 2. Ship it.",
+    "mode": "plain",
+    "expect": "1. Fix the tests.\n2. Ship it."
+  },
+  {
+    "name": "whisper: 'comma' heard as Kama",
+    "input": "Hello, Kama World, period.",
+    "mode": "plain",
+    "expect": "Hello, World."
+  },
+  {
+    "name": "gate: clean terminal sentence skips the LLM",
+    "input": "I love all these ideas though, I'm good with you proceeding with them.",
+    "mode": "cli",
+    "llm": {
+      "returns": "I love all these ideas though; I'm good with you proceeding with them."
+    },
+    "expect": "I love all these ideas though, I'm good with you proceeding with them",
+    "expect_llm_called": false
+  },
+  {
+    "name": "gate: filler words go to the LLM",
+    "input": "So um I think we should uh refactor the parser.",
+    "mode": "cli",
+    "llm": {
+      "returns": "I think we should refactor the parser."
+    },
+    "expect": "I think we should refactor the parser.",
+    "expect_llm_called": true
+  },
+  {
+    "name": "gate: a stutter goes to the LLM",
+    "input": "Can you check the the config loader?",
+    "mode": "plain",
+    "llm": {
+      "returns": "Can you check the config loader?"
+    },
+    "expect": "Can you check the config loader?",
+    "expect_llm_called": true
+  },
+  {
+    "name": "gate: casual mode always refines",
+    "input": "Sounds good, see you at three.",
+    "mode": "casual",
+    "llm": {
+      "returns": "sounds good, see ya at 3"
+    },
+    "expect": "sounds good, see ya at 3",
+    "expect_llm_called": true
+  },
+  {
+    "name": "gate: turning the gate off refines everything",
+    "input": "Ship the release tonight.",
+    "mode": "cli",
+    "always_refine": true,
+    "llm": {
+      "returns": "Ship the release tonight"
+    },
+    "expect": "Ship the release tonight",
+    "expect_llm_called": true
+  }
+]

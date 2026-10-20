@@ -5,25 +5,31 @@ Coordination point for merging several worktrees' worth of changes into
 
 ## The convention
 
+What to test next lives in `PRIORITIES.md`; each feature's steps live in
+its own `<feature-slug>.md` file in this folder.
+
 - A branch that's implementation-complete (compiles, unit tests pass) but
   hasn't been manually exercised yet adds one file here:
-  `<feature-slug>.md`, named for the feature, not the branch.
-- That file is committed as part of the branch's normal diff, so it merges
-  into `main` along with the code it's testing.
+  `<feature-slug>.md`, named for the feature, not the branch, plus one
+  line in `PRIORITIES.md` under the tier matching its impact.
+- Both are committed as part of the branch's normal diff, so they merge
+  into `main` along with the code being tested.
 - The file states, at the top, which branch/worktree it came from — that's
   the only way a tester (or the next agent) knows where to route a fix.
-- Once several branches have merged, everything queued for a manual pass
-  is sitting here together in `main`. Work through each file against the
+- Work through `PRIORITIES.md` top-down, Critical first, against the
   merged build.
-- **Pass** → delete the file in the same testing session (that's why these
-  are "to-be-deleted": nothing here is meant to be permanent documentation;
-  once verified, the real record of the feature is `FEATURES.md`).
-- **Fail** → do *not* delete it. Note what broke (edit the file or reply to
-  whoever's tracking the session), go fix it on the originating worktree,
-  re-merge, and re-test. The file stays until it passes.
-- **Inbox empty** = every merged branch has been manually verified against
-  the current `main`. Non-empty = something is still pending a human check
-  or is a known-broken fix-in-progress.
+- **Pass** → move its line to **Backlog** in `PRIORITIES.md`, dated. The
+  detail file stays here as the record of what was verified and how.
+  The record of the feature itself is `FEATURES.md`.
+- **Fail** → leave its line in its tier with a one-line note on what
+  broke. Fix on the originating worktree, re-merge, re-test.
+- **Critical/Important/Minor all empty** = everything merged so far has
+  been manually verified against current `main`.
+
+**Tiers:** Critical = blocks moving forward (everyday dictation,
+releases). Important = a core feature, nothing blocked on it. Minor =
+cosmetic, edge case or polish. Backlog = passed, newest first. Pick by
+impact if it were broken, not by recency.
 
 ## File format
 

@@ -46,7 +46,11 @@ pub fn try_extract_trigger(text: &str) -> (String, bool) {
 /// there's nothing sensible to append, and the caller falls back to
 /// leaving `formatted` unchanged rather than pasting a Rust error string.
 pub fn read_clipboard_text() -> Option<String> {
-    arboard::Clipboard::new().ok()?.get_text().ok().filter(|s| !s.is_empty())
+    arboard::Clipboard::new()
+        .ok()?
+        .get_text()
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 /// Appends clipboard text to `formatted`, joined with a space unless
@@ -92,8 +96,14 @@ mod tests {
 
     #[test]
     fn trigger_as_the_entire_utterance() {
-        assert_eq!(try_extract_trigger("paste clipboard"), (String::new(), true));
-        assert_eq!(try_extract_trigger("paste clipboard."), (String::new(), true));
+        assert_eq!(
+            try_extract_trigger("paste clipboard"),
+            (String::new(), true)
+        );
+        assert_eq!(
+            try_extract_trigger("paste clipboard."),
+            (String::new(), true)
+        );
     }
 
     #[test]
@@ -130,11 +140,17 @@ mod tests {
 
     #[test]
     fn append_joins_with_a_space() {
-        assert_eq!(append("here's the error", "TypeError: x is undefined"), "here's the error TypeError: x is undefined");
+        assert_eq!(
+            append("here's the error", "TypeError: x is undefined"),
+            "here's the error TypeError: x is undefined"
+        );
     }
 
     #[test]
     fn append_with_empty_formatted_has_no_leading_space() {
-        assert_eq!(append("", "TypeError: x is undefined"), "TypeError: x is undefined");
+        assert_eq!(
+            append("", "TypeError: x is undefined"),
+            "TypeError: x is undefined"
+        );
     }
 }

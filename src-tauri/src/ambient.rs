@@ -157,7 +157,9 @@ fn vad_model_path(app: &AppHandle) -> Option<PathBuf> {
         .filter(|p| p.exists());
     bundled.or_else(|| {
         // `tauri dev` before a bundled build: the repo-local copy.
-        let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources").join("silero_vad.onnx");
+        let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("silero_vad.onnx");
         dev.exists().then_some(dev)
     })
 }
@@ -193,7 +195,11 @@ struct History {
 
 impl History {
     fn new(capacity: usize) -> Self {
-        Self { buf: VecDeque::with_capacity(capacity), origin: 0, capacity }
+        Self {
+            buf: VecDeque::with_capacity(capacity),
+            origin: 0,
+            capacity,
+        }
     }
 
     fn reset(&mut self) {
@@ -222,7 +228,12 @@ impl History {
     }
 }
 
-fn run_worker(app: &AppHandle, vad: VoiceActivityDetector, rx: mpsc::Receiver<AudioChunk>, stop: &AtomicBool) {
+fn run_worker(
+    app: &AppHandle,
+    vad: VoiceActivityDetector,
+    rx: mpsc::Receiver<AudioChunk>,
+    stop: &AtomicBool,
+) {
     crate::applog!("ambient: listening");
     let mut history = History::new(HISTORY_SAMPLES);
     let mut pending: Vec<f32> = Vec::new();
@@ -249,7 +260,9 @@ fn run_worker(app: &AppHandle, vad: VoiceActivityDetector, rx: mpsc::Receiver<Au
             last_mic_check = Instant::now();
             match (state.phase(), crate::mic_usage::other_processes_using_mic()) {
                 (AmbientPhase::Listening, Some(pids)) if !pids.is_empty() => {
-                    crate::applog!("ambient: another app is using the microphone (pids {pids:?}), pausing");
+                    crate::applog!(
+                        "ambient: another app is using the microphone (pids {pids:?}), pausing"
+                    );
                     set_phase(app, AmbientPhase::Paused);
                 }
                 (AmbientPhase::Paused, Some(pids)) if pids.is_empty() => {
@@ -270,8 +283,10 @@ fn run_worker(app: &AppHandle, vad: VoiceActivityDetector, rx: mpsc::Receiver<Au
         // Push-to-talk or enrollment owns the mic, or a call is going on:
         // ignore what we hear and start clean afterwards rather than
         // splicing across the gap.
-        let busy = !matches!(app.state::<RecordingState>().capture.state(), CaptureState::Idle)
-            || state.phase() == AmbientPhase::Paused;
+        let busy = !matches!(
+            app.state::<RecordingState>().capture.state(),
+            CaptureState::Idle
+        ) || state.phase() == AmbientPhase::Paused;
         if busy {
             if !paused_for_capture {
                 vad.reset();
@@ -284,7 +299,11 @@ fn run_worker(app: &AppHandle, vad: VoiceActivityDetector, rx: mpsc::Receiver<Au
         paused_for_capture = false;
 
         let mono = crate::stt::downmix(&chunk.samples, chunk.channels);
-        pending.extend(crate::stt::resample_linear(&mono, chunk.sample_rate, SAMPLE_RATE));
+        pending.extend(crate::stt::resample_linear(
+            &mono,
+            chunk.sample_rate,
+            SAMPLE_RATE,
+        ));
         while pending.len() >= VAD_WINDOW {
             let window: Vec<f32> = pending.drain(..VAD_WINDOW).collect();
             history.push(&window);
@@ -321,7 +340,10 @@ fn handle_segment(app: &AppHandle, audio: Vec<f32>) {
                 Some(Err(err)) => format!("couldn't score voice: {err}"),
                 None => "no enrolled voice".to_string(),
             };
-            crate::applog!("ambient: {seconds:.1}s segment rejected ({why}); {}", metrics.summary());
+            crate::applog!(
+                "ambient: {seconds:.1}s segment rejected ({why}); {}",
+                metrics.summary()
+            );
             return;
         }
     }
@@ -339,7 +361,7 @@ fn handle_segment(app: &AppHandle, audio: Vec<f32>) {
     crate::applog!("ambient: heard {raw:?}");
 
     match parse_wake(&text) {
-        Addressed::NotAddressed => {
+        Addressed::Unaddressed => {
             metrics.wake_misses.fetch_add(1, Ordering::Relaxed);
             crate::applog!("ambient: no wake phrase, ignored; {}", metrics.summary());
         }
@@ -355,7 +377,9 @@ fn handle_segment(app: &AppHandle, audio: Vec<f32>) {
         Addressed::Dictate(rest) => {
             metrics.wake_hits.fetch_add(1, Ordering::Relaxed);
             if state.phase() != AmbientPhase::Listening {
-                crate::applog!("ambient: asleep, ignoring dictation (say \"Dev Whisper, wake up\")");
+                crate::applog!(
+                    "ambient: asleep, ignoring dictation (say \"Dev Whisper, wake up\")"
+                );
                 return;
             }
             touch(app);
@@ -375,6 +399,8 @@ fn handle_segment(app: &AppHandle, audio: Vec<f32>) {
                     // Unknown frontmost app → an id that never matches, so
                     // the text is copied rather than pasted somewhere blind.
                     paste_guard: Some(bundle_id.unwrap_or_default()),
+                    stopped_at: None,
+                    stt_ms: None,
                 },
             );
         }
@@ -386,7 +412,7 @@ enum Addressed<'a> {
     Dictate(&'a str),
     Sleep,
     Wake,
-    NotAddressed,
+    Unaddressed,
 }
 
 /// Wake phrase spellings Whisper produces for "Dev Whisper" (tokens are
@@ -396,7 +422,11 @@ const WAKE_PHRASES: &[&[&str]] = &[&["dev", "whisper"], &["devwhisper"], &["dev"
 const WAKE_PREFIXES: &[&str] = &["hey", "ok", "okay"];
 
 fn normalize(token: &str) -> String {
-    token.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+    token
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 /// Only acts when the utterance *starts* with the wake phrase, so talking
@@ -408,12 +438,16 @@ fn parse_wake(text: &str) -> Addressed<'_> {
         .collect();
     let normalized: Vec<String> = tokens.iter().map(|(_, w)| normalize(w)).collect();
 
-    let skip = usize::from(normalized.first().is_some_and(|t| WAKE_PREFIXES.contains(&t.as_str())));
+    let skip = usize::from(
+        normalized
+            .first()
+            .is_some_and(|t| WAKE_PREFIXES.contains(&t.as_str())),
+    );
     let Some(phrase_len) = WAKE_PHRASES.iter().find_map(|phrase| {
         let candidate = normalized.get(skip..skip + phrase.len())?;
         (candidate.iter().zip(phrase.iter()).all(|(a, b)| a == b)).then_some(phrase.len())
     }) else {
-        return Addressed::NotAddressed;
+        return Addressed::Unaddressed;
     };
 
     let last = skip + phrase_len - 1;
@@ -472,20 +506,28 @@ mod tests {
 
     #[test]
     fn wake_phrase_variants_match() {
-        for text in ["dev-whisper ship it", "Hey Dev Whisper ship it", "Dev Whisperer, ship it", "OK, dev whisper: ship it"] {
+        for text in [
+            "dev-whisper ship it",
+            "Hey Dev Whisper ship it",
+            "Dev Whisperer, ship it",
+            "OK, dev whisper: ship it",
+        ] {
             assert_eq!(parse_wake(text), Addressed::Dictate("ship it"), "{text:?}");
         }
     }
 
     #[test]
     fn speech_without_the_wake_phrase_is_ignored() {
-        assert_eq!(parse_wake("send the report to Sam"), Addressed::NotAddressed);
-        assert_eq!(parse_wake(""), Addressed::NotAddressed);
+        assert_eq!(parse_wake("send the report to Sam"), Addressed::Unaddressed);
+        assert_eq!(parse_wake(""), Addressed::Unaddressed);
     }
 
     #[test]
     fn mentioning_dev_whisper_mid_sentence_is_not_addressing_it() {
-        assert_eq!(parse_wake("I think Dev Whisper is great"), Addressed::NotAddressed);
+        assert_eq!(
+            parse_wake("I think Dev Whisper is great"),
+            Addressed::Unaddressed
+        );
     }
 
     #[test]
@@ -532,7 +574,9 @@ mod tests {
     /// covered by manual testing.) Skips if the model file isn't present.
     #[test]
     fn real_silero_model_loads_and_ignores_silence() {
-        let model = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources").join("silero_vad.onnx");
+        let model = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("silero_vad.onnx");
         if !model.exists() {
             eprintln!("skipping: silero_vad.onnx not present");
             return;

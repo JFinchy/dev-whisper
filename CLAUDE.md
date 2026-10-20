@@ -3,7 +3,16 @@
 See `PRODUCT_SPEC.md` for the product vision, `FEATURES.md` for what's
 built, `ROADMAP.md` for what's left, and `BACKLOG.md` for full detail
 behind each backlog item (known issues, research findings, effort
-estimates).
+estimates). `AUDIT.md` is the latest production-readiness review.
+
+## Testing
+
+`bun run test` runs typecheck, Rust tests and the Playwright UI e2e
+suite; `bun run test:audio` runs real speech through Whisper. Details in
+`TESTING.md`. Any dictation bug fix adds a case to
+`src-tauri/tests/fixtures/pipeline_cases.json`; any new backend command
+the UI calls needs a handler in `src/testing/mockBackend.ts`. `bun run
+dev:mock` serves the UI in a browser without the Rust backend.
 
 ## Manual testing inbox
 
@@ -21,10 +30,12 @@ documented in `manual-testing-inbox/README.md`, summarized here:
 - Once several branches have merged, everything queued for a manual pass
   sits here together in `main` — work through each file against the
   merged build, not against the individual branch.
-- **Pass** → delete the file. These are explicitly to-be-deleted; the
-  permanent record of a shipped feature is `FEATURES.md`, not this
-  folder.
-- **Fail** → don't delete it. Note what broke, fix it on the originating
-  worktree, re-merge, re-test. The file stays until it passes.
-- **Inbox empty** = everything merged so far has been manually verified
-  against current `main`.
+- Each inbox file also gets a line in `manual-testing-inbox/PRIORITIES.md`
+  under Critical/Important/Minor, by impact if it were broken.
+- **Pass** → move its `PRIORITIES.md` line to Backlog, dated. The detail
+  file stays as the record of the verification; the permanent record of
+  the feature is `FEATURES.md`.
+- **Fail** → leave its line in its tier with a note on what broke; fix it
+  on the originating worktree, re-merge, re-test.
+- **Critical/Important/Minor all empty** = everything merged so far has
+  been manually verified against current `main`.

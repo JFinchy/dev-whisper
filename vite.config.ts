@@ -1,9 +1,15 @@
+import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-// @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+
+// The production CSP lives in tauri.conf.json. `vite preview` can serve the
+// same policy (DW_CSP=1) so the e2e suite catches anything it would block
+// before it ships (see playwright.config.ts).
+const tauriConf = JSON.parse(readFileSync(new URL("./src-tauri/tauri.conf.json", import.meta.url), "utf8"));
+const productionCsp: string = tauriConf.app.security.csp;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
@@ -29,5 +35,8 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+  },
+  preview: {
+    headers: process.env.DW_CSP ? { "Content-Security-Policy": productionCsp } : {},
   },
 }));

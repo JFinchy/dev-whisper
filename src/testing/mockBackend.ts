@@ -1,0 +1,255 @@
+// An in-memory stand-in for the Rust backend, so the UI runs in a plain
+// browser: Playwright e2e tests drive it (see e2e/), and `bun run dev:mock`
+// uses it for UI work without building the app. Only loaded when
+// VITE_MOCK_BACKEND=1, so it never ships (see main.tsx).
+//
+// Tests shape the starting state through `window.__DW_SCENARIO__` (set
+// with page.addInitScript before load), then drive and inspect it through
+// `window.__dw`: `emit` plays a backend event, `calls` records every
+// command the UI sent.
+import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
+import { emit } from "@tauri-apps/api/event";
+
+type Json = unknown;
+type Call = { cmd: string; args: Record<string, Json> | undefined };
+
+export type Scenario = {
+  readiness?: { id: string; level: "ok" | "warn" | "error"; title: string; detail: string; fix: string | null }[];
+  devices?: string[];
+  deviceStatus?: Json;
+  /// Commands that reject, with this message.
+  failing?: Record<string, string>;
+  widgetMode?: "minimal" | "compact" | "detailed";
+  layout?: "sidebar" | "chain";
+  insights?: Json;
+};
+
+declare global {
+  interface Window {
+    __DW_SCENARIO__?: Scenario;
+    __dw?: {
+      emit: (event: string, payload?: Json) => Promise<void>;
+      calls: Call[];
+      state: ReturnType<typeof initialState>;
+    };
+  }
+}
+
+const READY: NonNullable<Scenario["readiness"]> = [
+  { id: "model", level: "ok", title: "Speech model ready", detail: "Base (English)", fix: null },
+  { id: "paste", level: "ok", title: "Pasting allowed", detail: "Accessibility permission is granted.", fix: null },
+  { id: "hotkey", level: "ok", title: "Hotkey ready", detail: "Press it anywhere to start dictating.", fix: null },
+  { id: "microphone", level: "ok", title: "Microphone ready", detail: "MacBook Pro Microphone", fix: null },
+];
+
+function initialState(scenario: Scenario) {
+  const devices = scenario.devices ?? ["MacBook Pro Microphone", "AIRHUG 28", "Microsoft Teams Audio"];
+  return {
+    readiness: scenario.readiness ?? READY,
+    devices,
+    selectedDevice: null as string | null,
+    deviceStatus: scenario.deviceStatus ?? { kind: "system_default", using: devices[0] },
+    widgetMode: scenario.widgetMode ?? "compact",
+    layout: scenario.layout ?? "sidebar",
+    theme: "terminal",
+    shortcut: { meta: true, ctrl: false, alt: false, shift: true, code: "Space" },
+    doubleTap: false,
+    copyOnly: false,
+    pressEnter: false,
+    isolatedVoice: false,
+    ambient: false,
+    autostart: false,
+    journal: false,
+    retentionDays: 90,
+    webhookUrl: null as string | null,
+    llmModel: "qwen3.5:4b",
+    llmOnlyWhenNeeded: true,
+    nextModeOverride: null as string | null,
+    vocabulary: ["kubectl", "JSON", "macOS", "Tauri"],
+    snippets: [{ trigger: "pr checklist", body: "- [ ] Tests pass locally\n- [ ] Self-reviewed the diff" }],
+    modes: [
+      { name: "Default", behavior: "plain", apps: [], stt_model: null, llm_refinement: "off", custom_instructions: null, is_default: true },
+      { name: "Terminal", behavior: "cli", apps: [{ bundle_id: "com.apple.Terminal", app_name: "Terminal" }], stt_model: null, llm_refinement: "global", custom_instructions: null, is_default: false },
+      { name: "Messaging", behavior: "casual", apps: [{ bundle_id: "com.tinyspeck.slackmacgap", app_name: "Slack" }], stt_model: null, llm_refinement: "global", custom_instructions: null, is_default: false },
+    ],
+    models: [
+      { id: "tiny.en", label: "Tiny (English) — fastest, least accurate", size_mb: 32, downloaded: false, active: false },
+      { id: "base.en", label: "Base (English) — balanced", size_mb: 57, downloaded: true, active: true },
+      { id: "small.en", label: "Small (English) — more accurate, slower", size_mb: 190, downloaded: false, active: false },
+    ],
+    history: [
+      { timestamp_ms: Date.now() - 60_000, text: "Look at @recording.rs and fix the crash", app_name: "Terminal", mode: "Cli", summary: null },
+      { timestamp_ms: Date.now() - 3_600_000, text: "Let's meet at three.", app_name: "Slack", mode: "Casual", summary: null },
+    ],
+    logs: [{ timestamp_ms: Date.now(), message: "lifecycle: started version=0.1.2 (mock backend)" }],
+    insights: scenario.insights ?? {
+      total_dictations: 42,
+      total_words: 1337,
+      smart_formatting_count: 12,
+      avg_words_per_minute: 148,
+      personal_best_wpm: 171,
+      latency: { median_ms: 640, p90_ms: 1900, samples: 42 },
+      app_usage: [
+        { app_name: "Terminal", dictations: 30, percent: 71 },
+        { app_name: "Slack", dictations: 12, percent: 29 },
+      ],
+      streak: { current_days: 3, longest_days: 9, daily_counts: {} },
+      adoption: { score_percent: 50, items: [] },
+    },
+  };
+}
+
+export function installMockBackend() {
+  const scenario = window.__DW_SCENARIO__ ?? {};
+  const label = new URLSearchParams(window.location.search).get("window") ?? "widget";
+  mockWindows(label, ...["widget", "settings"].filter((l) => l !== label));
+
+  const state = initialState(scenario);
+  const calls: Call[] = [];
+  const setter = <K extends keyof typeof state>(key: K, argName: string) => (args: Record<string, Json>) => {
+    state[key] = args[argName] as (typeof state)[K];
+    return null;
+  };
+
+  const handlers: Record<string, (args: Record<string, Json>) => Json> = {
+    // readiness + recording
+    get_readiness: () => state.readiness,
+    open_accessibility_settings: () => null,
+    toggle_recording_command: () => null,
+    paste_as_is_command: () => null,
+    ui_ready: () => null,
+    get_audio_device_status: () => state.deviceStatus,
+    list_input_devices: () => state.devices,
+    get_active_input_device: () => state.selectedDevice ?? state.devices[0],
+    set_input_device: (args) => {
+      state.selectedDevice = (args.name as string | null) ?? null;
+      state.deviceStatus = state.selectedDevice
+        ? { kind: "preferred", using: state.selectedDevice }
+        : { kind: "system_default", using: state.devices[0] };
+      void emit("audio-device-status", state.deviceStatus);
+      return null;
+    },
+    set_next_mode_override: setter("nextModeOverride", "modeName"),
+    get_last_frontmost_app: () => ({ bundle_id: "com.apple.Terminal", name: "Terminal", icon_data_uri: null }),
+    // widget + window
+    get_widget_mode: () => state.widgetMode,
+    set_widget_mode: (args) => {
+      state.widgetMode = args.mode as typeof state.widgetMode;
+      void emit("widget-mode-changed", state.widgetMode);
+      return null;
+    },
+    set_widget_size: () => null,
+    open_settings: () => null,
+    get_theme: () => state.theme,
+    set_theme: setter("theme", "theme"),
+    get_layout: () => state.layout,
+    set_layout: setter("layout", "layout"),
+    // simple settings
+    get_shortcut: () => state.shortcut,
+    set_shortcut: (args) => {
+      state.shortcut = args.newCfg as typeof state.shortcut;
+      return state.shortcut;
+    },
+    get_double_tap_enabled: () => state.doubleTap,
+    set_double_tap_enabled: setter("doubleTap", "enabled"),
+    get_copy_only: () => state.copyOnly,
+    set_copy_only: setter("copyOnly", "enabled"),
+    get_press_enter_enabled: () => state.pressEnter,
+    set_press_enter_enabled: setter("pressEnter", "enabled"),
+    get_isolated_voice_enabled: () => state.isolatedVoice,
+    set_isolated_voice_enabled: setter("isolatedVoice", "enabled"),
+    get_ambient_enabled: () => state.ambient,
+    set_ambient_enabled: setter("ambient", "enabled"),
+    get_ambient_phase: () => (state.ambient ? "listening" : "off"),
+    get_autostart_enabled: () => state.autostart,
+    set_autostart_enabled: setter("autostart", "enabled"),
+    get_journal_enabled: () => state.journal,
+    set_journal_enabled: setter("journal", "enabled"),
+    get_history_retention_days: () => state.retentionDays,
+    set_history_retention_days: setter("retentionDays", "days"),
+    get_webhook_url: () => state.webhookUrl,
+    set_webhook_url: setter("webhookUrl", "url"),
+    send_test_webhook: () => null,
+    get_vocabulary: () => state.vocabulary,
+    set_vocabulary: setter("vocabulary", "terms"),
+    get_snippets: () => state.snippets,
+    set_snippets: setter("snippets", "snippets"),
+    get_modes: () => state.modes,
+    set_modes: setter("modes", "modes"),
+    list_running_apps: () => [
+      { bundle_id: "com.apple.Terminal", name: "Terminal", icon_data_uri: null, is_running: true },
+      { bundle_id: "com.tinyspeck.slackmacgap", name: "Slack", icon_data_uri: null, is_running: true },
+    ],
+    // models
+    list_models: () => state.models,
+    download_model: (args) => {
+      const id = args.id as string;
+      setTimeout(() => {
+        state.models = state.models.map((m) => (m.id === id ? { ...m, downloaded: true } : m));
+        void emit("model-download-complete", id);
+      }, 50);
+      return null;
+    },
+    set_active_model: (args) => {
+      state.models = state.models.map((m) => ({ ...m, active: m.id === args.id }));
+      return null;
+    },
+    // LLM
+    list_llm_catalog: () => [
+      { id: "gemma3:1b", label: "Gemma 3 (1B) — fastest", size_gb: 0.8, downloaded: false, last_latency_ms: null },
+      { id: "qwen3.5:4b", label: "qwen3.5:4b", size_gb: 0, downloaded: true, last_latency_ms: 820 },
+    ],
+    get_llm_model: () => state.llmModel,
+    get_llm_only_when_needed: () => state.llmOnlyWhenNeeded,
+    set_llm_only_when_needed: setter("llmOnlyWhenNeeded", "enabled"),
+    set_llm_model: setter("llmModel", "model"),
+    pull_llm_model: () => null,
+    // voice isolation
+    get_voice_enrollment_status: () => ({ enrolled: false, enrolled_at_ms: null }),
+    start_voice_enrollment: () => null,
+    stop_voice_enrollment: () => null,
+    // history, insights, logs
+    list_history_entries: () => state.history,
+    search_history_entries: (args) =>
+      state.history.filter((h) => h.text.toLowerCase().includes(String(args.query).toLowerCase())),
+    reprocess_history_text: (args) => String(args.text),
+    update_history_entry_text: () => null,
+    delete_history_entry: (args) => {
+      state.history = state.history.filter((h) => h.timestamp_ms !== args.timestampMs);
+      return null;
+    },
+    clear_history: () => {
+      state.history = [];
+      return null;
+    },
+    get_insights: () => state.insights,
+    get_logs: () => state.logs,
+    clear_logs: () => {
+      state.logs = [];
+      return null;
+    },
+    // plugins
+    "plugin:app|version": () => "0.1.2",
+    "plugin:updater|check": () => null,
+    "plugin:window|start_dragging": () => null,
+    "plugin:opener|open_url": () => null,
+  };
+
+  mockIPC(
+    (cmd, args) => {
+      const payload = args as Record<string, Json> | undefined;
+      calls.push({ cmd, args: payload });
+      const failure = scenario.failing?.[cmd];
+      if (failure) return Promise.reject(failure);
+      const handler = handlers[cmd];
+      if (!handler) {
+        console.warn(`[mock backend] unhandled command ${cmd}`, args);
+        return null;
+      }
+      return handler(payload ?? {});
+    },
+    { shouldMockEvents: true },
+  );
+
+  window.__dw = { emit: (event, payload) => emit(event, payload), calls, state };
+}

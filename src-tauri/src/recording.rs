@@ -6,6 +6,7 @@ use crate::audio::AudioHandle;
 use crate::capture::{CaptureController, Request, Transition, Trigger};
 use crate::modes;
 use crate::paste::paste_text;
+use crate::pipeline;
 use crate::stt::WhisperEngine;
 
 pub struct RecordingState {
@@ -35,6 +36,10 @@ pub struct RecordingState {
     /// frontmost app, and is consumed (cleared) the moment a dictation uses
     /// it, so it never silently applies to a second one.
     pub mode_override: Mutex<Option<String>>,
+    /// "Paste as-is" for the current dictation (widget click or the skip
+    /// shortcut): skip LLM refinement, or stop it if it's running. Reset
+    /// when a new dictation starts.
+    pub skip_refine: std::sync::atomic::AtomicBool,
 }
 
 pub fn toggle_recording(app: &AppHandle, trigger: Trigger) {
@@ -48,18 +53,21 @@ pub fn request_dictation(app: &AppHandle, request: Request) {
     match state.capture.request(request) {
         Transition::StartedDictation { session } => start_dictation(app, &state, session),
         Transition::StoppedDictation { .. } => stop_dictation(app, &state),
-        Transition::StartedEnrollment { .. } | Transition::StoppedEnrollment { .. } | Transition::Rejected(_) => {}
+        Transition::StartedEnrollment { .. }
+        | Transition::StoppedEnrollment { .. }
+        | Transition::Rejected(_) => {}
     }
 }
 
 fn stop_dictation(app: &AppHandle, state: &RecordingState) {
+    let stopped_at = std::time::Instant::now();
     crate::refresh_tray_indicator(app);
     match state.audio.stop() {
         Ok(path) => {
             let _ = app.emit("recording-stopped", path.to_string_lossy().to_string());
             let app = app.clone();
             std::thread::spawn(move || {
-                transcribe_and_paste(&app, &path);
+                transcribe_and_paste(&app, &path, stopped_at);
                 // Raw voice recordings shouldn't accumulate in /tmp; history
                 // keeps the transcript, not the audio.
                 if let Err(err) = std::fs::remove_file(&path) {
@@ -73,9 +81,24 @@ fn stop_dictation(app: &AppHandle, state: &RecordingState) {
     }
 }
 
+fn current_mic_name(state: &RecordingState) -> String {
+    use crate::audio::DeviceStatus::*;
+    match state.audio.device_status() {
+        Some(Preferred { using } | Fallback { using, .. } | SystemDefault { using }) => using,
+        Some(Unavailable { .. }) | None => "your microphone".to_string(),
+    }
+}
+
 fn start_dictation(app: &AppHandle, state: &RecordingState, session: u64) {
+    state
+        .skip_refine
+        .store(false, std::sync::atomic::Ordering::Relaxed);
     crate::refresh_tray_indicator(app);
     state.audio.start();
+
+    for model in crate::llm::models_in_use(&crate::config::load(app)) {
+        crate::llm::prewarm(&model);
+    }
 
     // Live level meter: polls the audio thread's current RMS level (see
     // `audio::AudioHandle::current_level`) at 20fps rather than per audio
@@ -85,8 +108,25 @@ fn start_dictation(app: &AppHandle, state: &RecordingState, session: u64) {
     let level_app = app.clone();
     std::thread::spawn(move || {
         let state = level_app.state::<RecordingState>();
+        let mut silence = crate::audio::SilenceWatch::default();
         while state.capture.is_session_active(session) {
-            let _ = level_app.emit("audio-level", state.audio.current_level());
+            let level = state.audio.current_level();
+            let _ = level_app.emit("audio-level", level);
+            match silence.observe(level, std::time::Instant::now()) {
+                Some(true) => {
+                    let mic = current_mic_name(&state);
+                    crate::applog!("audio: no signal from {mic} for 2s while recording");
+                    let _ = level_app.emit(
+                        "mic-silent",
+                        format!("No sound from {mic}. Is it muted? Hover to switch mics."),
+                    );
+                }
+                Some(false) => {
+                    crate::applog!("audio: signal resumed");
+                    let _ = level_app.emit("mic-silent-cleared", ());
+                }
+                None => {}
+            }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
     });
@@ -116,7 +156,11 @@ fn start_dictation(app: &AppHandle, state: &RecordingState, session: u64) {
     let _ = app.emit("recording-started", ());
 }
 
-fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
+fn transcribe_and_paste(
+    app: &AppHandle,
+    wav_path: &std::path::Path,
+    stopped_at: std::time::Instant,
+) {
     let state = app.state::<RecordingState>();
 
     let active_app = state.active_app.lock().unwrap().clone();
@@ -139,13 +183,16 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
                 settings = override_settings;
             }
             None => {
-                crate::applog!("modes: next-dictation override {override_name:?} no longer exists, ignoring");
+                crate::applog!(
+                    "modes: next-dictation override {override_name:?} no longer exists, ignoring"
+                );
             }
         }
     }
-    let model_override = settings.stt_model.as_ref().and_then(|id| {
-        crate::models::resolve_model_path(app, id).map(|path| (id.clone(), path))
-    });
+    let model_override = settings
+        .stt_model
+        .as_ref()
+        .and_then(|id| crate::models::resolve_model_path(app, id).map(|path| (id.clone(), path)));
     crate::applog!(
         "modes: bundle_id={bundle_id:?} modes={} resolved_mode={:?} stt_model_override={:?} (resolved={})",
         cfg.modes.len(),
@@ -158,14 +205,39 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
     // samples above) — feeds the words-per-minute stat in Insights.
     let duration_ms = crate::stt::wav_duration_ms(wav_path);
 
+    let stt_started = std::time::Instant::now();
     let samples = crate::stt::load_samples_16k_mono(wav_path);
     let transcribed = match samples {
+        Ok(samples) if crate::audio::is_dead_air(&samples) => {
+            let mic = current_mic_name(&state);
+            crate::applog!(
+                "audio: recording from {mic} was silent (no signal at all), skipping transcription"
+            );
+            let _ = app.emit(
+                "transcript-error",
+                format!("{mic} sent no audio. Is it muted? Hover to switch mics."),
+            );
+            return;
+        }
         Ok(samples) => {
             let samples = crate::isolate::apply(app, samples);
-            state.whisper.transcribe_samples(&samples, model_override)
+            let progress_app = app.clone();
+            let result = state.whisper.transcribe_samples_with_progress(
+                &samples,
+                model_override,
+                &move |percent| {
+                    let _ = progress_app.emit("transcribe-progress", percent);
+                },
+            );
+            if result.is_ok() {
+                let _ = app.emit("transcribe-progress", 100u8);
+            }
+            result
         }
         Err(err) => Err(err),
     };
+
+    let stt_ms = Some(stt_started.elapsed().as_millis() as u64);
 
     match transcribed {
         Ok(text) if !text.is_empty() => {
@@ -178,7 +250,9 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
 
             let text = crate::stt::strip_non_speech(&text);
             if text.is_empty() {
-                crate::applog!("whisper: transcript was only non-speech annotations, nothing to paste");
+                crate::applog!(
+                    "whisper: transcript was only non-speech annotations, nothing to paste"
+                );
                 let _ = app.emit("transcript-error", "no speech detected".to_string());
                 return;
             }
@@ -192,6 +266,8 @@ fn transcribe_and_paste(app: &AppHandle, wav_path: &std::path::Path) {
                     app_name,
                     duration_ms,
                     paste_guard: None,
+                    stopped_at: Some(stopped_at),
+                    stt_ms,
                 },
             );
         }
@@ -214,171 +290,51 @@ pub(crate) struct TranscriptContext<'a> {
     /// Bundle id that must still be frontmost at delivery time for the text
     /// to be pasted (ambient only); `None` pastes unconditionally.
     pub paste_guard: Option<String>,
+    /// When the user stopped recording, for end-to-end latency. `None` for
+    /// ambient dictation, which has no explicit stop.
+    pub stopped_at: Option<std::time::Instant>,
+    /// How long Whisper (plus voice isolation) took.
+    pub stt_ms: Option<u64>,
+}
+
+fn ms_or_dash(ms: Option<u64>) -> String {
+    ms.map_or_else(|| "-".to_string(), |ms| format!("{ms}ms"))
 }
 
 /// Runs a cleaned transcript through the formatting pipeline (lists,
 /// punctuation, backtrack, voice commands, snippets, casing, boilerplate,
 /// mode formatting, LLM refinement) and delivers it.
 pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptContext) {
-    let TranscriptContext { cfg, settings, app_name, duration_ms, .. } = &ctx;
+    let TranscriptContext {
+        cfg,
+        settings,
+        app_name,
+        duration_ms,
+        ..
+    } = &ctx;
     let (cfg, settings, app_name, duration_ms) = (*cfg, *settings, app_name.clone(), *duration_ms);
-    // Tracks which of the passes below actually changed the text
-    // (as opposed to running as a no-op pass-through), for the
-    // Insights feature-adoption checklist — "have you tried
-    // Backtrack?" needs to know whether it's ever fired, not just
-    // that the function was called on every dictation.
-    let mut features_used: Vec<String> = Vec::new();
-
-    // Spoken numbered lists ("one... two...") are expanded before
-    // punctuation commands — it needs to see the raw marker words
-    // ("one", "two") before anything else touches them, and it
-    // hands back a real newline-separated list for the
-    // punctuation pass (and everything downstream) to treat as
-    // ordinary already-formatted text.
-    let before_lists = text.clone();
-    let text = crate::punctuation::expand_lists(&text);
-    if text != before_lists {
-        features_used.push("lists".to_string());
-    }
-
-    // Named punctuation commands ("period", "open paren", "new
-    // line") are expanded next, ahead of everything else — like
-    // casing commands below, they're cross-cutting rather than
-    // mode-gated, and downstream steps (casing extraction, LLM
-    // refinement) all work better against already-punctuated text
-    // than against the literal spoken words.
-    let before_punct = text.clone();
-    let text = crate::punctuation::expand_punctuation(&text);
-    if text != before_punct {
-        features_used.push("punctuation".to_string());
-    }
-
-    // Backtrack ("...at two, actually three") collapses a
-    // self-correction down to just the corrected tail. Runs after
-    // punctuation expansion, not before — its "actually" trigger
-    // requires a literal preceding comma, which only exists once
-    // a spoken "comma" (or Whisper's own natural comma insertion)
-    // has already been resolved to the character.
-    let before_backtrack = text.clone();
-    let text = crate::backtrack::try_backtrack(&text);
-    if text != before_backtrack {
-        features_used.push("backtrack".to_string());
-    }
-
-    // "Press enter": stripped before casing/boilerplate/mode so
-    // none of those see the trailing control phrase as content.
-    // Gated behind a Settings toggle (default off) — an
-    // unexpected Enter keystroke is a worse failure mode than an
-    // unexpected paste, so unlike the other punctuation commands
-    // above this one needs an explicit opt-in.
-    let (text, should_press_enter) = if cfg.press_enter_enabled {
-        crate::punctuation::extract_press_enter(&text)
-    } else {
-        (text, false)
-    };
-    if should_press_enter {
-        features_used.push("press_enter".to_string());
-    }
-
-    // Word count of what was actually spoken, captured here (post
-    // punctuation/backtrack/press-enter, pre snippet/casing/
-    // boilerplate) rather than derived from `formatted` below —
-    // see the doc comment on `HistoryEntry::spoken_words` for why.
-    let spoken_words = Some(text.split_whitespace().count() as u32);
-
-    // "Append clipboard": stripped the same way as "press enter"
-    // above (and checked after it, so "...append clipboard press
-    // enter" strips the later-spoken phrase first). Always on,
-    // unlike "press enter" — the trigger phrases are multi-word and
-    // deliberate, not something said by accident the way a bare
-    // Enter keystroke risk would warrant an opt-in.
-    let (text, should_append_clipboard) = crate::clipboard::try_extract_trigger(&text);
-
-    // Snippets ("pr checklist", "standup update") are the most
-    // explicit, intentional signal of the pre-LLM checks — a
-    // literal saved macro the user (or a shipped default) defined
-    // themselves — so they're checked first, ahead of casing
-    // commands and boilerplate requests, in case of a coincidental
-    // overlap. Like those, skips mode formatting and LLM
-    // refinement entirely: the output is already fully resolved.
-    let (formatted, mode_label) = if let Some(expanded) =
-        crate::snippets::try_expand(&text, &cfg.snippets)
-    {
-        crate::applog!("snippets: trigger matched, transcript={text:?}");
-        (expanded, "snippet".to_string())
-    }
-    // Casing directives ("snake case error response handler") are a
-    // cross-cutting syntax command, not gated behind a Mode — they
-    // apply no matter which app/mode is active, and skip both
-    // rule-based formatting and LLM refinement entirely since the
-    // mechanical transform already fully resolves the output.
-    else if let Some(cased) =
-        crate::syntax::try_apply_casing_command(&text)
-    {
-        crate::applog!("syntax: casing command matched, transcript={text:?} output={cased:?}");
-        (cased, "casing".to_string())
-    } else if let Some(request) = crate::boilerplate::try_extract_request(&text) {
-        crate::applog!("boilerplate: request matched, transcript={text:?} request={request:?}");
-        let _ = app.emit("refining-started", ());
-        match crate::llm::generate_boilerplate(&request, &cfg.llm_model) {
-            Ok(code) => (code, "boilerplate".to_string()),
-            Err(err) => {
-                // Falls back to normal mode formatting rather than
-                // pasting nothing — a down/missing Ollama shouldn't
-                // eat the user's dictation.
-                crate::applog!("boilerplate: generation failed, falling back to plain formatting: {err}");
-                let formatted = modes::apply_mode(settings.mode, &text);
-                (formatted, format!("{:?}", settings.mode))
-            }
-        }
-    } else {
-        let formatted = modes::apply_mode(settings.mode, &text);
-        crate::applog!("modes: transcript={text:?} formatted={formatted:?}");
-
-        let llm_model = match &settings.llm_refinement {
-            modes::LlmRefinement::Off => None,
-            modes::LlmRefinement::Global => Some(cfg.llm_model.as_str()),
-            modes::LlmRefinement::Model(id) => Some(id.as_str()),
-        };
-        // A literal spoken command (`git commit ...`, `make directory ...`)
-        // is already a finished shell command after `apply_mode`; sending it
-        // through the LLM only risks corrupting it (observed: `mkdir for
-        // the new service` came back as bare `mkdir`).
-        let llm_model = if settings.mode == modes::Behavior::Cli && modes::is_literal_cli_directive(&text) {
-            None
-        } else {
-            llm_model
-        };
-        let formatted = if let Some(model) = llm_model {
-            let _ = app.emit("refining-started", ());
-            match crate::llm::refine(settings.mode, &formatted, model, settings.custom_instructions.as_deref()) {
-                Ok(refined) => match crate::llm::degenerate_output(&formatted, &refined) {
-                    None => {
-                        crate::applog!("llm: refined {formatted:?} -> {refined:?}");
-                        // The model sometimes drops the `@` that marks a
-                        // file reference for terminal coding agents; tagging
-                        // skips tokens already tagged, so re-running it is safe.
-                        if settings.mode == modes::Behavior::Cli {
-                            crate::file_tagging::tag_file_references(&refined)
-                        } else {
-                            refined
-                        }
-                    }
-                    Some(reason) => {
-                        crate::applog!("llm: rejected refinement ({reason}): {refined:?}; pasting {formatted:?}");
-                        formatted
-                    }
-                },
-                Err(err) => {
-                    crate::applog!("llm: refinement failed, pasting unrefined text: {err}");
-                    formatted
-                }
-            }
-        } else {
-            formatted
-        };
-        (formatted, format!("{:?}", settings.mode))
-    };
+    let pipeline::Formatted {
+        text: formatted,
+        mode_label,
+        press_enter: should_press_enter,
+        append_clipboard: should_append_clipboard,
+        features_used,
+        spoken_words,
+        llm_ms,
+    } = pipeline::format(
+        text,
+        cfg,
+        settings,
+        &pipeline::OllamaRefiner {
+            on_progress: &|percent| {
+                let _ = app.emit("refine-progress", percent);
+            },
+            cancel: &app.state::<RecordingState>().skip_refine,
+        },
+        &mut |model| {
+            let _ = app.emit("refining-started", model.to_string());
+        },
+    );
 
     // Applied uniformly after whichever branch above resolved
     // `formatted` — clipboard content is appended raw, not run
@@ -415,6 +371,7 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
         }
     });
     let copy_only = cfg.copy_only || focus_moved;
+    let deliver_started = std::time::Instant::now();
     let deliver = if formatted.is_empty() {
         Ok(())
     } else if copy_only {
@@ -422,6 +379,14 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
     } else {
         paste_text(&formatted)
     };
+    let latency_ms = ctx.stopped_at.map(|t| t.elapsed().as_millis() as u64);
+    crate::applog!(
+        "perf: stt={} llm={} deliver={}ms total={}",
+        ms_or_dash(ctx.stt_ms),
+        ms_or_dash(llm_ms),
+        deliver_started.elapsed().as_millis(),
+        ms_or_dash(latency_ms),
+    );
 
     match deliver {
         Ok(()) => {
@@ -449,12 +414,15 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
             let timestamp_ms = if !formatted.is_empty() {
                 Some(crate::history::append_entry(
                     app,
-                    &formatted,
-                    app_name,
-                    Some(mode_label),
-                    duration_ms,
-                    features_used,
-                    spoken_words,
+                    crate::history::NewEntry {
+                        text: formatted.clone(),
+                        app_name,
+                        mode: Some(mode_label),
+                        duration_ms,
+                        features_used,
+                        spoken_words,
+                        latency_ms,
+                    },
                 ))
             } else {
                 None
@@ -463,8 +431,7 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
             // Mirrors the history-logging condition above — an
             // empty "press enter only" utterance has no real
             // transcript to send downstream either.
-            if let (Some(webhook_url), Some(timestamp_ms)) =
-                (cfg.webhook_url.clone(), timestamp_ms)
+            if let (Some(webhook_url), Some(timestamp_ms)) = (cfg.webhook_url.clone(), timestamp_ms)
             {
                 crate::webhook::send_entry(
                     webhook_url,
@@ -504,7 +471,10 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
             }
 
             if focus_moved {
-                let _ = app.emit("transcript-copied", "Copied — you switched apps before it could paste".to_string());
+                let _ = app.emit(
+                    "transcript-copied",
+                    "Copied — you switched apps before it could paste".to_string(),
+                );
             } else if copy_only && !formatted.is_empty() {
                 let _ = app.emit("transcript-copied", "Copied to clipboard".to_string());
             } else {
@@ -517,6 +487,28 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
     }
 }
 
+/// "Paste as-is": while recording, stops and skips refinement; while
+/// refining, stops the LLM and pastes the unrefined text now. From the
+/// widget's refining bar or the skip shortcut (hotkey + Shift).
+pub fn paste_as_is(app: &AppHandle) {
+    let state = app.state::<RecordingState>();
+    state
+        .skip_refine
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    crate::applog!("llm: paste as-is requested");
+    if matches!(
+        state.capture.state(),
+        crate::capture::CaptureState::Dictating { .. }
+    ) {
+        request_dictation(app, Request::StopDictation(Trigger::Hotkey));
+    }
+}
+
+#[tauri::command]
+pub fn paste_as_is_command(app: AppHandle) {
+    paste_as_is(&app);
+}
+
 #[tauri::command]
 pub fn toggle_recording_command(app: AppHandle) {
     toggle_recording(&app, Trigger::Button);
@@ -525,11 +517,14 @@ pub fn toggle_recording_command(app: AppHandle) {
 /// Which mic capture is actually using (or falling back from). Read once by
 /// the widget on mount; changes after that arrive as `audio-device-status`.
 #[tauri::command]
-pub fn get_audio_device_status(state: tauri::State<RecordingState>) -> Option<crate::audio::DeviceStatus> {
+pub fn get_audio_device_status(
+    state: tauri::State<RecordingState>,
+) -> Option<crate::audio::DeviceStatus> {
     state.audio.device_status()
 }
 
-#[tauri::command]
+// Off the main thread: sync commands run on it, and this one does I/O.
+#[tauri::command(async)]
 pub fn list_input_devices() -> Vec<String> {
     crate::audio::list_device_names()
 }

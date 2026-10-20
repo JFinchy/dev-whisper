@@ -38,8 +38,8 @@ dictation end to end — that's what this pass is for.
 6. Leave the URL set. Trigger a real push-to-talk dictation into any app
    and let it paste. Check webhook.site for a second request with the
    real transcript in `text`, the frontmost app's name in `app_name`, and
-   a resolved mode (`Plain`/`Casual`/`Cli`/`casing`/`boilerplate`) in
-   `mode`.
+   a resolved mode (`Plain`/`Casual`/`Cli`/`casing`/`boilerplate`/
+   `snippet`) in `mode`.
 7. Clear the URL field in Settings (save empty) and confirm a subsequent
    dictation does *not* produce a new webhook.site request — this is the
    off-by-default / opt-out path.

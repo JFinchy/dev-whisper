@@ -33,7 +33,9 @@ pub fn try_extract_request(text: &str) -> Option<String> {
     // directive phrases doesn't change byte length, so slicing the
     // original-casing `trimmed` at `phrase.len()` stays aligned with what
     // matched in `lower`.
-    let rest = trimmed[phrase.len()..].trim_start_matches([':', ',']).trim();
+    let rest = trimmed[phrase.len()..]
+        .trim_start_matches([':', ','])
+        .trim();
     if rest.is_empty() {
         return None;
     }

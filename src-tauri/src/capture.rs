@@ -48,33 +48,50 @@ pub enum Transition {
 
 /// Pure state transition — no I/O, so every rule is unit-testable.
 /// `next_session` is the id a newly started session would get.
-fn transition(state: CaptureState, request: Request, next_session: u64) -> (CaptureState, Transition) {
+fn transition(
+    state: CaptureState,
+    request: Request,
+    next_session: u64,
+) -> (CaptureState, Transition) {
     use CaptureState::*;
     use Request::*;
 
     match (state, request) {
         (Idle, StartDictation(trigger) | ToggleDictation(trigger)) => (
-            Dictating { trigger, session: next_session },
-            Transition::StartedDictation { session: next_session },
+            Dictating {
+                trigger,
+                session: next_session,
+            },
+            Transition::StartedDictation {
+                session: next_session,
+            },
         ),
         (Dictating { session, .. }, StopDictation(_) | ToggleDictation(_)) => {
             (Idle, Transition::StoppedDictation { session })
         }
         (Idle, StartEnrollment) => (
-            Enrolling { session: next_session },
-            Transition::StartedEnrollment { session: next_session },
+            Enrolling {
+                session: next_session,
+            },
+            Transition::StartedEnrollment {
+                session: next_session,
+            },
         ),
-        (Enrolling { session }, StopEnrollment) => (Idle, Transition::StoppedEnrollment { session }),
+        (Enrolling { session }, StopEnrollment) => {
+            (Idle, Transition::StoppedEnrollment { session })
+        }
 
         (Dictating { .. }, StartDictation(_)) => (state, Transition::Rejected("already dictating")),
         (Idle, StopDictation(_)) => (state, Transition::Rejected("not dictating")),
         (Idle, StopEnrollment) => (state, Transition::Rejected("not enrolling")),
-        (Dictating { .. }, StartEnrollment | StopEnrollment) => {
-            (state, Transition::Rejected("microphone is in use for dictation"))
-        }
-        (Enrolling { .. }, StartDictation(_) | StopDictation(_) | ToggleDictation(_)) => {
-            (state, Transition::Rejected("microphone is in use for voice enrollment"))
-        }
+        (Dictating { .. }, StartEnrollment | StopEnrollment) => (
+            state,
+            Transition::Rejected("microphone is in use for dictation"),
+        ),
+        (Enrolling { .. }, StartDictation(_) | StopDictation(_) | ToggleDictation(_)) => (
+            state,
+            Transition::Rejected("microphone is in use for voice enrollment"),
+        ),
         (Enrolling { .. }, StartEnrollment) => (state, Transition::Rejected("already enrolling")),
     }
 }
@@ -103,7 +120,10 @@ impl CaptureController {
         let before = inner.state;
         let (after, result) = transition(before, request, inner.next_session);
         inner.state = after;
-        if matches!(result, Transition::StartedDictation { .. } | Transition::StartedEnrollment { .. }) {
+        if matches!(
+            result,
+            Transition::StartedDictation { .. } | Transition::StartedEnrollment { .. }
+        ) {
             inner.next_session += 1;
         }
         drop(inner);
@@ -127,7 +147,9 @@ impl CaptureController {
     /// loop running alongside the new one.
     pub fn is_session_active(&self, session: u64) -> bool {
         match self.state() {
-            CaptureState::Dictating { session: s, .. } | CaptureState::Enrolling { session: s } => s == session,
+            CaptureState::Dictating { session: s, .. } | CaptureState::Enrolling { session: s } => {
+                s == session
+            }
             CaptureState::Idle => false,
         }
     }
@@ -142,13 +164,22 @@ mod tests {
     #[test]
     fn idle_start_begins_dictation_with_the_next_session_id() {
         let (state, t) = transition(Idle, StartDictation(Trigger::Hotkey), 7);
-        assert_eq!(state, Dictating { trigger: Trigger::Hotkey, session: 7 });
+        assert_eq!(
+            state,
+            Dictating {
+                trigger: Trigger::Hotkey,
+                session: 7
+            }
+        );
         assert_eq!(t, Transition::StartedDictation { session: 7 });
     }
 
     #[test]
     fn start_while_dictating_is_rejected_not_toggled_off() {
-        let current = Dictating { trigger: Trigger::Hotkey, session: 1 };
+        let current = Dictating {
+            trigger: Trigger::Hotkey,
+            session: 1,
+        };
         let (state, t) = transition(current, StartDictation(Trigger::DeepLink), 2);
         assert_eq!(state, current);
         assert!(matches!(t, Transition::Rejected(_)));
@@ -172,7 +203,10 @@ mod tests {
 
     #[test]
     fn any_trigger_can_stop_a_dictation_started_by_another() {
-        let current = Dictating { trigger: Trigger::DoubleTapFn, session: 5 };
+        let current = Dictating {
+            trigger: Trigger::DoubleTapFn,
+            session: 5,
+        };
         let (state, t) = transition(current, ToggleDictation(Trigger::Hotkey), 6);
         assert_eq!(state, Idle);
         assert_eq!(t, Transition::StoppedDictation { session: 5 });
@@ -181,13 +215,20 @@ mod tests {
     #[test]
     fn enrollment_and_dictation_exclude_each_other() {
         let enrolling = Enrolling { session: 1 };
-        for req in [StartDictation(Trigger::Hotkey), ToggleDictation(Trigger::Hotkey), StopDictation(Trigger::Hotkey)] {
+        for req in [
+            StartDictation(Trigger::Hotkey),
+            ToggleDictation(Trigger::Hotkey),
+            StopDictation(Trigger::Hotkey),
+        ] {
             let (state, t) = transition(enrolling, req, 2);
             assert_eq!(state, enrolling);
             assert!(matches!(t, Transition::Rejected(_)));
         }
 
-        let dictating = Dictating { trigger: Trigger::Hotkey, session: 1 };
+        let dictating = Dictating {
+            trigger: Trigger::Hotkey,
+            session: 1,
+        };
         for req in [StartEnrollment, StopEnrollment] {
             let (state, t) = transition(dictating, req, 2);
             assert_eq!(state, dictating);
@@ -207,18 +248,25 @@ mod tests {
     #[test]
     fn controller_issues_fresh_session_ids_and_tracks_the_active_one() {
         let c = CaptureController::new();
-        let Transition::StartedDictation { session: first } = c.request(ToggleDictation(Trigger::Hotkey)) else {
+        let Transition::StartedDictation { session: first } =
+            c.request(ToggleDictation(Trigger::Hotkey))
+        else {
             panic!("expected start");
         };
         assert!(c.is_session_active(first));
         c.request(ToggleDictation(Trigger::Hotkey));
         assert!(!c.is_session_active(first));
 
-        let Transition::StartedDictation { session: second } = c.request(ToggleDictation(Trigger::Hotkey)) else {
+        let Transition::StartedDictation { session: second } =
+            c.request(ToggleDictation(Trigger::Hotkey))
+        else {
             panic!("expected start");
         };
         assert_ne!(first, second);
-        assert!(!c.is_session_active(first), "a stale session id must not read as active");
+        assert!(
+            !c.is_session_active(first),
+            "a stale session id must not read as active"
+        );
         assert!(c.is_session_active(second));
     }
 
@@ -226,6 +274,9 @@ mod tests {
     fn rejected_requests_do_not_consume_a_session_id() {
         let c = CaptureController::new();
         c.request(StopDictation(Trigger::DeepLink));
-        assert_eq!(c.request(StartDictation(Trigger::Hotkey)), Transition::StartedDictation { session: 1 });
+        assert_eq!(
+            c.request(StartDictation(Trigger::Hotkey)),
+            Transition::StartedDictation { session: 1 }
+        );
     }
 }

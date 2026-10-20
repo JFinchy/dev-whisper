@@ -1,5 +1,5 @@
 use std::sync::Mutex;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
 use crate::config::{self, ShortcutConfig};
@@ -8,6 +8,63 @@ use crate::config::{self, ShortcutConfig};
 /// `tauri_plugin_global_shortcut::ShortcutState` (the press/release enum).
 pub struct PushToTalkState {
     pub current: Mutex<ShortcutConfig>,
+    /// Why the current shortcut isn't registered (another app owns the
+    /// combination, or a hand-edited config holds an invalid one). `None`
+    /// means the hotkey works. Surfaced by the readiness checks.
+    pub error: Mutex<Option<String>>,
+}
+
+/// The "paste as-is" shortcut: the push-to-talk hotkey plus Shift (or
+/// plus Option when the hotkey already uses Shift), so it's one extra key
+/// on a combination the user already knows. ⌘D → ⇧⌘D.
+pub fn skip_variant(cfg: &ShortcutConfig) -> ShortcutConfig {
+    let mut skip = cfg.clone();
+    if skip.shift {
+        skip.alt = true;
+    } else {
+        skip.shift = true;
+    }
+    skip
+}
+
+/// Registers the skip shortcut for `cfg`, logging rather than failing:
+/// it's a convenience on top of the widget's click target.
+fn register_skip(app: &AppHandle, cfg: &ShortcutConfig) {
+    if let Ok(skip) = to_shortcut(&skip_variant(cfg)) {
+        if let Err(err) = app.global_shortcut().register(skip) {
+            crate::applog!("hotkey: paste-as-is shortcut unavailable: {err}");
+        }
+    }
+}
+
+fn unregister_skip(app: &AppHandle, cfg: &ShortcutConfig) {
+    if let Ok(skip) = to_shortcut(&skip_variant(cfg)) {
+        if app.global_shortcut().is_registered(skip) {
+            let _ = app.global_shortcut().unregister(skip);
+        }
+    }
+}
+
+/// Registers the saved shortcut at launch. Failure is recorded rather than
+/// returned: a hotkey taken by another app must not stop Dev Whisper from
+/// starting, since the widget button, tray and deep links still work and
+/// Settings is where the user picks a different combination.
+pub fn register_initial(app: &AppHandle, cfg: ShortcutConfig) -> PushToTalkState {
+    let error = to_shortcut(&cfg)
+        .and_then(|shortcut| {
+            app.global_shortcut()
+                .register(shortcut)
+                .map_err(|e| e.to_string())
+        })
+        .err();
+    if let Some(err) = &error {
+        crate::applog!("hotkey: could not register {cfg:?}: {err}");
+    }
+    register_skip(app, &cfg);
+    PushToTalkState {
+        current: Mutex::new(cfg),
+        error: Mutex::new(error),
+    }
 }
 
 pub fn to_shortcut(cfg: &ShortcutConfig) -> Result<Shortcut, String> {
@@ -47,21 +104,33 @@ pub fn set_shortcut(
     let new_shortcut = to_shortcut(&new_cfg)?;
 
     let mut current = state.current.lock().unwrap();
-    let old_shortcut = to_shortcut(&current)?;
+    // The old shortcut may never have registered (see `register_initial`),
+    // in which case there's nothing to unregister or restore.
+    let old_shortcut = to_shortcut(&current)
+        .ok()
+        .filter(|old| app.global_shortcut().is_registered(*old));
 
-    if new_shortcut != old_shortcut {
-        app.global_shortcut()
-            .unregister(old_shortcut)
-            .map_err(|e| e.to_string())?;
+    if old_shortcut != Some(new_shortcut) {
+        if let Some(old) = old_shortcut {
+            app.global_shortcut()
+                .unregister(old)
+                .map_err(|e| e.to_string())?;
+        }
         if let Err(err) = app.global_shortcut().register(new_shortcut) {
             // best-effort restore so the app doesn't end up with no hotkey
-            let _ = app.global_shortcut().register(old_shortcut);
+            if let Some(old) = old_shortcut {
+                let _ = app.global_shortcut().register(old);
+            }
             return Err(err.to_string());
         }
     }
 
+    unregister_skip(&app, &current);
     *current = new_cfg.clone();
     drop(current);
+    register_skip(&app, &new_cfg);
+    *state.error.lock().unwrap() = None;
+    let _ = app.emit("shortcut-changed", &new_cfg);
 
     let mut cfg = config::load(&app);
     cfg.shortcut = Some(new_cfg.clone());
@@ -151,6 +220,20 @@ fn parse_code(code: &str) -> Option<Code> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn skip_shortcut_adds_shift_or_option() {
+        let base = cfg(true, false, false, false, "KeyD");
+        let skip = skip_variant(&base);
+        assert!(skip.meta && skip.shift && !skip.alt);
+        let with_shift = cfg(true, false, false, true, "Space");
+        let skip = skip_variant(&with_shift);
+        assert!(skip.meta && skip.shift && skip.alt);
+        assert_ne!(
+            to_shortcut(&base).unwrap(),
+            to_shortcut(&skip_variant(&base)).unwrap()
+        );
+    }
     use super::*;
 
     fn cfg(meta: bool, ctrl: bool, alt: bool, shift: bool, code: &str) -> ShortcutConfig {
@@ -185,8 +268,14 @@ mod tests {
         let a = to_shortcut(&cfg(true, false, false, true, "Space")).unwrap();
         let b = to_shortcut(&cfg(true, false, false, false, "Space")).unwrap();
         let c = to_shortcut(&cfg(true, false, false, true, "KeyV")).unwrap();
-        assert_ne!(a, b, "differing shift flag should produce a different shortcut");
-        assert_ne!(a, c, "differing key code should produce a different shortcut");
+        assert_ne!(
+            a, b,
+            "differing shift flag should produce a different shortcut"
+        );
+        assert_ne!(
+            a, c,
+            "differing key code should produce a different shortcut"
+        );
     }
 
     #[test]

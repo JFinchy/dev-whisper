@@ -4424,6 +4424,8 @@ version = "0.1.2"
 dependencies = [
  "arboard",
  "base64 0.22.1",
+ "core-foundation 0.10.1",
+ "core-graphics 0.25.0",
  "coreaudio-sys",
  "cpal",
  "hound",
@@ -4434,6 +4436,7 @@ dependencies = [
  "rdev",
  "serde",
  "serde_json",
+ "sha2",
  "sherpa-onnx",
  "signal-hook",
  "tauri",
@@ -4443,6 +4446,7 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-opener",
  "tauri-plugin-process",
+ "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "ureq",
  "whisper-rs",
@@ -4606,6 +4610,23 @@ checksum = "d55511a7bf6cd70c8767b02c97bf8134fa434daf3926cfc1be0a0f94132d165a"
 dependencies = [
  "tauri",
  "tauri-plugin",
+]
+
+[[package]]
+name = "tauri-plugin-single-instance"
+version = "2.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3214becf9ef5783c0ae99a3bb25adf5353a7a16ebf53e74b909e29205735c6c"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin-deep-link",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "windows-sys 0.60.2",
+ "zbus",
 ]
 
 [[package]]

@@ -4,19 +4,26 @@
 /// dictation" gesture. Runs alongside the existing shortcut rather than
 /// replacing it.
 ///
-/// This needs an entirely different capture mechanism than the existing
-/// shortcut: `tauri-plugin-global-shortcut` (Carbon's `RegisterEventHotKey`)
-/// requires a real modifier + key code and can't bind to a bare modifier
-/// key like Fn, or detect a tap-tap pattern — it only fires a single
-/// press/release for one registered combo. Fn key state only shows up
-/// through raw global input monitoring, which `rdev` (already a dependency,
-/// used for synthetic paste keystrokes in `paste.rs`) also provides via
-/// `listen()`. Passive/listen-only on macOS (`CGEventTapOptionListenOnly`),
-/// so it observes without consuming — Fn's normal OS behavior (dictation,
-/// media keys, etc.) is unaffected — but it needs macOS's Input Monitoring
-/// permission, a different TCC bucket than Accessibility (used for paste).
-use rdev::{listen, Event, EventType, Key};
-use std::sync::atomic::{AtomicBool, Ordering};
+/// This needs a different capture mechanism than the existing shortcut:
+/// `tauri-plugin-global-shortcut` (Carbon's `RegisterEventHotKey`) needs a
+/// real modifier + key code and can't bind a bare Fn press or a tap-tap
+/// pattern. Fn only shows up as a modifier-flags change, so this installs a
+/// listen-only CoreGraphics event tap for `FlagsChanged` events alone. It
+/// observes without consuming (Fn's normal OS behavior is unaffected) and
+/// needs macOS's Input Monitoring permission.
+///
+/// Not `rdev::listen`: rdev converts *every* key event to a character via
+/// `TSMGetInputSourceProperty` on its background thread, and current macOS
+/// asserts that API runs on the main thread, killing the app with SIGTRAP.
+/// Our own synthetic Cmd+V paste was enough to trigger it.
+use core_foundation::base::TCFType;
+use core_foundation::mach_port::CFMachPortRef;
+use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
+use core_graphics::event::{
+    CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
+    CGEventType, CallbackResult, EventField,
+};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::Once;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
@@ -41,7 +48,9 @@ pub struct DoubleTapState {
 
 impl DoubleTapState {
     pub fn new(enabled: bool) -> Self {
-        Self { enabled: AtomicBool::new(enabled) }
+        Self {
+            enabled: AtomicBool::new(enabled),
+        }
     }
 }
 
@@ -54,44 +63,88 @@ impl DoubleTapState {
 /// `DoubleTapState.enabled` instead of tearing down the tap.
 static LISTENER_STARTED: Once = Once::new();
 
+/// macOS virtual key code for Fn/Globe (`kVK_Function`).
+const FN_KEY_CODE: i64 = 63;
+
+extern "C" {
+    fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+}
+
+/// The tap's mach port, so the callback can re-enable the tap if macOS
+/// disables it (slow callback, or secure keyboard entry turned on).
+static TAP_PORT: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
+
+/// True for the flags-changed event of Fn going *down* (key code 63 with
+/// the secondary-Fn flag set); its release has the flag cleared.
+fn is_fn_press(key_code: i64, flags: CGEventFlags) -> bool {
+    key_code == FN_KEY_CODE && flags.contains(CGEventFlags::CGEventFlagSecondaryFn)
+}
+
 pub fn ensure_listener_started(app: &AppHandle) {
     LISTENER_STARTED.call_once(|| {
         let app = app.clone();
         std::thread::spawn(move || {
-            let mut last_tap: Option<Instant> = None;
+            let last_tap = std::sync::Mutex::new(None::<Instant>);
+            let tap = CGEventTap::new(
+                CGEventTapLocation::Session,
+                CGEventTapPlacement::TailAppendEventTap,
+                CGEventTapOptions::ListenOnly,
+                vec![CGEventType::FlagsChanged],
+                move |_proxy, event_type, event| {
+                    if matches!(event_type, CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput) {
+                        crate::applog!("doubletap: event tap was disabled by macOS ({event_type:?}), re-enabling");
+                        let port = TAP_PORT.load(Ordering::SeqCst);
+                        if !port.is_null() {
+                            unsafe { CGEventTapEnable(port as CFMachPortRef, true) };
+                        }
+                        return CallbackResult::Keep;
+                    }
 
-            let result = listen(move |event: Event| {
-                if !matches!(event.event_type, EventType::KeyPress(Key::Function)) {
+                    let key_code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
+                    if !is_fn_press(key_code, event.get_flags()) {
+                        return CallbackResult::Keep;
+                    }
+                    if !app.state::<DoubleTapState>().enabled.load(Ordering::SeqCst) {
+                        return CallbackResult::Keep;
+                    }
+
+                    let now = Instant::now();
+                    let mut last = last_tap.lock().unwrap();
+                    if is_double_tap(*last, now) {
+                        // Consumed — a third quick tap starts a fresh pair
+                        // rather than immediately re-triggering.
+                        *last = None;
+                        crate::applog!("doubletap: Fn double-tap detected, toggling recording");
+                        // Off the tap's thread: stopping a recording blocks
+                        // on writing the WAV, and macOS disables a tap whose
+                        // callback stalls.
+                        let app = app.clone();
+                        std::thread::spawn(move || {
+                            crate::recording::toggle_recording(&app, crate::capture::Trigger::DoubleTapFn);
+                        });
+                    } else {
+                        *last = Some(now);
+                    }
+                    CallbackResult::Keep
+                },
+            );
+
+            let Ok(tap) = tap else {
+                crate::applog!("doubletap: couldn't create the key event tap (Input Monitoring not granted?)");
+                return;
+            };
+            TAP_PORT.store(tap.mach_port().as_concrete_TypeRef() as *mut _, Ordering::SeqCst);
+            let source = match tap.mach_port().create_runloop_source(0) {
+                Ok(source) => source,
+                Err(()) => {
+                    crate::applog!("doubletap: couldn't attach the key event tap to a run loop");
                     return;
                 }
-
-                let state = app.state::<DoubleTapState>();
-                if !state.enabled.load(Ordering::SeqCst) {
-                    return;
-                }
-
-                let now = Instant::now();
-
-                if is_double_tap(last_tap, now) {
-                    // Consumed — a third quick tap starts a fresh pair
-                    // rather than immediately re-triggering.
-                    last_tap = None;
-                    crate::applog!("doubletap: Fn double-tap detected, toggling recording");
-                    // Off the event-tap callback thread: stopping a recording
-                    // blocks on writing the WAV, and macOS disables an event
-                    // tap whose callback stalls, silently killing double-tap.
-                    let app = app.clone();
-                    std::thread::spawn(move || {
-                        crate::recording::toggle_recording(&app, crate::capture::Trigger::DoubleTapFn);
-                    });
-                } else {
-                    last_tap = Some(now);
-                }
-            });
-
-            if let Err(err) = result {
-                crate::applog!("doubletap: rdev::listen failed to start: {err:?}");
-            }
+            };
+            CFRunLoop::get_current().add_source(&source, unsafe { kCFRunLoopCommonModes });
+            tap.enable();
+            crate::applog!("doubletap: listening for Fn double-tap");
+            CFRunLoop::run_current();
         });
     });
 }
@@ -141,5 +194,24 @@ mod tests {
         let now = Instant::now();
         let previous = now.checked_sub(Duration::from_millis(401)).unwrap();
         assert!(!is_double_tap(Some(previous), now));
+    }
+
+    #[test]
+    fn fn_press_is_key_code_63_with_the_fn_flag_set() {
+        assert!(is_fn_press(
+            FN_KEY_CODE,
+            CGEventFlags::CGEventFlagSecondaryFn
+        ));
+        assert!(
+            !is_fn_press(FN_KEY_CODE, CGEventFlags::empty()),
+            "Fn release"
+        );
+        assert!(
+            !is_fn_press(
+                56,
+                CGEventFlags::CGEventFlagSecondaryFn | CGEventFlags::CGEventFlagShift
+            ),
+            "Shift pressed while Fn is held"
+        );
     }
 }

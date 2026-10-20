@@ -7,18 +7,22 @@ mod capture;
 mod clipboard;
 mod config;
 mod doubletap;
+#[cfg(test)]
+mod e2e_audio;
 mod file_tagging;
 mod history;
 mod insights;
 mod isolate;
-mod llm;
 mod lifecycle;
+mod llm;
 mod logging;
 mod mic_usage;
 mod models;
 mod modes;
 mod paste;
+mod pipeline;
 mod punctuation;
+mod readiness;
 mod recording;
 mod shortcut;
 mod snippets;
@@ -37,7 +41,7 @@ use tauri::{
 };
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_deep_link::DeepLinkExt;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState as PressState};
+use tauri_plugin_global_shortcut::ShortcutState as PressState;
 use tauri_plugin_updater::UpdaterExt;
 
 use audio::AudioHandle;
@@ -53,21 +57,21 @@ use logging::{clear_logs, get_logs};
 use models::{download_model, list_models, set_active_model};
 use modes::{get_modes, list_running_apps, set_modes};
 use recording::{
-    get_active_input_device, get_audio_device_status, get_copy_only, get_isolated_voice_enabled, get_last_frontmost_app,
-    get_next_mode_override, get_press_enter_enabled, get_vocabulary, list_input_devices,
-    set_copy_only, set_input_device, set_isolated_voice_enabled, set_next_mode_override,
-    set_press_enter_enabled, set_vocabulary, toggle_recording, toggle_recording_command,
-    RecordingState,
+    get_active_input_device, get_audio_device_status, get_copy_only, get_isolated_voice_enabled,
+    get_last_frontmost_app, get_next_mode_override, get_press_enter_enabled, get_vocabulary,
+    list_input_devices, set_copy_only, set_input_device, set_isolated_voice_enabled,
+    set_next_mode_override, set_press_enter_enabled, set_vocabulary, toggle_recording,
+    toggle_recording_command, RecordingState,
 };
 use shortcut::{get_shortcut, set_shortcut, PushToTalkState};
 use snippets::{get_snippets, set_snippets};
+use stt::WhisperEngine;
 use theme::{get_layout, get_theme, set_layout, set_theme};
 use voice_isolation::{
     get_voice_enrollment_status, start_voice_enrollment, stop_voice_enrollment, VoiceIsolationState,
 };
 use webhook::{get_webhook_url, send_test_webhook, set_webhook_url};
 use widget::{get_widget_mode, set_widget_mode, set_widget_size};
-use stt::WhisperEngine;
 
 /// Shared between the tray builder in `run()` and `recording::toggle_recording`
 /// (which looks the tray back up via `AppHandle::tray_by_id` to swap its icon)
@@ -96,7 +100,10 @@ pub fn recording_tray_icon(base: &tauri::image::Image) -> tauri::image::Image<'s
     tray_icon_with_dot(base, [220, 38, 38])
 }
 
-fn tray_icon_with_dot(base: &tauri::image::Image, [r, g, b]: [u8; 3]) -> tauri::image::Image<'static> {
+fn tray_icon_with_dot(
+    base: &tauri::image::Image,
+    [r, g, b]: [u8; 3],
+) -> tauri::image::Image<'static> {
     let width = base.width();
     let height = base.height();
     let mut rgba = base.rgba().to_vec();
@@ -147,6 +154,14 @@ pub fn refresh_tray_indicator(app: &tauri::AppHandle) {
     let _ = tray.set_icon_with_as_template(Some(icon), template);
 }
 
+/// Called by each window once its UI has rendered. A webview that fails to
+/// load (a blocked script, a CSP mistake) never calls it, so `app.log`
+/// shows the gap.
+#[tauri::command]
+fn ui_ready(window: tauri::Window) {
+    crate::applog!("ui: {} window ready", window.label());
+}
+
 #[tauri::command]
 fn open_settings(app: tauri::AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("settings") {
@@ -162,7 +177,7 @@ fn open_settings(app: tauri::AppHandle) -> tauri::Result<()> {
     )
     .title("Dev Whisper Settings")
     // Wide enough for the signal-chain layout (5 nodes + connectors) to
-    // lay out on one row without wrapping — see SettingsView.tsx.
+    // lay out on one row without wrapping — see src/settings/layouts.tsx.
     .inner_size(880.0, 720.0)
     .min_inner_size(760.0, 560.0)
     .resizable(true);
@@ -216,13 +231,25 @@ fn prompt_for_accessibility_permission() {
     // Shows the system permission dialog if not already granted. Spawned so
     // the (potentially blocking) prompt doesn't delay startup.
     std::thread::spawn(|| {
-        macos_accessibility_client::accessibility::application_is_trusted_with_prompt();
+        let trusted =
+            macos_accessibility_client::accessibility::application_is_trusted_with_prompt();
+        crate::applog!("accessibility: trusted={trusted}");
     });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must be the first plugin. A second launch (Spotlight, a login
+        // item racing a manual open, a deep link while running) hands off
+        // to this instance and exits, instead of starting a second copy
+        // that fights over the hotkey, the mic and config.json.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            crate::applog!("lifecycle: second launch handed off to the running instance");
+            if let Some(widget) = app.get_webview_window("widget") {
+                let _ = widget.show();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -244,11 +271,19 @@ pub fn run() {
                             toggle_recording(app, capture::Trigger::Hotkey);
                         }
                     }
+                    let skip = shortcut::to_shortcut(&shortcut::skip_variant(&cfg));
+                    if skip.is_ok_and(|skip| *triggered == skip)
+                        && event.state == PressState::Pressed
+                    {
+                        recording::paste_as_is(app);
+                    }
                 })
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
             toggle_recording_command,
+            ui_ready,
+            recording::paste_as_is_command,
             ambient::get_ambient_enabled,
             ambient::set_ambient_enabled,
             ambient::get_ambient_phase,
@@ -313,17 +348,22 @@ pub fn run() {
             get_snippets,
             set_snippets,
             get_insights,
+            readiness::get_readiness,
+            llm::get_llm_only_when_needed,
+            llm::set_llm_only_when_needed,
+            readiness::open_accessibility_settings,
         ])
         .setup(|app| {
             use tauri::Manager;
             match app.path().app_data_dir() {
                 Ok(dir) => {
                     if let Err(err) = logging::init_file(dir.join("app.log")) {
-                        eprintln!("logging: could not open app.log: {err}");
+                        crate::applog!("logging: could not open app.log: {err}");
                     }
                 }
-                Err(err) => eprintln!("logging: no app data dir: {err}"),
+                Err(err) => crate::applog!("logging: no app data dir: {err}"),
             }
+            logging::install_panic_hook();
             crate::applog!(
                 "lifecycle: started version={} pid={}",
                 app.package_info().version,
@@ -340,11 +380,7 @@ pub fn run() {
             let saved_config = config::load(app.handle());
 
             let shortcut_cfg = saved_config.shortcut.clone().unwrap_or_default();
-            let initial_shortcut = shortcut::to_shortcut(&shortcut_cfg)?;
-            app.global_shortcut().register(initial_shortcut)?;
-            app.manage(PushToTalkState {
-                current: Mutex::new(shortcut_cfg),
-            });
+            app.manage(shortcut::register_initial(app.handle(), shortcut_cfg));
 
             app.manage(DoubleTapState::new(saved_config.double_tap_fn_enabled));
             if saved_config.double_tap_fn_enabled {
@@ -373,6 +409,7 @@ pub fn run() {
                 capture_op: Mutex::new(()),
                 active_app: Mutex::new(None),
                 mode_override: Mutex::new(None),
+                skip_refine: Default::default(),
             });
 
             let voice_isolation = VoiceIsolationState::new();
@@ -414,12 +451,44 @@ pub fn run() {
             // recording doesn't pay for Metal shader compilation, which can
             // take several seconds and otherwise happens on the user's
             // first "transcribing…".
+            // Modes can pin their own model (e.g. Terminal on base.en while
+            // the default is tiny.en); those are warmed too, or the first
+            // dictation in that mode after launch paid the cold load
+            // (observed: 2.7s to transcribe a 3.5s clip).
             let warm_app = app.handle().clone();
+            let mode_models: Vec<String> = {
+                let mut ids: Vec<String> = saved_config
+                    .modes
+                    .iter()
+                    .filter_map(|m| m.stt_model.clone())
+                    .collect();
+                ids.sort();
+                ids.dedup();
+                ids
+            };
             std::thread::spawn(move || {
                 let state = warm_app.state::<RecordingState>();
+                let started = std::time::Instant::now();
                 if let Err(err) = state.whisper.ensure_loaded() {
                     crate::applog!("model warm-up skipped: {err}");
                 }
+                for id in mode_models {
+                    if id == state.whisper.active_model_id() {
+                        continue;
+                    }
+                    match models::resolve_model_path(&warm_app, &id) {
+                        Some(path) => {
+                            if let Err(err) = state.whisper.ensure_loaded_model(id.clone(), path) {
+                                crate::applog!("model warm-up of {id} skipped: {err}");
+                            }
+                        }
+                        None => crate::applog!("model warm-up of {id} skipped: not downloaded"),
+                    }
+                }
+                crate::applog!(
+                    "models: warm-up done in {}ms",
+                    started.elapsed().as_millis()
+                );
             });
 
             // Purge transcript history older than the configured retention
@@ -443,7 +512,11 @@ pub fn run() {
                 match update_app.updater() {
                     Ok(updater) => match updater.check().await {
                         Ok(Some(update)) => {
-                            crate::applog!("update: version {} available (current {})", update.version, update.current_version);
+                            crate::applog!(
+                                "update: version {} available (current {})",
+                                update.version,
+                                update.current_version
+                            );
                             let _ = update_app.emit("update-available", update.version);
                         }
                         Ok(None) => {}
@@ -467,30 +540,61 @@ pub fn run() {
                 let (width, height) = saved_config.widget_mode.base_size();
                 let _ = widget.set_size(tauri::LogicalSize::new(width, height));
 
+                // A drag fires dozens of Moved events; saving each one meant
+                // a config read+write per frame. Only the latest position is
+                // kept, and one save runs once the widget stops moving.
                 let position_app = app.handle().clone();
+                let pending: std::sync::Arc<Mutex<Option<(f64, f64)>>> = Default::default();
                 widget.on_window_event(move |event| {
-                    if let tauri::WindowEvent::Moved(physical_pos) = event {
-                        let Some(window) = position_app.get_webview_window("widget") else {
-                            return;
-                        };
-                        let Ok(scale) = window.scale_factor() else {
-                            return;
-                        };
-                        let logical = physical_pos.to_logical::<f64>(scale);
-                        let mut cfg = config::load(&position_app);
-                        cfg.widget_position = Some((logical.x, logical.y));
-                        let _ = config::save(&position_app, &cfg);
+                    let tauri::WindowEvent::Moved(physical_pos) = event else {
+                        return;
+                    };
+                    let Some(window) = position_app.get_webview_window("widget") else {
+                        return;
+                    };
+                    let Ok(scale) = window.scale_factor() else {
+                        return;
+                    };
+                    let logical = physical_pos.to_logical::<f64>(scale);
+                    let was_idle = pending
+                        .lock()
+                        .unwrap()
+                        .replace((logical.x, logical.y))
+                        .is_none();
+                    if was_idle {
+                        let (save_app, pending) = (position_app.clone(), pending.clone());
+                        std::thread::spawn(move || {
+                            std::thread::sleep(std::time::Duration::from_millis(400));
+                            if let Some(position) = pending.lock().unwrap().take() {
+                                let mut cfg = config::load(&save_app);
+                                cfg.widget_position = Some(position);
+                                let _ = config::save(&save_app, &cfg);
+                            }
+                        });
                     }
                 });
             }
 
-            let toggle_recording_item = MenuItem::with_id(app, "toggle_recording", "Start/Stop Recording", true, None::<&str>)?;
-            let toggle_widget = MenuItem::with_id(app, "toggle_widget", "Show/Hide Widget", true, None::<&str>)?;
-            let open_settings_item = MenuItem::with_id(app, "open_settings", "Open Settings…", true, None::<&str>)?;
+            let toggle_recording_item = MenuItem::with_id(
+                app,
+                "toggle_recording",
+                "Start/Stop Recording",
+                true,
+                None::<&str>,
+            )?;
+            let toggle_widget =
+                MenuItem::with_id(app, "toggle_widget", "Show/Hide Widget", true, None::<&str>)?;
+            let open_settings_item =
+                MenuItem::with_id(app, "open_settings", "Open Settings…", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
-                &[&toggle_recording_item, &toggle_widget, &open_settings_item, &quit],
+                &[
+                    &toggle_recording_item,
+                    &toggle_widget,
+                    &open_settings_item,
+                    &quit,
+                ],
             )?;
 
             TrayIconBuilder::with_id(TRAY_ICON_ID)
@@ -533,7 +637,11 @@ mod tests {
     fn recording_tray_icon_paints_a_red_dot_without_changing_dimensions() {
         let width = 32;
         let height = 32;
-        let base = tauri::image::Image::new_owned(vec![10u8; (width * height * 4) as usize], width, height);
+        let base = tauri::image::Image::new_owned(
+            vec![10u8; (width * height * 4) as usize],
+            width,
+            height,
+        );
 
         let marked = recording_tray_icon(&base);
         assert_eq!(marked.width(), width);

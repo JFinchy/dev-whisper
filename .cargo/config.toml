@@ -17,3 +17,8 @@
 # value silently wins and this override does nothing, which is exactly
 # what happened here: the fix was in place but never took effect.
 MACOSX_DEPLOYMENT_TARGET = { value = "12.0", force = true }
+
+# Signs the dev binary on `cargo run` / `tauri dev` so macOS permission
+# grants survive rebuilds. See scripts/dev-sign-runner.sh.
+[target.aarch64-apple-darwin]
+runner = "scripts/dev-sign-runner.sh"
