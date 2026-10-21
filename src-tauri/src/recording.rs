@@ -143,6 +143,13 @@ fn start_dictation(app: &AppHandle, state: &RecordingState, session: u64) {
             info.as_ref().map(|i| (&i.bundle_id, &i.name))
         );
         let state = main_thread_app.state::<RecordingState>();
+        // Names from the project open in a frontmost terminal or editor are
+        // looked up in the background so they're ready for the transcript.
+        crate::project::begin(
+            &main_thread_app,
+            info.as_ref().map(|i| i.bundle_id.clone()),
+            crate::app_detect::frontmost_pid(),
+        );
         *state.active_app.lock().unwrap() = info;
 
         // `show()` only, not `set_focus()` — stealing keyboard focus made
@@ -268,6 +275,7 @@ fn transcribe_and_paste(
                     paste_guard: None,
                     stopped_at: Some(stopped_at),
                     stt_ms,
+                    project: crate::project::current(),
                 },
             );
         }
@@ -295,6 +303,8 @@ pub(crate) struct TranscriptContext<'a> {
     pub stopped_at: Option<std::time::Instant>,
     /// How long Whisper (plus voice isolation) took.
     pub stt_ms: Option<u64>,
+    /// Names from the project being dictated into, if one was found.
+    pub project: Option<std::sync::Arc<crate::project::Project>>,
 }
 
 fn ms_or_dash(ms: Option<u64>) -> String {
@@ -321,10 +331,11 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
         features_used,
         spoken_words,
         llm_ms,
-    } = pipeline::format(
+    } = pipeline::format_in_project(
         text,
         cfg,
         settings,
+        ctx.project.as_deref(),
         &pipeline::OllamaRefiner {
             on_progress: &|percent| {
                 let _ = app.emit("refine-progress", percent);

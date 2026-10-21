@@ -301,5 +301,106 @@
     },
     "expect": "Ship the release tonight",
     "expect_llm_called": true
+  },
+  {
+    "name": "project names: terminal agent gets the identifier and an @path",
+    "input": "fix the paste text function in the paste file",
+    "mode": "cli",
+    "project": [
+      "id:paste_text",
+      "file:src-tauri/src/paste.rs",
+      "recent:id:process_transcript",
+      "file:src/lib/useAuthStore.ts",
+      "id:useAuthStore"
+    ],
+    "expect": "fix the paste_text function in the @src-tauri/src/paste.rs"
+  },
+  {
+    "name": "project names: editor gets the identifier and a bare path",
+    "input": "fix the paste text function in the paste file",
+    "mode": "plain",
+    "project": [
+      "id:paste_text",
+      "file:src-tauri/src/paste.rs",
+      "recent:id:process_transcript",
+      "file:src/lib/useAuthStore.ts",
+      "id:useAuthStore"
+    ],
+    "expect": "fix the paste_text function in the src-tauri/src/paste.rs"
+  },
+  {
+    "name": "project names: spoken dot rs and a long camel-case name",
+    "input": "Open paste dot rs and call use auth store.",
+    "mode": "cli",
+    "project": [
+      "id:paste_text",
+      "file:src-tauri/src/paste.rs",
+      "recent:id:process_transcript",
+      "file:src/lib/useAuthStore.ts",
+      "id:useAuthStore"
+    ],
+    "expect": "Open @src-tauri/src/paste.rs and call useAuthStore"
+  },
+  {
+    "name": "project names: casual messaging is left alone",
+    "input": "fix the paste text function in the paste file",
+    "mode": "casual",
+    "project": [
+      "id:paste_text",
+      "file:src-tauri/src/paste.rs",
+      "recent:id:process_transcript",
+      "file:src/lib/useAuthStore.ts",
+      "id:useAuthStore"
+    ],
+    "expect": "fix the paste text function in the paste file"
+  },
+  {
+    "name": "project names: ordinary prose near an identifier is not replaced",
+    "input": "just paste text into the box, then paste test function",
+    "mode": "cli",
+    "project": [
+      "id:paste_text",
+      "file:src-tauri/src/paste.rs",
+      "recent:id:process_transcript",
+      "file:src/lib/useAuthStore.ts",
+      "id:useAuthStore"
+    ],
+    "expect": "just paste text into the box, then paste test function"
+  },
+  {
+    "name": "project names: commit message is left as spoken",
+    "input": "git commit fix the paste file",
+    "mode": "cli",
+    "project": [
+      "id:paste_text",
+      "file:src-tauri/src/paste.rs",
+      "recent:id:process_transcript",
+      "file:src/lib/useAuthStore.ts",
+      "id:useAuthStore"
+    ],
+    "expect": "git commit -m \"fix the paste file\""
+  },
+  {
+    "name": "project names: LLM is given the project terms and keeps the substitution",
+    "input": "Um, fix the paste text function.",
+    "mode": "cli",
+    "project": [
+      "id:paste_text",
+      "file:src-tauri/src/paste.rs",
+      "recent:id:process_transcript",
+      "file:src/lib/useAuthStore.ts",
+      "id:useAuthStore"
+    ],
+    "always_refine": true,
+    "llm": {
+      "returns": "Fix the paste_text function."
+    },
+    "expect": "Fix the paste_text function.",
+    "expect_llm_called": true,
+    "expect_llm_terms": [
+      "paste_text",
+      "paste.rs",
+      "useAuthStore"
+    ]
   }
 ]

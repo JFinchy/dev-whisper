@@ -72,6 +72,23 @@ test.describe("settings", () => {
     await expect(toast).toContainText("disk full");
   });
 
+  test("project names can be turned off and show the detected project", async ({ page }) => {
+    await open(page, "settings", { projectStatus: { name: "dev-whisper", names: 1240 } });
+    await page.locator(".dw-sidebar").getByRole("button", { name: "Vocabulary", exact: true }).click();
+    const toggle = page.getByLabel("Use names from your project");
+    await expect(toggle).toBeChecked();
+    await expect(page.getByTestId("project-status")).toHaveText("Last project: dev-whisper · 1,240 names");
+    await toggle.uncheck();
+    await expect.poll(() => calls(page, "set_project_names_enabled")).toEqual([{ enabled: false }]);
+    await expect(page.getByTestId("project-status")).toHaveCount(0);
+  });
+
+  test("project names say so when no project has been found yet", async ({ page }) => {
+    await open(page, "settings");
+    await page.locator(".dw-sidebar").getByRole("button", { name: "Vocabulary", exact: true }).click();
+    await expect(page.getByTestId("project-status")).toContainText("No project yet");
+  });
+
   test("insights show the typical time to paste @csp", async ({ page, consoleErrors: _ }) => {
     await open(page, "settings");
     await page.locator(".dw-sidebar").getByRole("button", { name: "Insights", exact: true }).click();

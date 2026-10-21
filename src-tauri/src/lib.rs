@@ -19,8 +19,10 @@ mod logging;
 mod mic_usage;
 mod models;
 mod modes;
+mod names;
 mod paste;
 mod pipeline;
+mod project;
 mod punctuation;
 mod readiness;
 mod recording;
@@ -307,6 +309,9 @@ pub fn run() {
             get_last_frontmost_app,
             get_vocabulary,
             set_vocabulary,
+            project::get_project_names_enabled,
+            project::set_project_names_enabled,
+            project::get_project_status,
             get_copy_only,
             set_copy_only,
             get_isolated_voice_enabled,

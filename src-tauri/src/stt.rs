@@ -65,6 +65,9 @@ pub struct WhisperEngine {
     /// (e.g. re-warming) resolve a path without the caller re-supplying it.
     model_paths: Mutex<HashMap<String, PathBuf>>,
     vocabulary: Mutex<Vec<String>>,
+    /// Names from the project being dictated into (see `project.rs`),
+    /// ranked best first; empty when there is none.
+    project_terms: Mutex<Vec<String>>,
     contexts: Mutex<HashMap<String, LoadedModel>>,
     /// Learned speed per model: milliseconds of compute per second of
     /// audio, on this Mac. Drives the transcription progress estimate.
@@ -109,6 +112,7 @@ impl WhisperEngine {
             default_model_id: Mutex::new(default_model_id),
             model_paths: Mutex::new(model_paths),
             vocabulary: Mutex::new(default_vocabulary()),
+            project_terms: Mutex::new(Vec::new()),
             contexts: Mutex::new(HashMap::new()),
             speed_ms_per_audio_s: Mutex::new(HashMap::new()),
         }
@@ -120,6 +124,10 @@ impl WhisperEngine {
 
     pub fn set_vocabulary(&self, terms: Vec<String>) {
         *self.vocabulary.lock().unwrap() = terms;
+    }
+
+    pub fn set_project_terms(&self, terms: Vec<String>) {
+        *self.project_terms.lock().unwrap() = terms;
     }
 
     /// Switches the global default model (used whenever a recording has no
@@ -237,7 +245,10 @@ impl WhisperEngine {
             return Err("no audio samples to transcribe".to_string());
         }
 
-        let vocab_prompt = self.vocabulary.lock().unwrap().join(", ");
+        let vocab_prompt = crate::names::whisper_prompt(
+            &self.project_terms.lock().unwrap(),
+            &self.vocabulary.lock().unwrap(),
+        );
 
         let contexts = self.contexts.lock().unwrap();
         let ctx = &contexts.get(&model_id).unwrap().context;

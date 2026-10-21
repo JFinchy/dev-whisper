@@ -25,6 +25,22 @@ built yet.
 - **Developer vocabulary seeding** — an editable list of dev-jargon terms
   (`kubectl`, `camelCase`, framework names, etc.) fed into Whisper's
   `initial_prompt` to bias recognition toward developer speech.
+- **Names from your project** — when the frontmost app is a terminal or an
+  editor (VS Code, Cursor, Zed, JetBrains, Sublime), Dev Whisper finds the
+  repo you're in (a terminal's shell working directory, or the editor's
+  window title / open folder) and reads its names from `git ls-files`,
+  recent changes and commits, the branch, `package.json` / `Cargo.toml`
+  dependencies and declarations in source files. Everything stays in
+  memory, refreshes in the background and never delays a dictation; logs
+  carry counts only. The top ~40 names go into Whisper's prompt (before
+  your own vocabulary, which keeps priority) and to the LLM. After
+  transcription, spoken names in the text become the real ones: "the paste
+  text function in the paste file" gives `paste_text` and
+  `@src-tauri/src/paste.rs` (a bare path outside terminal agents). Exact
+  matches first, then one slip in a long name; ambiguous names (two
+  `mod.rs`) and ordinary prose are left as spoken. Off for Casual modes
+  and literal shell commands. Settings, Vocabulary has the toggle and the
+  detected project.
 - **Deliver as paste or copy-only** — the transcript is copied to the
   clipboard and a simulated Cmd+V pastes it at the active cursor by
   default; a "copy only" toggle skips the simulated keystroke entirely

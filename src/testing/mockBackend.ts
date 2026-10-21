@@ -22,6 +22,8 @@ export type Scenario = {
   widgetMode?: "minimal" | "compact" | "detailed";
   layout?: "sidebar" | "chain";
   insights?: Json;
+  /// The project Settings reports as last detected.
+  projectStatus?: { name: string; names: number } | null;
 };
 
 declare global {
@@ -66,6 +68,8 @@ function initialState(scenario: Scenario) {
     llmOnlyWhenNeeded: true,
     nextModeOverride: null as string | null,
     vocabulary: ["kubectl", "JSON", "macOS", "Tauri"],
+    projectNames: true,
+    projectStatus: scenario.projectStatus ?? null,
     snippets: [{ trigger: "pr checklist", body: "- [ ] Tests pass locally\n- [ ] Self-reviewed the diff" }],
     modes: [
       { name: "Default", behavior: "plain", apps: [], stt_model: null, llm_refinement: "off", custom_instructions: null, is_default: true },
@@ -172,6 +176,9 @@ export function installMockBackend() {
     send_test_webhook: () => null,
     get_vocabulary: () => state.vocabulary,
     set_vocabulary: setter("vocabulary", "terms"),
+    get_project_names_enabled: () => state.projectNames,
+    set_project_names_enabled: setter("projectNames", "enabled"),
+    get_project_status: () => state.projectStatus,
     get_snippets: () => state.snippets,
     set_snippets: setter("snippets", "snippets"),
     get_modes: () => state.modes,
