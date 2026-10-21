@@ -7,7 +7,59 @@ prose in Slack, commands and `@file` tags in a terminal coding agent,
 Metal) and optional cleanup (Ollama) both run on your Mac; nothing is sent
 anywhere.
 
-- What it does today: [`FEATURES.md`](FEATURES.md)
+## What it does
+
+**Dictation that fits where you're typing**
+- Press your hotkey (⇧⌘Space by default, or double-tap Fn), talk,
+  press it again. The text pastes at your
+  cursor, or just copies if you prefer.
+- Knows which app you're in: sentences in Slack and email; `@file` tags
+  and line breaks in Claude Code, Cursor and your terminal.
+- Live progress while it works: amber while transcribing, violet while
+  the LLM tidies up. Click the violet bar, or press the hotkey with
+  Shift added (Option if it already uses Shift), to paste without the
+  LLM step.
+
+**Speaks developer**
+- A vocabulary list, preloaded with dev terms you can edit, so `kubectl`,
+  `JSON` and `Hammerspoon` come out right. Your list is also passed to the
+  LLM so it doesn't "fix" them.
+- Say "snake case error response handler" → `error_response_handler`.
+  Camel, Pascal, kebab and screaming case work too.
+- "Generate boilerplate for a React component named User Profile" writes
+  the code.
+- Backtrack: "let's meet at two, actually three" → "let's meet at
+  three."
+- Spoken lists, punctuation ("period", "new line"), "press enter" to
+  submit (turn it on in Settings), and "append clipboard" to paste a log or URL after your words.
+- Snippets: a short spoken cue expands into a saved block of text.
+
+**Local and private**
+- Speech recognition runs on your Mac (whisper.cpp on Metal). LLM cleanup
+  is optional and runs in Ollama, also on your Mac.
+- Nothing about your speech or text is sent anywhere. The only network
+  traffic is update checks and model downloads.
+- The LLM only runs when the transcript needs it, so short, clean
+  dictations skip it.
+
+**Hands-free, if you want it**
+- Always-on listening: say "Dev Whisper, …" and only your enrolled voice
+  triggers it. It pauses automatically during calls.
+- Isolated Voice filters out other people talking near you.
+
+**Built for automation**
+- Start and stop recording from scripts or other tools with
+  `open devwhisper://start-recording` (and `stop-` and `toggle-`).
+- A webhook can receive each finished transcript.
+- Searchable History lets you re-run any past dictation through a
+  different mode.
+- Insights show your speaking speed, streaks and per-app usage.
+
+The full, detailed list is in [`FEATURES.md`](FEATURES.md).
+
+## More docs
+
+- Everything that's built: [`FEATURES.md`](FEATURES.md)
 - Where it's going: [`ROADMAP.md`](ROADMAP.md), [`BACKLOG.md`](BACKLOG.md),
   [`PRODUCT_SPEC.md`](PRODUCT_SPEC.md)
 - How it's tested: [`TESTING.md`](TESTING.md)

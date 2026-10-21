@@ -49,30 +49,44 @@ Still open, in order:
 3. Opt-out for deep links starting a recording
 4. Microphone permission in the setup checklist
 
-## Now — from competitive research (SuperWhisper 2026-08-16, broader landscape 2026-08-17)
+## Now — the voice interface for coding agents (agreed 2026-10-20)
 
-Ranked by leverage; see `BACKLOG.md` for the full research writeups. #2
-and #3 bumped up on 2026-08-17 based on explicit user interest, not just
-research-leverage ranking — both now have a full implementation design in
-`BACKLOG.md`, not just a one-line idea.
+Positioning: Dev Whisper is the voice interface for coding agents. It
+knows your codebase and runs on your Mac. Fast, accurate dictation is
+table stakes across the market; talking to agents with real file and
+symbol names, locally, is what nobody else does. Everything stays in-app
+for now (no repo-committed config yet, see `.devwhisper.json` in
+`BACKLOG.md`).
 
-1. **Direct coding-agent integration** (Claude Code/Cursor/etc. plugins,
-   a coding-agent panel, hook support) — the developer-specific angle
-   SuperWhisper itself is now leaning into; local/private is our edge
-   over their approach.
-2. **Snippet library** — a spoken cue expands to a saved block of text
-   (a PR checklist, a calendar link, standard onboarding instructions),
-   distinct from the vocabulary editor (which is about recognition
-   accuracy, not insertion). Seen on Wispr Flow. Detected the same way
-   as the shipped Syntax & Casing Commands / Boilerplate Generation —
-   pure, fast, no LLM needed to look up a saved trigger phrase.
-3. **Selected-text/on-screen context feeding LLM refinement** — extends
-   shipped app-aware refinement and boilerplate generation with real code
-   context, not just app identity. VoiceInk already ships this (via
-   SelectedTextKit) — validated as achievable, not speculative.
-4. **Realtime streaming transcript display** — partial results shown
-   while still speaking, not just after release. Real UX upgrade to the
-   shipped push-to-talk loop.
+Being built in parallel worktrees (2026-10-20), each landing with a
+manual-testing-inbox file:
+
+1. **Codebase-aware vocabulary** — detect the project behind the
+   frontmost terminal/editor, collect its file, symbol, dependency and
+   branch names, and match spoken forms after transcription ("paste text
+   in the paste file" -> `paste_text`, `@src-tauri/src/paste.rs`).
+2. **Transcribe while you talk** — VAD-chunked transcription during
+   recording, long silences skipped, only the tail left at stop; live
+   text in the widget.
+3. **History keeps the original + learns from corrections** — refined
+   entries keep the pre-refinement text; repeated fixes become suggested
+   vocabulary and replacement rules.
+4. **Agent voice commands** — "send it", "attach the error" (latest stack
+   trace as a code block), "scratch that" (safely undo the last paste).
+5. **Reply to a waiting agent** — Claude Code hooks tell Dev Whisper when
+   an agent is waiting; a reply hotkey sends your dictation to that
+   agent's window and returns focus.
+
+Also now: a download-and-features website (GitHub Pages, `site/`), and the
+production items above (notarization above all).
+
+Next after these: snippets polish, selected-text context for refinement,
+"look at this" screenshots, structured prompts, voice tune-up (all in
+`BACKLOG.md`).
+
+Frozen until manually verified: always-on listening and Isolated Voice
+(see `manual-testing-inbox/`). Deprioritized: full Command Mode, the
+Local Config Agent, vocabulary coaching, the iOS keyboard.
 
 ## In testing
 

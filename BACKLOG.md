@@ -622,6 +622,58 @@ build phases.
     doesn't meaningfully separate on hard audio too, the size+speed
     cost isn't worth carrying as a second inference backend.
 
+- **Per-repo settings file (`.devwhisper.json`)** (idea captured
+  2026-10-20, from the product-strategy pass; user: backlog it, don't
+  build yet). A file committed to a repo holding team vocabulary, spoken
+  aliases and snippets, picked up automatically whenever Dev Whisper
+  detects you're working in that repo (rides on codebase-aware
+  vocabulary's project detection). Layering: automatic codebase names,
+  then the repo file, then your personal settings win.
+  - Why it matters beyond convenience: it's the one growth loop available
+    to a local, free app. Every repo carrying the file advertises Dev
+    Whisper to everyone who clones it.
+  - Open questions: schema versioning, whether repo-provided snippets need
+    a trust prompt before they can expand (a cloned repo shouldn't be able
+    to inject text silently), and how to show which settings came from the
+    repo.
+  - Deliberately deferred: everything stays in-app for now.
+
+- **"Look at this": screenshot attach** (idea captured 2026-10-20). Saying
+  "look at this" grabs the frontmost window, or a dragged region, onto the
+  clipboard alongside the dictated text so a coding agent (Claude Code,
+  Cursor) gets the image with the prompt. Needs Screen Recording
+  permission, so it should be opt-in and appear in the setup checklist
+  only once enabled.
+
+- **Structured prompts from long rambles** (idea captured 2026-10-20).
+  One-shot, not the multi-turn Prompt-building mode below: dictations
+  over ~80 words in a coding-agent context get a light structure (Goal,
+  Context, Constraints, Done when), keeping every requirement and adding
+  nothing. Toggle per mode. Needs a golden-case set that checks no
+  requirement is dropped.
+
+- **Pinned paste target** (idea captured 2026-10-20). Lock where dictation
+  lands, then read docs or browse in another window while talking; the
+  paste goes to the pinned window and focus returns. Shares the
+  focus-hop machinery with the reply-to-waiting-agent feature.
+
+- **"Sounds like" hints in the vocabulary** (idea captured 2026-10-20).
+  A vocabulary entry can carry how you say it ("kube cuddle" ->
+  `kubectl`, "post gress" -> `Postgres`), applied as a deterministic
+  replacement after transcription. Overlaps with learned corrections;
+  build on whatever replacement mechanism that ships.
+
+- **Voice tune-up during setup** (idea captured 2026-10-20). Read 8 short
+  jargon-heavy sentences; the app measures accuracy (WER) and speed for
+  each downloaded model on your voice and mic and recommends one. Also
+  feeds measured speeds into the model pickers.
+
+- **"Proof it's local" panel** (idea captured 2026-10-20). A live count of
+  outbound network bytes (normally zero, apart from update checks and
+  model downloads, which are labelled), plus an optional offline lock that
+  blocks everything except localhost Ollama. Turns the privacy claim into
+  something users can check.
+
 ## Research / Exploration
 
 - **Competitive landscape: dictation/Whisper tools beyond SuperWhisper**
