@@ -321,6 +321,7 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
         features_used,
         spoken_words,
         llm_ms,
+        unrefined,
     } = pipeline::format(
         text,
         cfg,
@@ -342,16 +343,19 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
     // snippet body would be. A trigger with nothing on the
     // clipboard (or a non-text clipboard) leaves `formatted`
     // unchanged rather than pasting a Rust error string.
-    let formatted = if should_append_clipboard {
+    let (formatted, unrefined) = if should_append_clipboard {
         match crate::clipboard::read_clipboard_text() {
-            Some(clip) => crate::clipboard::append(&formatted, &clip),
+            Some(clip) => (
+                crate::clipboard::append(&formatted, &clip),
+                unrefined.map(|u| crate::clipboard::append(&u, &clip)),
+            ),
             None => {
                 crate::applog!("clipboard: append triggered but clipboard was empty or unreadable");
-                formatted
+                (formatted, unrefined)
             }
         }
     } else {
-        formatted
+        (formatted, unrefined)
     };
 
     // A fully-consumed "press enter"-only utterance formats down
@@ -422,6 +426,7 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
                         features_used,
                         spoken_words,
                         latency_ms,
+                        original_text: unrefined,
                     },
                 ))
             } else {

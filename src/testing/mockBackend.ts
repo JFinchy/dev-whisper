@@ -22,6 +22,8 @@ export type Scenario = {
   widgetMode?: "minimal" | "compact" | "detailed";
   layout?: "sidebar" | "chain";
   insights?: Json;
+  /// Correction suggestions Settings > Vocabulary shows (already past the threshold).
+  corrections?: { from: string; to: string; source: "edit" | "original"; count: number }[];
 };
 
 declare global {
@@ -79,8 +81,11 @@ function initialState(scenario: Scenario) {
     ],
     history: [
       { timestamp_ms: Date.now() - 60_000, text: "Look at @recording.rs and fix the crash", app_name: "Terminal", mode: "Cli", summary: null },
-      { timestamp_ms: Date.now() - 3_600_000, text: "Let's meet at three.", app_name: "Slack", mode: "Casual", summary: null },
-    ],
+      { timestamp_ms: Date.now() - 3_600_000, text: "Let's meet at three.", app_name: "Slack", mode: "Casual", summary: null, original_text: "um let's meet at three" },
+    ] as { timestamp_ms: number; text: string; app_name: string; mode: string; summary: string | null; original_text?: string }[],
+    learnCorrections: true,
+    corrections: scenario.corrections ?? [],
+    replacements: [] as { from: string; to: string }[],
     logs: [{ timestamp_ms: Date.now(), message: "lifecycle: started version=0.1.2 (mock backend)" }],
     insights: scenario.insights ?? {
       total_dictations: 42,
@@ -213,7 +218,35 @@ export function installMockBackend() {
     search_history_entries: (args) =>
       state.history.filter((h) => h.text.toLowerCase().includes(String(args.query).toLowerCase())),
     reprocess_history_text: (args) => String(args.text),
-    update_history_entry_text: () => null,
+    update_history_entry_text: (args) => {
+      state.history = state.history.map((h) => (h.timestamp_ms === args.timestampMs ? { ...h, text: String(args.text) } : h));
+      return null;
+    },
+    use_original_history_text: (args) => {
+      state.history = state.history.map((h) => {
+        if (h.timestamp_ms !== args.timestampMs || !h.original_text) return h;
+        const { original_text, ...rest } = h;
+        return { ...rest, text: original_text };
+      });
+      return null;
+    },
+    // learning from corrections
+    get_learn_corrections: () => state.learnCorrections,
+    set_learn_corrections: setter("learnCorrections", "enabled"),
+    get_correction_suggestions: () => state.corrections,
+    accept_correction_suggestion: (args) => {
+      const hit = state.corrections.find((c) => c.from === args.from && c.to === args.to);
+      state.corrections = state.corrections.filter((c) => c !== hit);
+      if (!state.vocabulary.includes(String(args.to))) state.vocabulary = [...state.vocabulary, String(args.to)];
+      if (hit?.source === "edit") state.replacements = [...state.replacements, { from: String(args.from), to: String(args.to) }];
+      return null;
+    },
+    dismiss_correction_suggestion: (args) => {
+      state.corrections = state.corrections.filter((c) => !(c.from === args.from && c.to === args.to));
+      return null;
+    },
+    get_replacements: () => state.replacements,
+    set_replacements: setter("replacements", "replacements"),
     delete_history_entry: (args) => {
       state.history = state.history.filter((h) => h.timestamp_ms !== args.timestampMs);
       return null;

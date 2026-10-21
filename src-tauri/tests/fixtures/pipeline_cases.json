@@ -301,5 +301,45 @@
     },
     "expect": "Ship the release tonight",
     "expect_llm_called": true
+  },
+  {
+    "name": "learned replacement fixes a mis-hearing before formatting",
+    "input": "use post gress here",
+    "mode": "plain",
+    "replacements": [["post gress", "Postgres"]],
+    "expect": "use Postgres here"
+  },
+  {
+    "name": "learned replacement keeps a sentence-start capital and skips partial words",
+    "input": "Post gress first, postgresql second",
+    "mode": "plain",
+    "replacements": [["post gress", "Postgres"]],
+    "expect": "Postgres first, postgresql second"
+  },
+  {
+    "name": "unrefined text is kept when the LLM changes it",
+    "input": "um ship it",
+    "mode": "cli",
+    "always_refine": true,
+    "llm": { "returns": "Ship it" },
+    "expect": "Ship it",
+    "expect_unrefined": "um ship it"
+  },
+  {
+    "name": "no unrefined text when the LLM returns the text unchanged",
+    "input": "ship it",
+    "mode": "cli",
+    "always_refine": true,
+    "llm": { "returns": "ship it" },
+    "expect": "ship it",
+    "expect_refined": false
+  },
+  {
+    "name": "no unrefined text when the LLM does not run",
+    "input": "ship it",
+    "mode": "plain",
+    "expect": "ship it",
+    "expect_refined": false,
+    "expect_llm_called": false
   }
 ]

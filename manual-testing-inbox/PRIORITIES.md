@@ -21,6 +21,7 @@ place with a one-line note.
 - [ ] Snippet library - see `snippets.md`
 - [ ] Backtrack self-correction - see `backtrack.md`
 - [ ] History search + reprocessing - see `history-search-reprocess.md`
+- [ ] History keeps the original + learning from corrections - see `history-original-and-corrections.md`
 - [ ] Output webhook - see `output-webhook.md`
 
 ## Minor

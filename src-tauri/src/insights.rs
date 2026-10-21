@@ -395,6 +395,7 @@ mod tests {
             features_used: Vec::new(),
             spoken_words: None,
             latency_ms: None,
+            original_text: None,
         }
     }
 

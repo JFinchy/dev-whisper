@@ -6,6 +6,7 @@ mod boilerplate;
 mod capture;
 mod clipboard;
 mod config;
+mod corrections;
 mod doubletap;
 #[cfg(test)]
 mod e2e_audio;
@@ -45,11 +46,16 @@ use tauri_plugin_global_shortcut::ShortcutState as PressState;
 use tauri_plugin_updater::UpdaterExt;
 
 use audio::AudioHandle;
+use corrections::{
+    accept_correction_suggestion, dismiss_correction_suggestion, get_correction_suggestions,
+    get_learn_corrections, get_replacements, set_learn_corrections, set_replacements,
+};
 use doubletap::{get_double_tap_enabled, set_double_tap_enabled, DoubleTapState};
 use history::{
     clear_history, delete_history_entry, get_history_retention_days, get_journal_enabled,
     list_history_entries, reprocess_history_text, search_history_entries,
     set_history_retention_days, set_journal_enabled, update_history_entry_text,
+    use_original_history_text,
 };
 use insights::get_insights;
 use llm::{get_llm_model, list_llm_catalog, list_ollama_models, pull_llm_model, set_llm_model};
@@ -326,6 +332,14 @@ pub fn run() {
             search_history_entries,
             reprocess_history_text,
             update_history_entry_text,
+            use_original_history_text,
+            get_learn_corrections,
+            set_learn_corrections,
+            get_correction_suggestions,
+            accept_correction_suggestion,
+            dismiss_correction_suggestion,
+            get_replacements,
+            set_replacements,
             clear_history,
             delete_history_entry,
             get_history_retention_days,

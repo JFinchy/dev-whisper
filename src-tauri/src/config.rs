@@ -142,6 +142,15 @@ pub struct AppConfig {
     /// — see `theme::Layout`. Defaults to Sidebar.
     #[serde(default)]
     pub layout: crate::theme::Layout,
+    /// Learn recurring word-level fixes from History edits (see
+    /// `corrections.rs`) and suggest them as vocabulary. On by default; the
+    /// store only keeps the changed words, locally.
+    #[serde(default = "default_true")]
+    pub learn_corrections: bool,
+    /// Whole-word rewrites applied to every transcript before formatting,
+    /// added by accepting a correction suggestion.
+    #[serde(default)]
+    pub replacements: Vec<crate::corrections::Replacement>,
 }
 
 fn default_true() -> bool {
@@ -177,6 +186,8 @@ impl Default for AppConfig {
             snippets: crate::snippets::default_snippets(),
             double_tap_fn_enabled: false,
             layout: crate::theme::Layout::default(),
+            learn_corrections: true,
+            replacements: Vec::new(),
         }
     }
 }
