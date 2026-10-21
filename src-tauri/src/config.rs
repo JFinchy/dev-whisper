@@ -142,6 +142,10 @@ pub struct AppConfig {
     /// — see `theme::Layout`. Defaults to Sidebar.
     #[serde(default)]
     pub layout: crate::theme::Layout,
+    /// Use names from the project open in the frontmost terminal or editor
+    /// (see `project.rs`, `names.rs`). On by default; nothing leaves the Mac.
+    #[serde(default = "default_true")]
+    pub project_names_enabled: bool,
 }
 
 fn default_true() -> bool {
@@ -177,6 +181,7 @@ impl Default for AppConfig {
             snippets: crate::snippets::default_snippets(),
             double_tap_fn_enabled: false,
             layout: crate::theme::Layout::default(),
+            project_names_enabled: true,
         }
     }
 }

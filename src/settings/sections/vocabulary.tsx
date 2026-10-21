@@ -37,6 +37,59 @@ export function VocabularyBooksSection({ terms, onAdopt }: { terms: string[]; on
   );
 }
 
+type ProjectStatus = { name: string; names: number } | null;
+
+// Names from the repo open in the frontmost terminal or editor. Found and
+// read on this Mac when you start dictating; kept in memory only.
+function ProjectNamesToggle() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [status, setStatus] = useState<ProjectStatus>(null);
+
+  useEffect(() => {
+    invoke<boolean>("get_project_names_enabled")
+      .then(setEnabled)
+      .catch((err) => notifyError("get_project_names_enabled", err));
+    invoke<ProjectStatus>("get_project_status")
+      .then(setStatus)
+      .catch((err) => notifyError("get_project_status", err));
+  }, []);
+
+  function toggle(next: boolean) {
+    setEnabled(next);
+    invoke("set_project_names_enabled", { enabled: next }).catch((err) => {
+      setEnabled(!next);
+      notifyError("set_project_names_enabled", err);
+    });
+  }
+
+  if (enabled === null) return null;
+  return (
+    <div className="mb-4 border-b border-base-content/10 pb-3">
+      <label className="flex items-center gap-1.5 text-xs">
+        <input
+          type="checkbox"
+          className="checkbox checkbox-xs"
+          checked={enabled}
+          onChange={(e) => toggle(e.target.checked)}
+        />
+        Use names from your project
+      </label>
+      <p className="mt-1 text-xs opacity-60">
+        In a terminal or editor, Dev Whisper reads the file, function and package names of the project you're in, so
+        "the paste text function in the paste file" comes out as <code>paste_text</code> and{" "}
+        <code>@src-tauri/src/paste.rs</code>. It all stays on this Mac, in memory only.
+      </p>
+      {enabled && (
+        <p className="mt-1 text-xs opacity-60" data-testid="project-status">
+          {status
+            ? `Last project: ${status.name} · ${status.names.toLocaleString("en-US")} names`
+            : "No project yet. It's picked up the next time you dictate in a terminal or editor inside a project."}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function VocabularySection() {
   const [terms, setTerms] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
@@ -75,6 +128,7 @@ export function VocabularySection() {
 
   return (
     <>
+      <ProjectNamesToggle />
       {loading ? null : <VocabularyBooksSection terms={terms} onAdopt={adoptBook} />}
       <div className="mb-4 border-t border-base-content/10 pt-3">
         <label className="mb-1 block text-xs font-medium opacity-70">Vocabulary</label>

@@ -136,6 +136,14 @@ pub fn frontmost_app_blocking(app: &tauri::AppHandle) -> Option<(String, String)
         .flatten()
 }
 
+/// Process id of the frontmost application. Main thread only, like
+/// `frontmost_app_info`.
+pub fn frontmost_pid() -> Option<i32> {
+    NSWorkspace::sharedWorkspace()
+        .frontmostApplication()
+        .map(|a| a.processIdentifier())
+}
+
 pub fn frontmost_bundle_id_blocking(app: &tauri::AppHandle) -> Option<String> {
     frontmost_app_blocking(app).map(|(bundle_id, _)| bundle_id)
 }

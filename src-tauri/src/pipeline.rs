@@ -126,10 +126,26 @@ pub struct Formatted {
 /// commands, snippets, casing, boilerplate, mode formatting and LLM
 /// refinement. `on_refining` fires right before an LLM call, with the
 /// model's name, so the widget can switch to "Refining…".
+#[cfg(test)]
 pub fn format(
     text: String,
     cfg: &AppConfig,
     settings: &ResolvedSettings,
+    refiner: &dyn Refiner,
+    on_refining: &mut dyn FnMut(&str),
+) -> Formatted {
+    format_in_project(text, cfg, settings, None, refiner, on_refining)
+}
+
+/// [`format`] with the names from the project being dictated into (see
+/// `project.rs`): spoken names in the transcript become the real
+/// identifiers and file paths before mode formatting, and the project's top
+/// names go to the LLM so refinement doesn't "correct" them.
+pub fn format_in_project(
+    text: String,
+    cfg: &AppConfig,
+    settings: &ResolvedSettings,
+    project: Option<&crate::project::Project>,
     refiner: &dyn Refiner,
     on_refining: &mut dyn FnMut(&str),
 ) -> Formatted {
@@ -247,7 +263,25 @@ pub fn format(
             }
         }
     } else {
-        let formatted = crate::modes::apply_mode(settings.mode, &text);
+        // Names from the project (code and file names), for terminals and
+        // editors only: not Casual messaging, and not the literal shell
+        // directives, whose arguments are already final.
+        let project = project.filter(|_| {
+            settings.mode != crate::modes::Behavior::Casual
+                && !(settings.mode == crate::modes::Behavior::Cli
+                    && crate::modes::is_literal_cli_directive(&text))
+        });
+        let named = project.map(|p| {
+            p.index
+                .apply(&text, settings.mode == crate::modes::Behavior::Cli)
+        });
+        let formatted = match named {
+            Some((named, n)) if n > 0 => {
+                crate::applog!("project: replaced {n} spoken names");
+                crate::modes::apply_mode(settings.mode, &named)
+            }
+            _ => crate::modes::apply_mode(settings.mode, &text),
+        };
         crate::applog!("modes: transcript={text:?} formatted={formatted:?}");
 
         let llm_model = match &settings.llm_refinement {
@@ -298,12 +332,17 @@ pub fn format(
         let formatted = if let Some(model) = llm_model {
             on_refining(model);
             let refine_started = Instant::now();
+            // The user's own terms first, then the project's top names.
+            let mut vocabulary = cfg.vocabulary.clone();
+            if let Some(project) = project {
+                vocabulary.extend(project.terms.iter().cloned());
+            }
             let result = refiner.refine(
                 settings.mode,
                 &formatted,
                 model,
                 settings.custom_instructions.as_deref(),
-                &cfg.vocabulary,
+                &vocabulary,
             );
             llm_ms = Some(refine_started.elapsed().as_millis() as u64);
             match result {
@@ -373,6 +412,50 @@ mod golden {
         expect_press_enter: Option<bool>,
         expect_append_clipboard: Option<bool>,
         expect_llm_called: Option<bool>,
+        /// Names in the dictated-into project, as `"file:src/paste.rs"` /
+        /// `"id:paste_text"` / `"dep:serde"`; tags a name `"recent:"` to
+        /// rank it as touched in the last commits.
+        #[serde(default)]
+        project: Vec<String>,
+        /// Terms the LLM must be given (user vocabulary plus these).
+        expect_llm_terms: Option<Vec<String>>,
+    }
+
+    fn fake_project(names: &[String]) -> Option<crate::project::Project> {
+        use crate::names::{Kind, NameEntry, NameIndex, SCORE_RECENT_COMMIT, SCORE_TRACKED};
+        if names.is_empty() {
+            return None;
+        }
+        let entries: Vec<NameEntry> = names
+            .iter()
+            .map(|n| {
+                let (recent, n) = n
+                    .strip_prefix("recent:")
+                    .map_or((false, n.as_str()), |r| (true, r));
+                let (kind, text) = match n.split_once(':') {
+                    Some(("file", t)) => (Kind::File, t),
+                    Some(("dep", t)) => (Kind::Dependency, t),
+                    Some(("id", t)) => (Kind::Identifier, t),
+                    _ => panic!("bad project name {n:?}"),
+                };
+                NameEntry {
+                    text: text.to_string(),
+                    kind,
+                    score: if recent {
+                        SCORE_RECENT_COMMIT
+                    } else {
+                        SCORE_TRACKED
+                    },
+                }
+            })
+            .collect();
+        let index = NameIndex::new(entries);
+        let terms = index.top_terms(40);
+        Some(crate::project::Project {
+            name: "fake".into(),
+            index,
+            terms,
+        })
     }
 
     #[derive(serde::Deserialize, Clone)]
@@ -385,6 +468,7 @@ mod golden {
     struct FakeRefiner {
         script: Option<ScriptedLlm>,
         calls: Cell<u32>,
+        vocabulary: std::cell::RefCell<Vec<String>>,
     }
 
     impl FakeRefiner {
@@ -405,8 +489,9 @@ mod golden {
             _: &str,
             _: &str,
             _: Option<&str>,
-            _: &[String],
+            vocabulary: &[String],
         ) -> Result<String, String> {
+            *self.vocabulary.borrow_mut() = vocabulary.to_vec();
             self.answer()
         }
         fn boilerplate(&self, _: &str, _: &str) -> Result<String, String> {
@@ -449,11 +534,18 @@ mod golden {
             let refiner = FakeRefiner {
                 script: case.llm.clone(),
                 calls: Cell::new(0),
+                vocabulary: Default::default(),
             };
             let mut refining_events = 0;
-            let out = format(case.input.clone(), &cfg, &settings, &refiner, &mut |_| {
-                refining_events += 1
-            });
+            let project = fake_project(&case.project);
+            let out = format_in_project(
+                case.input.clone(),
+                &cfg,
+                &settings,
+                project.as_ref(),
+                &refiner,
+                &mut |_| refining_events += 1,
+            );
 
             let mut problems = Vec::new();
             if let Some(expect) = &case.expect {
@@ -490,6 +582,14 @@ mod golden {
                         "LLM called {} times, expected called={called}",
                         refiner.calls.get()
                     ));
+                }
+            }
+            if let Some(terms) = &case.expect_llm_terms {
+                let given = refiner.vocabulary.borrow();
+                for term in terms {
+                    if !given.contains(term) {
+                        problems.push(format!("LLM wasn't given {term:?}"));
+                    }
                 }
             }
             if refining_events != refiner.calls.get() {
@@ -552,6 +652,7 @@ mod golden {
         let refiner = FakeRefiner {
             script: Some(ScriptedLlm::Returns("Ship it.".into())),
             calls: Cell::new(0),
+            vocabulary: Default::default(),
         };
         assert_eq!(
             format("ship it".into(), &cfg, &settings, &refiner, &mut |_| {}).llm_ms,

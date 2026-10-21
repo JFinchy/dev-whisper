@@ -18,6 +18,7 @@ place with a one-line note.
 - [ ] Dictation accuracy fixes (casing, lists, backtrack, capitalization) - see `dictation-accuracy.md`
 - [ ] Mic visibility, quick switching, "no sound" warnings - see `mic-visibility-and-silence.md`
 - [ ] Isolated Voice + voice enrollment (required before always-on) - see `isolated-voice.md`
+- [ ] Names from your project (terminal/editor repo names in dictation) - see `project-names.md`
 - [ ] Snippet library - see `snippets.md`
 - [ ] Backtrack self-correction - see `backtrack.md`
 - [ ] History search + reprocessing - see `history-search-reprocess.md`
