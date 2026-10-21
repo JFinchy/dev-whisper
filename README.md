@@ -7,6 +7,8 @@ prose in Slack, commands and `@file` tags in a terminal coding agent,
 Metal) and optional cleanup (Ollama) both run on your Mac; nothing is sent
 anywhere.
 
+Website: **[jfinchy.github.io/dev-whisper](https://jfinchy.github.io/dev-whisper/)**
+
 ## What it does
 
 **Dictation that fits where you're typing**
