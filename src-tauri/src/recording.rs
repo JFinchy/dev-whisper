@@ -40,6 +40,9 @@ pub struct RecordingState {
     /// shortcut): skip LLM refinement, or stop it if it's running. Reset
     /// when a new dictation starts.
     pub skip_refine: std::sync::atomic::AtomicBool,
+    /// Background chunk transcription for the recording in progress (see
+    /// `live.rs`); taken by the stop that ends it.
+    pub live: Mutex<Option<crate::live::LiveSession>>,
 }
 
 pub fn toggle_recording(app: &AppHandle, trigger: Trigger) {
@@ -62,12 +65,13 @@ pub fn request_dictation(app: &AppHandle, request: Request) {
 fn stop_dictation(app: &AppHandle, state: &RecordingState) {
     let stopped_at = std::time::Instant::now();
     crate::refresh_tray_indicator(app);
+    let live = state.live.lock().unwrap().take();
     match state.audio.stop() {
         Ok(path) => {
             let _ = app.emit("recording-stopped", path.to_string_lossy().to_string());
             let app = app.clone();
             std::thread::spawn(move || {
-                transcribe_and_paste(&app, &path, stopped_at);
+                transcribe_and_paste(&app, &path, stopped_at, live);
                 // Raw voice recordings shouldn't accumulate in /tmp; history
                 // keeps the transcript, not the audio.
                 if let Err(err) = std::fs::remove_file(&path) {
@@ -96,7 +100,11 @@ fn start_dictation(app: &AppHandle, state: &RecordingState, session: u64) {
     crate::refresh_tray_indicator(app);
     state.audio.start();
 
-    for model in crate::llm::models_in_use(&crate::config::load(app)) {
+    let cfg = crate::config::load(app);
+    *state.live.lock().unwrap() = cfg
+        .live_transcribe_enabled
+        .then(|| crate::live::LiveSession::start(app));
+    for model in crate::llm::models_in_use(&cfg) {
         crate::llm::prewarm(&model);
     }
 
@@ -156,50 +164,91 @@ fn start_dictation(app: &AppHandle, state: &RecordingState, session: u64) {
     let _ = app.emit("recording-started", ());
 }
 
-fn transcribe_and_paste(
-    app: &AppHandle,
-    wav_path: &std::path::Path,
-    stopped_at: std::time::Instant,
-) {
-    let state = app.state::<RecordingState>();
+/// The mode a dictation resolves to, and the speech model it implies.
+pub(crate) struct ResolvedMode {
+    pub cfg: crate::config::AppConfig,
+    pub settings: modes::ResolvedSettings,
+    pub app_name: Option<String>,
+    /// The mode's `stt_model` override (id + path), if it has one that's
+    /// installed.
+    pub model: Option<(String, std::path::PathBuf)>,
+}
 
+/// Mode (and its stt_model override, if any) has to be resolved *before*
+/// transcribing — which model to transcribe with depends on it. Casing-
+/// command detection still happens after, on the resulting text, since
+/// that's orthogonal to which model produced it. `consume_override` takes
+/// the one-shot next-dictation override; chunks transcribed mid-recording
+/// only peek at it, so the dictation's final resolution still sees it.
+pub(crate) fn resolve_mode(app: &AppHandle, consume_override: bool) -> ResolvedMode {
+    let state = app.state::<RecordingState>();
     let active_app = state.active_app.lock().unwrap().clone();
     let bundle_id = active_app.as_ref().map(|info| info.bundle_id.clone());
     let app_name = active_app.map(|info| info.name);
 
-    // Mode (and its stt_model override, if any) has to be resolved *before*
-    // transcribing now, not after — which model to transcribe with depends
-    // on it. Casing-command detection still happens after, on the
-    // resulting text, since that's orthogonal to which model produced it.
     let cfg = crate::config::load(app);
     let mut settings = modes::resolve_settings(bundle_id.as_deref(), &cfg.modes);
-    if let Some(override_name) = state.mode_override.lock().unwrap().take() {
+    let override_name = if consume_override {
+        state.mode_override.lock().unwrap().take()
+    } else {
+        state.mode_override.lock().unwrap().clone()
+    };
+    if let Some(override_name) = override_name {
         match modes::settings_for_name(&override_name, &cfg.modes) {
             Some(override_settings) => {
-                crate::applog!(
-                    "modes: next-dictation override {override_name:?} applied over resolved {:?}",
-                    settings.mode
-                );
+                if consume_override {
+                    crate::applog!(
+                        "modes: next-dictation override {override_name:?} applied over resolved {:?}",
+                        settings.mode
+                    );
+                }
                 settings = override_settings;
             }
             None => {
-                crate::applog!(
-                    "modes: next-dictation override {override_name:?} no longer exists, ignoring"
-                );
+                if consume_override {
+                    crate::applog!(
+                        "modes: next-dictation override {override_name:?} no longer exists, ignoring"
+                    );
+                }
             }
         }
     }
-    let model_override = settings
+    let model = settings
         .stt_model
         .as_ref()
         .and_then(|id| crate::models::resolve_model_path(app, id).map(|path| (id.clone(), path)));
-    crate::applog!(
-        "modes: bundle_id={bundle_id:?} modes={} resolved_mode={:?} stt_model_override={:?} (resolved={})",
-        cfg.modes.len(),
-        settings.mode,
-        settings.stt_model,
-        model_override.is_some(),
-    );
+    if consume_override {
+        crate::applog!(
+            "modes: bundle_id={bundle_id:?} modes={} resolved_mode={:?} stt_model_override={:?} (resolved={})",
+            cfg.modes.len(),
+            settings.mode,
+            settings.stt_model,
+            model.is_some(),
+        );
+    }
+    ResolvedMode {
+        cfg,
+        settings,
+        app_name,
+        model,
+    }
+}
+
+fn transcribe_and_paste(
+    app: &AppHandle,
+    wav_path: &std::path::Path,
+    stopped_at: std::time::Instant,
+    live: Option<crate::live::LiveSession>,
+) {
+    let state = app.state::<RecordingState>();
+
+    let ResolvedMode {
+        cfg,
+        settings,
+        app_name,
+        model: model_override,
+        ..
+    } = resolve_mode(app, true);
 
     // Read once, up front, from the wav header (not the decoded/resampled
     // samples above) — feeds the words-per-minute stat in Insights.
@@ -220,19 +269,23 @@ fn transcribe_and_paste(
             return;
         }
         Ok(samples) => {
-            let samples = crate::isolate::apply(app, samples);
-            let progress_app = app.clone();
-            let result = state.whisper.transcribe_samples_with_progress(
-                &samples,
-                model_override,
-                &move |percent| {
-                    let _ = progress_app.emit("transcribe-progress", percent);
-                },
-            );
-            if result.is_ok() {
-                let _ = app.emit("transcribe-progress", 100u8);
+            let outcome = live.and_then(|session| session.finish(samples.clone()));
+            match crate::live::plan_stop(samples.len(), outcome.as_ref()) {
+                crate::live::StopPlan::Chunked => {
+                    let outcome = outcome.expect("a chunked plan has an outcome");
+                    transcribe_tail(app, &state, outcome, model_override.clone(), stopped_at)
+                        .or_else(|reason| {
+                            crate::applog!("live: {reason}, transcribing the whole recording");
+                            transcribe_whole(app, &state, samples, model_override)
+                        })
+                }
+                crate::live::StopPlan::WholeBuffer(reason) => {
+                    if outcome.is_some() {
+                        crate::applog!("live: transcribing the whole recording ({reason})");
+                    }
+                    transcribe_whole(app, &state, samples, model_override)
+                }
             }
-            result
         }
         Err(err) => Err(err),
     };
@@ -278,6 +331,77 @@ fn transcribe_and_paste(
             let _ = app.emit("transcript-error", err);
         }
     }
+}
+
+/// The original path: Isolated Voice, then Whisper over the whole recording,
+/// with progress for the full length.
+fn transcribe_whole(
+    app: &AppHandle,
+    state: &RecordingState,
+    samples: Vec<f32>,
+    model_override: Option<(String, std::path::PathBuf)>,
+) -> Result<String, String> {
+    let samples = crate::isolate::apply(app, samples);
+    let progress_app = app.clone();
+    let result =
+        state
+            .whisper
+            .transcribe_samples_with_progress(&samples, model_override, &move |percent| {
+                let _ = progress_app.emit("transcribe-progress", percent);
+            });
+    if result.is_ok() {
+        let _ = app.emit("transcribe-progress", 100u8);
+    }
+    result
+}
+
+/// Finishes a dictation whose earlier chunks were transcribed while it was
+/// being spoken: only the speech after the last cut is left, and progress
+/// covers just that. `Err` carries why the caller should fall back to the
+/// whole recording.
+fn transcribe_tail(
+    app: &AppHandle,
+    state: &RecordingState,
+    outcome: crate::live::LiveOutcome,
+    model_override: Option<(String, std::path::PathBuf)>,
+    stopped_at: std::time::Instant,
+) -> Result<String, String> {
+    let tail_started = std::time::Instant::now();
+    let chunks = outcome.texts.len();
+    let mut parts = outcome.texts.clone();
+    if let Some(tail) = outcome.tail.as_ref() {
+        let tail_s = tail.len() as f32 / crate::stt::WHISPER_SAMPLE_RATE as f32;
+        let tail = crate::isolate::apply(app, tail.clone());
+        let progress_app = app.clone();
+        let text = state
+            .whisper
+            .transcribe_samples_in_context(
+                &tail,
+                model_override,
+                &crate::live::join_texts(&parts),
+                &move |percent| {
+                    let _ = progress_app.emit("transcribe-progress", percent);
+                },
+            )
+            .map_err(|err| format!("tail of {tail_s:.1}s failed ({err})"))?;
+        parts.push(crate::stt::strip_non_speech(&text));
+    }
+    let joined = crate::live::join_texts(&parts);
+    if joined.is_empty() {
+        return Err("chunks and tail were empty".to_string());
+    }
+    let _ = app.emit("transcribe-progress", 100u8);
+    crate::applog!(
+        "live: chunks={chunks} tail={} audio={:.1}s transcribed={:.1}s skipped_silence={:.1}s drain_ms={} tail_ms={} stop_to_text_ms={}",
+        outcome.tail.is_some(),
+        outcome.total_samples as f32 / crate::stt::WHISPER_SAMPLE_RATE as f32,
+        outcome.kept_samples as f32 / crate::stt::WHISPER_SAMPLE_RATE as f32,
+        outcome.skipped_seconds(),
+        outcome.drain_ms,
+        tail_started.elapsed().as_millis(),
+        stopped_at.elapsed().as_millis(),
+    );
+    Ok(joined)
 }
 
 /// Everything a transcript needs besides its text to be formatted and

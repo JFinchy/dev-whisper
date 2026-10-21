@@ -22,6 +22,7 @@ place with a one-line note.
 - [ ] Backtrack self-correction - see `backtrack.md`
 - [ ] History search + reprocessing - see `history-search-reprocess.md`
 - [ ] Output webhook - see `output-webhook.md`
+- [ ] Transcribe while you talk (chunked transcription, silence skipping) - see `transcribe-while-talking.md`
 
 ## Minor
 

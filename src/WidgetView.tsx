@@ -102,6 +102,13 @@ function LevelMeter({ levels, className }: { levels: number[]; className?: strin
   );
 }
 
+// The end of the running transcript, which is what's just been said; the
+// widget shows a few lines at most.
+const LIVE_TAIL_CHARS = 160;
+function liveTail(text: string) {
+  return text.length <= LIVE_TAIL_CHARS ? text : `…${text.slice(-LIVE_TAIL_CHARS).replace(/^\S*\s/, "")}`;
+}
+
 function formatElapsed(ms: number): string {
   const total = Math.floor(ms / 1000);
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
@@ -265,6 +272,9 @@ function WidgetView() {
   // Transcription progress, 0-100, while transcribing (backend
   // `transcribe-progress`); null when there's nothing to show.
   const [progress, setProgress] = useState<number | null>(null);
+  // Transcript of the recording so far, filled in at each pause while
+  // recording (`live-transcript`); shown only in detailed mode.
+  const [liveText, setLiveText] = useState("");
   // Same for LLM refinement (`refine-progress`), plus which model is
   // doing it (the `refining-started` payload).
   const [refineProgress, setRefineProgress] = useState<number | null>(null);
@@ -404,11 +414,14 @@ function WidgetView() {
     const unlistenTheme = listen<ThemeId>("theme-changed", (e) => applyTheme(e.payload));
 
     const unlistenModeChanged = listen<WidgetMode>("widget-mode-changed", (e) => setMode(e.payload));
+    const unlistenLive = listen<string>("live-transcript", (e) => setLiveText(e.payload));
     const unlistenStart = listen("recording-started", () => {
+      setLiveText("");
       setMicSilent(null);
       setPhase("recording");
     });
     const unlistenStop = listen("recording-stopped", () => {
+      setLiveText("");
       setMicSilent(null);
       setPhase("transcribing");
     });
@@ -456,6 +469,7 @@ function WidgetView() {
       unlistenTheme.then((f) => f());
       unlistenModeChanged.then((f) => f());
       unlistenStart.then((f) => f());
+      unlistenLive.then((f) => f());
       unlistenMicSilent.then((f) => f());
       unlistenMicCleared.then((f) => f());
       unlistenStop.then((f) => f());
@@ -670,6 +684,14 @@ function WidgetView() {
             )}
           </button>
         </div>
+        {phase === "recording" && liveText && !micSilent ? (
+          <p
+            className="flex flex-1 items-end overflow-hidden text-xs italic opacity-50"
+            data-testid="live-transcript"
+          >
+            <span className="line-clamp-3">{liveTail(liveText)}</span>
+          </p>
+        ) : (
         <p
           className={`flex-1 overflow-y-auto whitespace-pre-wrap text-xs ${
             isError || (!message && setupProblem)
@@ -685,6 +707,7 @@ function WidgetView() {
             warning?.full ??
             `Ready to dictate${micName ? ` with ${micName}` : ""}. Press ${hotkey ?? "the hotkey"} or click the button to start.`}
         </p>
+        )}
       </main>
     );
   }

@@ -22,6 +22,19 @@ built yet.
   keeps a small LRU pool (up to 3) of warm-loaded contexts, so a mode rule
   pinned to a different model doesn't repay the multi-second Metal shader
   compile on every recording that hits it.
+- **Transcribe while you talk** — during push-to-talk, Silero VAD
+  (`live.rs`) cuts the audio at natural pauses (600 ms of quiet after
+  1.5 s of speech; 20 s soft / 28 s hard cap) and each chunk is
+  transcribed in the background, prompted with the vocabulary and the text
+  so far. On stop only the tail is left, so progress covers just that, and
+  silence between phrases (padded by 300 ms around speech) is never
+  transcribed. Isolated Voice is applied per chunk. Recordings under 3 s,
+  a missing VAD model, a failed chunk or no detected speech fall back to
+  whole-recording transcription. The running text is sent as
+  `live-transcript` and shown in the detailed widget; Settings > Voice has
+  a "Transcribe while you talk" toggle (on by default). `app.log` gets a
+  `live:` line per dictation (chunks, silence skipped, drain/tail ms,
+  stop-to-text ms).
 - **Developer vocabulary seeding** — an editable list of dev-jargon terms
   (`kubectl`, `camelCase`, framework names, etc.) fed into Whisper's
   `initial_prompt` to bias recognition toward developer speech.

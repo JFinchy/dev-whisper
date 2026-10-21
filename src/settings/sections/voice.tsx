@@ -30,6 +30,43 @@ export function StatBar({ label, value }: { label: string; value: number }) {
   );
 }
 
+function LiveTranscribeToggle() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    invoke<boolean>("get_live_transcribe_enabled")
+      .then(setEnabled)
+      .catch((err) => notifyError("get_live_transcribe_enabled", err));
+  }, []);
+
+  function toggle(next: boolean) {
+    setEnabled(next);
+    invoke("set_live_transcribe_enabled", { enabled: next }).catch((err) => {
+      notifyError("set_live_transcribe_enabled", err);
+      setEnabled(!next);
+    });
+  }
+
+  if (enabled === null) return null;
+  return (
+    <div className="mt-3 border-t border-base-content/10 pt-3">
+      <label className="flex items-center gap-1.5 text-xs">
+        <input
+          type="checkbox"
+          className="checkbox checkbox-xs"
+          checked={enabled}
+          onChange={(e) => toggle(e.target.checked)}
+        />
+        Transcribe while you talk
+      </label>
+      <p className="mt-1 text-xs opacity-60">
+        Transcribes in the background at each pause, so only the last few seconds are left when you stop, and
+        long silences are skipped. Turn off to transcribe the whole recording after you stop.
+      </p>
+    </div>
+  );
+}
+
 export function ModelsSection() {
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [progress, setProgress] = useState<Record<string, number>>({});
@@ -128,6 +165,7 @@ export function ModelsSection() {
           {err}
         </p>
       ))}
+      <LiveTranscribeToggle />
     </div>
   );
 }

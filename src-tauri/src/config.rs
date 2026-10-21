@@ -88,6 +88,11 @@ pub struct AppConfig {
     /// on `voice_enrolled`.
     #[serde(default)]
     pub isolated_voice_enabled: bool,
+    /// Transcribe push-to-talk speech in chunks while it's being spoken, so
+    /// only the last few seconds are left at stop, and skip silences — see
+    /// `live.rs`. On by default; off restores whole-recording transcription.
+    #[serde(default = "default_true")]
+    pub live_transcribe_enabled: bool,
     /// Whether a voice profile has been enrolled (see `voice_isolation.rs`).
     /// Mirrors whether `voice_profile.json` exists on disk; kept in config
     /// too so callers don't need filesystem access just to check status.
@@ -168,6 +173,7 @@ impl Default for AppConfig {
             widget_mode: crate::widget::WidgetMode::default(),
             journal_enabled: false,
             isolated_voice_enabled: false,
+            live_transcribe_enabled: true,
             voice_enrolled: false,
             webhook_url: None,
             theme: crate::theme::Theme::default(),
@@ -352,6 +358,7 @@ mod tests {
         assert!(!restored.copy_only);
         assert_eq!(restored.widget_mode, crate::widget::WidgetMode::default());
         assert!(!restored.journal_enabled);
+        assert!(restored.live_transcribe_enabled);
         assert!(!restored.isolated_voice_enabled);
         assert!(!restored.voice_enrolled);
         assert!(restored.webhook_url.is_none());
