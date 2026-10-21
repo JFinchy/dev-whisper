@@ -24,6 +24,7 @@ place with a one-line note.
 - [ ] History search + reprocessing - see `history-search-reprocess.md`
 - [ ] Output webhook - see `output-webhook.md`
 - [ ] Agent prompt voice commands (send it, attach the error, scratch that) - see `agent-prompt-voice-commands.md`
+- [ ] Transcribe while you talk (chunked transcription, silence skipping) - see `transcribe-while-talking.md`
 
 ## Minor
 

@@ -231,6 +231,20 @@ impl WhisperEngine {
         model_override: Option<(String, PathBuf)>,
         on_progress: &(dyn Fn(u8) + Sync),
     ) -> Result<String, String> {
+        self.transcribe_samples_in_context(samples, model_override, "", on_progress)
+    }
+
+    /// `transcribe_samples_with_progress` for audio that continues earlier
+    /// speech: `context` (the text already transcribed before these
+    /// samples) goes into Whisper's prompt after the vocabulary, so a chunk
+    /// cut at a pause keeps its casing, spelling and sentence flow.
+    pub fn transcribe_samples_in_context(
+        &self,
+        samples: &[f32],
+        model_override: Option<(String, PathBuf)>,
+        context: &str,
+        on_progress: &(dyn Fn(u8) + Sync),
+    ) -> Result<String, String> {
         let model_id = match model_override {
             Some((id, path)) => {
                 self.model_paths.lock().unwrap().insert(id.clone(), path);
@@ -245,10 +259,14 @@ impl WhisperEngine {
             return Err("no audio samples to transcribe".to_string());
         }
 
-        let vocab_prompt = crate::names::whisper_prompt(
+        // Project names and the user's vocabulary first, then the text
+        // already transcribed. Whisper keeps the end of an over-long
+        // prompt, so continuity wins over the lowest-ranked names.
+        let terms = crate::names::whisper_prompt(
             &self.project_terms.lock().unwrap(),
             &self.vocabulary.lock().unwrap(),
         );
+        let vocab_prompt = build_prompt(std::slice::from_ref(&terms), context);
 
         let contexts = self.contexts.lock().unwrap();
         let ctx = &contexts.get(&model_id).unwrap().context;
@@ -325,6 +343,33 @@ impl WhisperEngine {
         }
 
         Ok(transcript.trim().to_string())
+    }
+}
+
+/// How much of the earlier transcript is fed back as prompt. Whisper keeps
+/// only the tail of an over-long prompt anyway; this just bounds the work.
+const PROMPT_CONTEXT_CHARS: usize = 400;
+
+/// Whisper's initial prompt: the vocabulary list, then the tail of the
+/// text transcribed so far (starting at a word boundary), so the audio
+/// being decoded reads as a continuation.
+pub(crate) fn build_prompt(vocabulary: &[String], context: &str) -> String {
+    let vocab = vocabulary.join(", ");
+    let context = context.trim();
+    let tail = if context.chars().count() > PROMPT_CONTEXT_CHARS {
+        let skip = context.chars().count() - PROMPT_CONTEXT_CHARS;
+        let start = context.char_indices().nth(skip).map_or(0, |(i, _)| i);
+        let cut = &context[start..];
+        // Drop the partial word at the cut.
+        cut.split_once(char::is_whitespace)
+            .map_or(cut, |(_, rest)| rest)
+    } else {
+        context
+    };
+    match (vocab.is_empty(), tail.is_empty()) {
+        (_, true) => vocab,
+        (true, false) => tail.to_string(),
+        (false, false) => format!("{vocab}. {tail}"),
     }
 }
 
@@ -472,6 +517,25 @@ pub(crate) fn resample_linear(input: &[f32], from_rate: u32, to_rate: u32) -> Ve
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn prompt_is_vocabulary_then_recent_context() {
+        let vocab = vec!["kubectl".to_string(), "Tauri".to_string()];
+        assert_eq!(build_prompt(&vocab, ""), "kubectl, Tauri");
+        assert_eq!(
+            build_prompt(&vocab, " First sentence. "),
+            "kubectl, Tauri. First sentence."
+        );
+        assert_eq!(build_prompt(&[], "Hello there."), "Hello there.");
+        assert_eq!(build_prompt(&[], ""), "");
+    }
+
+    #[test]
+    fn prompt_context_is_trimmed_to_whole_words() {
+        let long = "word ".repeat(200);
+        let prompt = build_prompt(&[], &long);
+        assert!(prompt.chars().count() <= PROMPT_CONTEXT_CHARS);
+        assert!(prompt.split(' ').all(|w| w == "word"), "{prompt:?}");
+    }
 
     #[test]
     fn progress_estimate_is_linear_then_eases_below_100() {

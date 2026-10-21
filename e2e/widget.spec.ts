@@ -163,6 +163,32 @@ test.describe("widget", () => {
     await expect(page.getByTestId("recording-elapsed")).toHaveText("0:01", { timeout: 3000 });
   });
 
+  test("detailed mode shows the live transcript while recording and clears it on stop", async ({
+    page,
+    consoleErrors: _,
+  }) => {
+    await open(page, "widget", { widgetMode: "detailed" });
+    await emit(page, "recording-started");
+    await expect(page.getByTestId("live-transcript")).toHaveCount(0);
+
+    await emit(page, "live-transcript", "Refactor the auth middleware.");
+    await expect(page.getByTestId("live-transcript")).toHaveText("Refactor the auth middleware.");
+
+    await emit(page, "live-transcript", "Refactor the auth middleware. Then run the migration.");
+    await expect(page.getByTestId("live-transcript")).toContainText("Then run the migration.");
+
+    await emit(page, "recording-stopped", "/tmp/x.wav");
+    await expect(page.getByTestId("live-transcript")).toHaveCount(0);
+  });
+
+  test("compact mode keeps the live transcript out of the small widget", async ({ page, consoleErrors: _ }) => {
+    await open(page, "widget");
+    await emit(page, "recording-started");
+    await emit(page, "live-transcript", "Refactor the auth middleware.");
+    await expect(page.getByTestId("level-meter")).toBeVisible();
+    await expect(page.getByText("Refactor the auth middleware.")).toHaveCount(0);
+  });
+
   test("detailed mode names the real hotkey", async ({ page, consoleErrors: _ }) => {
     await open(page, "widget", { widgetMode: "detailed" });
     await expect(page.getByText(/Press ⇧⌘Space or click the button to start/)).toBeVisible();

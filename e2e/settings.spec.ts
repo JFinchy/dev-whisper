@@ -26,6 +26,20 @@ test.describe("settings", () => {
     await expect(page.getByTestId("toast")).toHaveCount(0);
   });
 
+  test("Transcribe while you talk is on by default and can be switched off", async ({
+    page,
+    consoleErrors: _,
+  }) => {
+    await open(page, "settings");
+    await page.locator(".dw-sidebar").getByRole("button", { name: "Voice", exact: true }).click();
+    const toggle = page.getByRole("checkbox", { name: "Transcribe while you talk" });
+    await expect(toggle).toBeChecked();
+
+    await toggle.uncheck();
+    await expect.poll(() => calls(page, "set_live_transcribe_enabled")).toEqual([{ enabled: false }]);
+    await expect(toggle).not.toBeChecked();
+  });
+
   test("the setup checklist stays hidden when everything is ready", async ({ page, consoleErrors: _ }) => {
     await open(page, "settings");
     await expect(page.locator(".dw-page-title")).toHaveText("Dictation");

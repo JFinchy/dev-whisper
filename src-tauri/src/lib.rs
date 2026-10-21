@@ -15,6 +15,7 @@ mod history;
 mod insights;
 mod isolate;
 mod lifecycle;
+mod live;
 mod llm;
 mod logging;
 mod mic_usage;
@@ -318,6 +319,8 @@ pub fn run() {
             set_copy_only,
             get_isolated_voice_enabled,
             set_isolated_voice_enabled,
+            live::get_live_transcribe_enabled,
+            live::set_live_transcribe_enabled,
             set_next_mode_override,
             get_next_mode_override,
             get_theme,
@@ -418,6 +421,7 @@ pub fn run() {
                 mode_override: Mutex::new(None),
                 skip_refine: Default::default(),
                 last_paste: Default::default(),
+                live: Mutex::new(None),
             });
 
             let voice_isolation = VoiceIsolationState::new();

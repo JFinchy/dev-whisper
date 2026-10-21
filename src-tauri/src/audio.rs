@@ -1,7 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -35,6 +35,10 @@ pub struct AudioHandle {
     /// often than any redraw needs.
     level: Arc<AtomicU32>,
     status: Arc<Mutex<Option<DeviceStatus>>>,
+    /// The push-to-talk buffer and its format, shared so the live
+    /// transcriber can read what's been recorded so far (`recorded_since`).
+    samples: Arc<Mutex<Vec<f32>>>,
+    format: Arc<AtomicU64>,
 }
 
 /// Which microphone recording will actually use, as surfaced to the widget.
@@ -65,10 +69,14 @@ impl AudioHandle {
         let level_thread = level.clone();
         let status: Arc<Mutex<Option<DeviceStatus>>> = Arc::new(Mutex::new(None));
         let status_thread = status.clone();
+        let samples: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
+        let format = Arc::new(AtomicU64::new(0));
+        let (samples_thread, format_thread) = (samples.clone(), format.clone());
 
         std::thread::spawn(move || {
             let sinks = Sinks {
-                samples: Arc::new(Mutex::new(Vec::new())),
+                samples: samples_thread,
+                format: format_thread,
                 buffering: Arc::new(AtomicBool::new(false)),
                 tap: Arc::new(Mutex::new(None)),
                 level: level_thread.clone(),
@@ -215,6 +223,8 @@ impl AudioHandle {
             selected_device,
             level,
             status,
+            samples,
+            format,
         }
     }
 
@@ -236,6 +246,20 @@ impl AudioHandle {
         reply_rx
             .recv()
             .map_err(|_| "audio thread did not respond".to_string())?
+    }
+
+    /// Everything captured since `offset` (counted in raw interleaved
+    /// samples) in the current push-to-talk recording, with the stream's
+    /// channel count and sample rate. Empty (and rate 0) before the first
+    /// audio callback. An `offset` past the end means the buffer was
+    /// restarted, so it reads from the beginning.
+    pub fn recorded_since(&self, offset: usize) -> (Vec<f32>, u16, u32) {
+        // Format is read under the lock: a callback stores it before it
+        // appends, so any samples seen here come with their own format.
+        let samples = self.samples.lock().unwrap();
+        let (rate, channels) = unpack_format(self.format.load(Ordering::Relaxed));
+        let from = if offset > samples.len() { 0 } else { offset };
+        (samples[from..].to_vec(), channels, rate)
     }
 
     /// `None` resets to the system default input device.
@@ -263,6 +287,14 @@ impl AudioHandle {
     }
 }
 
+fn pack_format(sample_rate: u32, channels: u16) -> u64 {
+    (sample_rate as u64) << 16 | channels as u64
+}
+
+fn unpack_format(packed: u64) -> (u32, u16) {
+    ((packed >> 16) as u32, (packed & 0xffff) as u16)
+}
+
 /// One callback's worth of captured audio, for the ambient listener.
 pub struct AudioChunk {
     /// Interleaved, `channels` per frame, at `sample_rate`.
@@ -280,6 +312,9 @@ struct Sinks {
     /// Only while true do callbacks append to `samples` — the stream also
     /// runs for ambient listening, and idle audio mustn't accumulate there.
     buffering: Arc<AtomicBool>,
+    /// Sample rate and channel count of the latest callback, packed by
+    /// `pack_format`.
+    format: Arc<AtomicU64>,
     /// The ambient listener, if it's running.
     tap: Arc<Mutex<Option<Sender<AudioChunk>>>>,
     level: Arc<AtomicU32>,
@@ -290,6 +325,8 @@ impl Sinks {
         self.level
             .store(rms_level(data).to_bits(), Ordering::Relaxed);
         if self.buffering.load(Ordering::Relaxed) {
+            self.format
+                .store(pack_format(sample_rate, channels), Ordering::Relaxed);
             self.samples.lock().unwrap().extend_from_slice(data);
         }
         if let Some(tap) = self.tap.lock().unwrap().as_ref() {

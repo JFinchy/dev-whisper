@@ -148,7 +148,7 @@ pub fn stop(app: &AppHandle) {
     set_phase(app, AmbientPhase::Off);
 }
 
-fn vad_model_path(app: &AppHandle) -> Option<PathBuf> {
+pub(crate) fn vad_model_path(app: &AppHandle) -> Option<PathBuf> {
     let bundled = app
         .path()
         .resource_dir()
