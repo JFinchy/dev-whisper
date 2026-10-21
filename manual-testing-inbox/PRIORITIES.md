@@ -23,6 +23,7 @@ place with a one-line note.
 - [ ] Backtrack self-correction - see `backtrack.md`
 - [ ] History search + reprocessing - see `history-search-reprocess.md`
 - [ ] Output webhook - see `output-webhook.md`
+- [ ] Agent prompt voice commands (send it, attach the error, scratch that) - see `agent-prompt-voice-commands.md`
 
 ## Minor
 

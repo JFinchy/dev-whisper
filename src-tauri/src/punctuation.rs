@@ -446,12 +446,15 @@ fn capitalize_first(text: &str) -> String {
 /// same as everything else in this module.
 pub fn extract_press_enter(text: &str) -> (String, bool) {
     const PHRASE: &str = "press enter";
+    // Aliases that are ordinary English ("and send it"), so they only count
+    // after a clause break or as the whole utterance; see below.
+    const GUARDED_ALIASES: &[&str] = &["send it", "submit it"];
 
     let trimmed = text.trim();
     let without_trailing_punct = trimmed.trim_end_matches(['.', '!', '?']).trim_end();
     let lower = without_trailing_punct.to_lowercase();
 
-    if lower == PHRASE {
+    if lower == PHRASE || GUARDED_ALIASES.contains(&lower.as_str()) {
         return (String::new(), true);
     }
 
@@ -465,6 +468,22 @@ pub fn extract_press_enter(text: &str) -> (String, bool) {
             let remaining =
                 without_trailing_punct[..prefix.len()].trim_end_matches([' ', ',', ';']);
             return (remaining.to_string(), true);
+        }
+    }
+
+    // "Send it" / "submit it" fire only as the final phrase *and* only after
+    // a spoken or Whisper-inserted break (comma, period, ...): "Fix the
+    // bug. Send it." submits, "Fix the bug and send it." is a sentence about
+    // sending something and is pasted as written. Unpunctuated runs
+    // ("fix the bug send it") therefore don't fire; say "press enter" or
+    // pause before it.
+    for alias in GUARDED_ALIASES {
+        if let Some(prefix) = lower.strip_suffix(alias) {
+            let before = prefix.trim_end();
+            if prefix.ends_with(' ') && before.ends_with([',', '.', ';', '!', '?', ':']) {
+                let remaining = without_trailing_punct[..before.len()].trim_end_matches([',', ';']);
+                return (remaining.to_string(), true);
+            }
         }
     }
 
@@ -728,6 +747,43 @@ mod tests {
             extract_press_enter("Run the tests, press enter."),
             ("Run the tests".to_string(), true)
         );
+    }
+
+    #[test]
+    fn send_it_after_a_clause_break_acts_like_press_enter() {
+        assert_eq!(
+            extract_press_enter("Fix the failing test. Send it."),
+            ("Fix the failing test.".to_string(), true)
+        );
+        assert_eq!(
+            extract_press_enter("Fix the failing test, send it"),
+            ("Fix the failing test".to_string(), true)
+        );
+        assert_eq!(
+            extract_press_enter("Looks good, submit it."),
+            ("Looks good".to_string(), true)
+        );
+        assert_eq!(extract_press_enter("Send it."), (String::new(), true));
+        assert_eq!(extract_press_enter("submit it"), (String::new(), true));
+    }
+
+    #[test]
+    fn send_it_inside_a_sentence_is_ordinary_text() {
+        for text in [
+            "I'll send it tomorrow.",
+            "Send it to the team before lunch",
+            "Fix the bug and send it.",
+            "Please just send it",
+            "the build is done so send it",
+            "I will resend it",
+            "Fix the bug. Don't send it tonight.",
+        ] {
+            assert_eq!(
+                extract_press_enter(text),
+                (text.to_string(), false),
+                "{text}"
+            );
+        }
     }
 
     #[test]

@@ -144,6 +144,22 @@ pub fn frontmost_pid() -> Option<i32> {
         .map(|a| a.processIdentifier())
 }
 
+/// Frontmost app's bundle id and process id, for reading its Accessibility
+/// tree. Same hop to the main thread as `frontmost_app_blocking`.
+pub fn frontmost_pid_blocking(app: &tauri::AppHandle) -> Option<(String, i32)> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let info = NSWorkspace::sharedWorkspace()
+            .frontmostApplication()
+            .and_then(|a| Some((a.bundleIdentifier()?.to_string(), a.processIdentifier())));
+        let _ = tx.send(info);
+    })
+    .ok()?;
+    rx.recv_timeout(std::time::Duration::from_secs(1))
+        .ok()
+        .flatten()
+}
+
 pub fn frontmost_bundle_id_blocking(app: &tauri::AppHandle) -> Option<String> {
     frontmost_app_blocking(app).map(|(bundle_id, _)| bundle_id)
 }

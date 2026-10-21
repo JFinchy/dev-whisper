@@ -40,6 +40,9 @@ pub struct RecordingState {
     /// shortcut): skip LLM refinement, or stop it if it's running. Reset
     /// when a new dictation starts.
     pub skip_refine: std::sync::atomic::AtomicBool,
+    /// What the last real paste looked like, for "scratch that" (see
+    /// `undo.rs`). Length and app only, never the text.
+    pub last_paste: Mutex<Option<crate::undo::LastPaste>>,
 }
 
 pub fn toggle_recording(app: &AppHandle, trigger: Trigger) {
@@ -328,6 +331,8 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
         mode_label,
         press_enter: should_press_enter,
         append_clipboard: should_append_clipboard,
+        attach_error: should_attach_error,
+        undo_last,
         features_used,
         spoken_words,
         llm_ms,
@@ -346,6 +351,27 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
             let _ = app.emit("refining-started", model.to_string());
         },
     );
+
+    if undo_last {
+        undo_last_paste(app);
+        return;
+    }
+
+    // "Attach the error": the error block goes in after the dictated text,
+    // fenced, and isn't run through mode formatting or the LLM either.
+    // Read before the paste below replaces the clipboard.
+    let mut note: Option<&'static str> = None;
+    let formatted = if should_attach_error {
+        match find_error_block(app) {
+            Some(block) => crate::error_context::attach(&formatted, &block),
+            None => {
+                note = Some("No error found to attach");
+                formatted
+            }
+        }
+    } else {
+        formatted
+    };
 
     // Applied uniformly after whichever branch above resolved
     // `formatted` — clipboard content is appended raw, not run
@@ -406,9 +432,29 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
             // and why it doesn't need Accessibility permission),
             // so "press enter" is skipped rather than sending one
             // anyway.
-            if should_press_enter && !copy_only {
+            let submitted = should_press_enter && !copy_only;
+            if submitted {
                 if let Err(err) = crate::paste::press_enter() {
                     crate::applog!("press_enter: failed to simulate Enter: {err}");
+                }
+            }
+
+            // Remember the paste for "scratch that". Copies don't count,
+            // and an Enter after it means the line is gone from the input.
+            if !copy_only {
+                let state = app.state::<RecordingState>();
+                if !formatted.is_empty() {
+                    let bundle = crate::app_detect::frontmost_bundle_id_blocking(app);
+                    *state.last_paste.lock().unwrap() = Some(crate::undo::LastPaste::new(
+                        &formatted,
+                        bundle,
+                        submitted,
+                        std::time::Instant::now(),
+                    ));
+                } else if submitted {
+                    if let Some(last) = state.last_paste.lock().unwrap().as_mut() {
+                        last.submitted = true;
+                    }
                 }
             }
 
@@ -488,9 +534,89 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
                 );
             } else if copy_only && !formatted.is_empty() {
                 let _ = app.emit("transcript-copied", "Copied to clipboard".to_string());
+            } else if let Some(note) = note {
+                // `transcript-copied` is just the widget's quiet,
+                // non-error status line.
+                let _ = app.emit("transcript-copied", note.to_string());
             } else {
                 let _ = app.emit("transcript-ready", formatted);
             }
+        }
+        Err(err) => {
+            let _ = app.emit("transcript-error", err);
+        }
+    }
+}
+
+/// The most recent error output, for "attach the error": the frontmost
+/// terminal's visible text if it's a terminal that exposes it, else the
+/// clipboard if that looks like an error. Logs line counts only.
+fn find_error_block(app: &AppHandle) -> Option<String> {
+    if let Some((bundle_id, pid)) = crate::app_detect::frontmost_pid_blocking(app) {
+        if crate::error_context::is_terminal_app(&bundle_id) {
+            // Accessibility calls can hang on a busy app; give up after 3s.
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(crate::error_context::read_terminal_text(pid));
+            });
+            match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+                Ok(Some(text)) => {
+                    let found = crate::error_context::extract_error_block(&text);
+                    crate::applog!(
+                        "attach error: read {} terminal lines, error block: {}",
+                        text.lines().count(),
+                        found.as_ref().map_or("none".to_string(), |b| format!(
+                            "{} lines",
+                            b.lines().count()
+                        ))
+                    );
+                    if found.is_some() {
+                        return found;
+                    }
+                }
+                Ok(None) => crate::applog!(
+                    "attach error: terminal text not readable via Accessibility, trying clipboard"
+                ),
+                Err(_) => crate::applog!("attach error: terminal read timed out, trying clipboard"),
+            }
+        }
+    }
+    let clip = crate::clipboard::read_clipboard_text()?;
+    let found = crate::error_context::clipboard_error_text(&clip);
+    crate::applog!(
+        "attach error: clipboard has {} lines, error-like: {}",
+        clip.lines().count(),
+        found.is_some()
+    );
+    found
+}
+
+/// "Scratch that" as a whole dictation: undo the last paste if that can be
+/// done safely (see `undo.rs`), and tell the widget either way.
+fn undo_last_paste(app: &AppHandle) {
+    let state = app.state::<RecordingState>();
+    let last = state.last_paste.lock().unwrap().clone();
+    let frontmost = crate::app_detect::frontmost_bundle_id_blocking(app);
+    let plan = crate::undo::plan(
+        last.as_ref(),
+        frontmost.as_deref(),
+        std::time::Instant::now(),
+    );
+    crate::applog!("undo: plan={plan:?}");
+    const UNDID: &str = "Undid the last paste";
+    let result = match plan {
+        crate::undo::Plan::CmdZ => crate::paste::send_undo().map(|()| UNDID),
+        crate::undo::Plan::Backspaces(n) => crate::paste::send_backspaces(n).map(|()| UNDID),
+        crate::undo::Plan::Refuse(note) => Ok(note),
+    };
+    match result {
+        Ok(note) => {
+            if note == UNDID {
+                // One undo per paste: a second "scratch that" must not
+                // reach further back.
+                *state.last_paste.lock().unwrap() = None;
+            }
+            let _ = app.emit("transcript-copied", note.to_string());
         }
         Err(err) => {
             let _ = app.emit("transcript-error", err);

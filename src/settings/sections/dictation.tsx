@@ -316,8 +316,24 @@ export const VOICE_COMMAND_GROUPS: VoiceCommandGroup[] = [
   },
   {
     title: "Press enter",
-    description: 'Say this at the end to send Enter after pasting. Off by default — enable it in General above.',
-    examples: [{ say: '"looks good press enter"', get: 'pastes "looks good", then Enter' }],
+    description:
+      'Say this at the end to send Enter after pasting. "Send it" (or "submit it") does the same, but only after a pause or period, so "…and send it" in a sentence stays text. Off by default — enable it in General above.',
+    examples: [
+      { say: '"looks good press enter"', get: 'pastes "looks good", then Enter' },
+      { say: '"fix the failing test. send it."', get: 'pastes "Fix the failing test.", then Enter' },
+    ],
+  },
+  {
+    title: "Attach the error",
+    description:
+      'Say this at the end to append the latest error output as a code block: the visible text of the terminal you\'re in (Terminal, iTerm), otherwise the clipboard if it holds an error. "With the error" works after a pause. If nothing is found, a note appears and just your words are pasted.',
+    examples: [{ say: '"why does this test fail, attach the error"', get: "your sentence, then the stack trace in a ``` block" }],
+  },
+  {
+    title: "Scratch that (undo)",
+    description:
+      'Say it on its own to take back the last paste: Cmd+Z in most apps; in a terminal, exactly as many backspaces as were pasted (single line, within 15 seconds, not sent). Anywhere else it does nothing and says so. Mid-sentence it is still a correction.',
+    examples: [{ say: '"scratch that"', get: "the last pasted text is removed" }],
   },
   {
     title: "Append clipboard",
