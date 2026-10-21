@@ -160,6 +160,13 @@ pub struct AppConfig {
     /// added by accepting a correction suggestion.
     #[serde(default)]
     pub replacements: Vec<crate::corrections::Replacement>,
+    /// Shortcut that records a reply for the most recent waiting coding
+    /// agent — see `agents.rs`. `None` uses `agents::default_reply_shortcut`.
+    #[serde(default)]
+    pub agent_reply_shortcut: Option<ShortcutConfig>,
+    /// Play a soft sound when a coding agent starts waiting. On by default.
+    #[serde(default = "default_true")]
+    pub agent_sound_enabled: bool,
 }
 
 fn default_true() -> bool {
@@ -199,6 +206,8 @@ impl Default for AppConfig {
             project_names_enabled: true,
             learn_corrections: true,
             replacements: Vec::new(),
+            agent_reply_shortcut: None,
+            agent_sound_enabled: true,
         }
     }
 }
@@ -383,6 +392,8 @@ mod tests {
         assert_eq!(restored.snippets, crate::snippets::default_snippets());
         assert!(!restored.double_tap_fn_enabled);
         assert_eq!(restored.layout, crate::theme::Layout::default());
+        assert!(restored.agent_reply_shortcut.is_none());
+        assert!(restored.agent_sound_enabled);
         assert_eq!(restored.modes, crate::modes::seed_default_modes());
     }
 

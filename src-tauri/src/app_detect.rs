@@ -146,7 +146,7 @@ pub fn frontmost_pid() -> Option<i32> {
 
 /// Frontmost app's bundle id and process id, for reading its Accessibility
 /// tree. Same hop to the main thread as `frontmost_app_blocking`.
-pub fn frontmost_pid_blocking(app: &tauri::AppHandle) -> Option<(String, i32)> {
+pub fn frontmost_bundle_and_pid_blocking(app: &tauri::AppHandle) -> Option<(String, i32)> {
     let (tx, rx) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
         let info = NSWorkspace::sharedWorkspace()
@@ -211,4 +211,53 @@ pub fn list_common_apps(exclude: &[AppInfo]) -> Vec<AppInfo> {
             })
         })
         .collect()
+}
+
+/// Process id of the frontmost app, fetched like `frontmost_app_blocking`.
+/// Used to confirm a focus hop landed, and to know where to return to.
+pub fn frontmost_pid_blocking(app: &tauri::AppHandle) -> Option<i32> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let pid = NSWorkspace::sharedWorkspace()
+            .frontmostApplication()
+            .map(|a| a.processIdentifier());
+        let _ = tx.send(pid);
+    })
+    .ok()?;
+    rx.recv_timeout(std::time::Duration::from_secs(1))
+        .ok()
+        .flatten()
+}
+
+/// A regular (Dock-visible) running app, by process id. Helper processes
+/// and background agents return `None`, which is what lets the caller walk
+/// up a process tree until it reaches the app that owns a terminal.
+pub fn regular_app_for_pid(pid: i32) -> Option<(String, String)> {
+    use objc2_app_kit::NSRunningApplication;
+    let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?;
+    regular_app_parts(&app)
+}
+
+/// The first regular running app with this bundle id.
+pub fn regular_app_for_bundle(bundle_id: &str) -> Option<(i32, String)> {
+    use objc2_app_kit::NSRunningApplication;
+    let apps = NSRunningApplication::runningApplicationsWithBundleIdentifier(
+        &objc2_foundation::NSString::from_str(bundle_id),
+    );
+    apps.iter().find_map(|app| {
+        let (_, name) = regular_app_parts(&app)?;
+        Some((app.processIdentifier(), name))
+    })
+}
+
+fn regular_app_parts(app: &objc2_app_kit::NSRunningApplication) -> Option<(String, String)> {
+    if app.activationPolicy() != NSApplicationActivationPolicy::Regular {
+        return None;
+    }
+    let bundle_id = app.bundleIdentifier()?.to_string();
+    let name = app
+        .localizedName()
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| bundle_id.clone());
+    Some((bundle_id, name))
 }

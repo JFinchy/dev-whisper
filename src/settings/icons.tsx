@@ -46,6 +46,15 @@ export function IconChart() {
   );
 }
 
+export function IconAgent() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="m7 10 3 2-3 2M12 15h5" />
+    </svg>
+  );
+}
+
 export function IconPlug() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">

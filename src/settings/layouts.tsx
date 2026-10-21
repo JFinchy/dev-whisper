@@ -1,7 +1,8 @@
 import { useState, type ReactElement } from "react";
 import { ReadinessPanel } from "./ReadinessPanel";
 import { type ReadinessFix } from "./readiness";
-import { IconBook, IconChart, IconClock, IconCpu, IconGear, IconInfo, IconMic, IconPalette, IconPlug, IconWave, IconWindow } from "./icons";
+import { IconAgent, IconBook, IconChart, IconClock, IconCpu, IconGear, IconInfo, IconMic, IconPalette, IconPlug, IconWave, IconWindow } from "./icons";
+import { AgentsSection } from "./sections/agents";
 import { AboutSection, LogsSection, UpdatesSection } from "./sections/app";
 import { DeviceSection, GeneralSection, ShortcutSection, VoiceCommandsSection } from "./sections/dictation";
 import { HistorySection } from "./sections/history";
@@ -21,6 +22,7 @@ export type PageId =
   | "insights"
   | "history"
   | "integrations"
+  | "agents"
   | "appearance"
   | "about"
   | "advanced";
@@ -34,6 +36,7 @@ export const NAV: { id: PageId; label: string; icon: () => ReactElement }[] = [
   { id: "insights", label: "Insights", icon: IconChart },
   { id: "history", label: "History", icon: IconClock },
   { id: "integrations", label: "Integrations", icon: IconPlug },
+  { id: "agents", label: "Coding agents", icon: IconAgent },
 ];
 
 export const FOOTER_NAV: { id: PageId; label: string; icon: () => ReactElement }[] = [
@@ -51,6 +54,7 @@ export const PAGE_TITLE: Record<PageId, string> = {
   insights: "Insights — usage & feature adoption",
   history: "History",
   integrations: "Integrations — delivery & webhook",
+  agents: "Coding agents",
   appearance: "Appearance",
   about: "About — features & how it works",
   advanced: "Advanced",
@@ -157,6 +161,7 @@ export function SidebarLayout({ appearance }: { appearance: ReactElement }) {
                 <WebhookSection />
               </>
             )}
+            {page === "agents" && <AgentsSection />}
             {page === "appearance" && appearance}
             {page === "about" && (
               <>
@@ -269,6 +274,10 @@ export function ChainLayout({ appearance }: { appearance: ReactElement }) {
             <>
               <DeliverySection />
               <WebhookSection />
+              <div className="mb-4 border-t border-base-content/10 pt-3">
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide opacity-60">Coding agents</h3>
+                <AgentsSection />
+              </div>
               <HistorySection />
               <div className="mb-4 border-t border-base-content/10 pt-3">
                 <InsightsSection />

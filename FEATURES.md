@@ -210,6 +210,31 @@ built yet.
   surfaced. Off by default, plus a "Send test event" button in Settings.
   Complements the deep-link hooks above, which only cover the *input*
   side.
+- **Reply to a waiting coding agent by voice** — Claude Code's
+  Notification, Stop and UserPromptSubmit hooks run a bundled script
+  (`dev-whisper-hook`, kept at `~/Library/Application Support/
+  com.devwhisper.app/bin/`) that opens `devwhisper://agent-waiting?...`
+  in the background. Dev Whisper finds the app that owns the agent's
+  terminal by walking the hook's parent processes (falling back to the
+  exported bundle id, then `TERM_PROGRAM`), and keeps up to 8 waiting
+  agents (newest first, one per session, expiring after 30 minutes). The
+  widget shows a "Claude is waiting · folder" pill (click to go to that
+  window) and plays a soft system sound (toggle in Settings). A separate
+  reply shortcut (default ⌃⌥R) records a dictation for the newest waiting
+  agent: when ready, Dev Whisper raises the agent's window through the
+  Accessibility API, confirms that app is frontmost, pastes (ending with
+  "send it" or "press enter" also presses Enter), and returns focus to
+  the app and window you were in. Timings are logged to `app.log`.
+  Settings > Coding agents has the hook snippet with a copy button, the
+  shortcut, the sound toggle and the waiting list.
+  Limits: the window is identified only by title (folder name or tty), so
+  Terminal, VS Code and Cursor usually work, while iTerm, Orca and Warp
+  often don't name the folder; with several windows and no match, the
+  reply is copied to the clipboard instead of guessing. With a single
+  window, tabs and split panes can't be selected, so the reply goes to
+  whichever is showing. It never pastes into a different app. Answering a
+  permission prompt in the terminal yourself doesn't clear the pill until
+  the next prompt you submit, a Stop, or expiry.
 
 ## Reliability
 

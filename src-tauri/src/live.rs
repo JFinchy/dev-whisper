@@ -452,7 +452,7 @@ fn transcribe_jobs(
 ) {
     for audio in jobs {
         let state = app.state::<RecordingState>();
-        let model = crate::recording::resolve_mode(app, false).model;
+        let model = crate::recording::resolve_mode(app, false, None).model;
         let context = join_texts(&transcripts.lock().unwrap().texts);
         let started = Instant::now();
         let audio_s = audio.len() as f32 / SAMPLE_RATE as f32;

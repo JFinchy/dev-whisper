@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { applyTheme, type ThemeId } from "./theme";
 import { getReadiness, type ReadinessCheck } from "./settings/readiness";
 import { shortcutLabel, skipVariant, type ShortcutConfig } from "./shortcut";
+import { type WaitingAgent } from "./settings/sections/agents";
 
 type Phase = "idle" | "recording" | "transcribing" | "refining";
 type WidgetMode = "minimal" | "compact" | "detailed";
@@ -309,6 +310,31 @@ function WidgetView() {
   }, []);
   const micName = usingMic(deviceStatus);
 
+  // Coding agents waiting for a reply (see agents.rs), newest first. Expiry
+  // happens in the backend, so the list is re-read now and then.
+  const [waiting, setWaiting] = useState<WaitingAgent[]>([]);
+  const [replyKey, setReplyKey] = useState<string | null>(null);
+  useEffect(() => {
+    const refresh = () =>
+      invoke<WaitingAgent[]>("get_waiting_agents")
+        .then(setWaiting)
+        .catch((err) => console.error("get_waiting_agents failed:", err));
+    refresh();
+    const unlisten = listen<WaitingAgent[]>("agents-changed", (e) => setWaiting(e.payload));
+    const interval = setInterval(refresh, 30_000);
+    const loadKey = () =>
+      invoke<ShortcutConfig>("get_agent_reply_shortcut")
+        .then((cfg) => setReplyKey(shortcutLabel(cfg)))
+        .catch((err) => console.error("get_agent_reply_shortcut failed:", err));
+    loadKey();
+    const unlistenKey = listen("shortcut-changed", loadKey);
+    return () => {
+      clearInterval(interval);
+      unlisten.then((f) => f());
+      unlistenKey.then((f) => f());
+    };
+  }, []);
+
   // One row per selectable mic for the hover menu. The highlighted row is
   // the mic actually recording; a picked-but-missing mic gets its own
   // disabled row so a silent fallback is visible.
@@ -505,6 +531,10 @@ function WidgetView() {
     invoke("toggle_recording_command").catch(actionFailed("start recording"));
   }
 
+  function focusAgent(agent: WaitingAgent) {
+    invoke("focus_waiting_agent", { sessionId: agent.session_id }).catch(actionFailed("go to the agent"));
+  }
+
   function pasteAsIs() {
     invoke("paste_as_is_command").catch(actionFailed("skip refining"));
   }
@@ -580,6 +610,31 @@ function WidgetView() {
     </button>
   );
 
+  // A coding agent is waiting (newest first). Replaces the idle label; the
+  // click brings that agent's window forward.
+  const newestAgent = waiting[0];
+  const agentTitle = newestAgent
+    ? `${newestAgent.kind === "done" ? "Finished" : newestAgent.message || "Needs your input"}${
+        newestAgent.app_name ? ` (${newestAgent.app_name})` : ""
+      }. Click to go to it${replyKey ? `, or press ${replyKey} to reply by voice` : ""}.`
+    : undefined;
+  const agentPill =
+    newestAgent && phase === "idle" && !flashing ? (
+      <button
+        type="button"
+        className="flex min-w-0 flex-1 items-center gap-1.5 truncate rounded-full bg-info/20 px-2 py-0.5 text-left text-xs font-medium text-info hover:bg-info/30"
+        onClick={() => focusAgent(newestAgent)}
+        title={agentTitle}
+        data-testid="agent-pill"
+      >
+        <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-info motion-reduce:animate-none" />
+        <span className="truncate">
+          Claude is waiting · {newestAgent.folder}
+          {waiting.length > 1 ? ` +${waiting.length - 1}` : ""}
+        </span>
+      </button>
+    ) : null;
+
   const recordButton = (
     <button
       className={`btn btn-circle border-none ${mode === "minimal" ? "btn-md" : "btn-sm"} ${
@@ -589,7 +644,9 @@ function WidgetView() {
           ? "ring-2 ring-error"
           : (warning || micSilent) && mode === "minimal"
             ? "ring-2 ring-warning"
-            : ""
+            : newestAgent && mode === "minimal"
+              ? "ring-2 ring-info"
+              : ""
       }`}
       onClick={toggleRecording}
       disabled={busy}
@@ -599,6 +656,7 @@ function WidgetView() {
         message ??
         (showSetup && setupProblem ? `${setupProblem.title}. ${setupProblem.detail}` : null) ??
         warning?.full ??
+        (newestAgent && mode === "minimal" ? `Claude is waiting · ${newestAgent.folder}` : null) ??
         (micName ? `${STATUS_LABEL[phase]} · Mic: ${micName}` : STATUS_LABEL[phase])
       }
     >
@@ -664,6 +722,8 @@ function WidgetView() {
           />
           ) : showSetup ? (
             setupButton
+          ) : agentPill ? (
+            agentPill
           ) : (
             <span
               className="flex-1 cursor-grab truncate text-sm font-medium active:cursor-grabbing"
@@ -748,6 +808,8 @@ function WidgetView() {
           />
         ) : showSetup ? (
           setupButton
+        ) : agentPill ? (
+          agentPill
         ) : (
           <span
             className={`flex-1 cursor-grab active:cursor-grabbing ${

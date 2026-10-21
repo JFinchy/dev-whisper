@@ -11,6 +11,7 @@ const PAGES = [
   ["Insights", "Insights — usage & feature adoption"],
   ["History", "History"],
   ["Integrations", "Integrations — delivery & webhook"],
+  ["Coding agents", "Coding agents"],
   ["Appearance", "Appearance"],
   ["About", "About — features & how it works"],
   ["Advanced", "Advanced"],

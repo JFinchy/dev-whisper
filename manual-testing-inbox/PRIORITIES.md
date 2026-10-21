@@ -26,6 +26,7 @@ place with a one-line note.
 - [ ] Output webhook - see `output-webhook.md`
 - [ ] Agent prompt voice commands (send it, attach the error, scratch that) - see `agent-prompt-voice-commands.md`
 - [ ] Transcribe while you talk (chunked transcription, silence skipping) - see `transcribe-while-talking.md`
+- [ ] Reply to a waiting coding agent by voice (hook, pill, reply shortcut, focus hop) - see `agent-reply.md`
 
 ## Minor
 
