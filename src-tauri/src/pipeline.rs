@@ -126,6 +126,12 @@ pub struct Formatted {
     pub spoken_words: Option<u32>,
     /// Time spent waiting on the LLM, if it was called.
     pub llm_ms: Option<u64>,
+    /// The text before the LLM rewrote it (after lists, punctuation, mode
+    /// formatting), set only when refinement ran and changed the result.
+    /// Chosen over the raw Whisper transcript because it is what "paste
+    /// as-is" delivers: restoring it gives a usable entry, where the raw
+    /// transcript would bring back spoken "comma"/"new line" commands.
+    pub unrefined: Option<String>,
 }
 
 /// Runs a cleaned transcript through lists, punctuation, backtrack, voice
@@ -162,6 +168,11 @@ pub fn format_in_project(
     // that the function was called on every dictation.
     let mut features_used: Vec<String> = Vec::new();
     let mut llm_ms = None;
+    let mut unrefined = None;
+
+    // The user's learned replacements (see `corrections.rs`) fix known
+    // mis-hearings first, so every later pass sees the corrected word.
+    let text = crate::corrections::apply_replacements(&text, &cfg.replacements);
 
     // A standalone "scratch that" undoes the last paste. Checked first, on
     // the raw transcript: backtrack (below) only handles the mid-sentence
@@ -177,6 +188,7 @@ pub fn format_in_project(
             features_used: vec!["undo".to_string()],
             spoken_words: Some(0),
             llm_ms: None,
+            unrefined: None,
         };
     }
 
@@ -383,11 +395,15 @@ pub fn format_in_project(
                         // The model sometimes drops the `@` that marks a
                         // file reference for terminal coding agents; tagging
                         // skips tokens already tagged, so re-running it is safe.
-                        if settings.mode == crate::modes::Behavior::Cli {
+                        let refined = if settings.mode == crate::modes::Behavior::Cli {
                             crate::file_tagging::tag_file_references(&refined)
                         } else {
                             refined
+                        };
+                        if refined != formatted {
+                            unrefined = Some(formatted.clone());
                         }
+                        refined
                     }
                     Some(reason) => {
                         crate::applog!("llm: rejected {model} refinement ({reason}): {refined:?}; pasting {formatted:?}");
@@ -415,6 +431,7 @@ pub fn format_in_project(
         features_used,
         spoken_words,
         llm_ms,
+        unrefined,
     }
 }
 
@@ -454,6 +471,13 @@ mod golden {
         project: Vec<String>,
         /// Terms the LLM must be given (user vocabulary plus these).
         expect_llm_terms: Option<Vec<String>>,
+        /// The text before refinement, when refinement changed it.
+        expect_unrefined: Option<String>,
+        /// Whether `unrefined` should be set at all.
+        expect_refined: Option<bool>,
+        /// Learned `[from, to]` replacements applied before formatting.
+        #[serde(default)]
+        replacements: Vec<(String, String)>,
     }
 
     fn fake_project(names: &[String]) -> Option<crate::project::Project> {
@@ -554,6 +578,14 @@ mod golden {
             let cfg = AppConfig {
                 press_enter_enabled: case.press_enter_enabled,
                 llm_only_when_needed: !case.always_refine,
+                replacements: case
+                    .replacements
+                    .iter()
+                    .map(|(from, to)| crate::corrections::Replacement {
+                        from: from.clone(),
+                        to: to.clone(),
+                    })
+                    .collect(),
                 ..AppConfig::default()
             };
             let settings = ResolvedSettings {
@@ -638,6 +670,22 @@ mod golden {
                     if !given.contains(term) {
                         problems.push(format!("LLM wasn't given {term:?}"));
                     }
+                }
+            }
+            if let Some(expect) = &case.expect_unrefined {
+                if out.unrefined.as_ref() != Some(expect) {
+                    problems.push(format!(
+                        "unrefined {:?}, expected {expect:?}",
+                        out.unrefined
+                    ));
+                }
+            }
+            if let Some(refined) = case.expect_refined {
+                if out.unrefined.is_some() != refined {
+                    problems.push(format!(
+                        "unrefined {:?}, expected refined={refined}",
+                        out.unrefined
+                    ));
                 }
             }
             if refining_events != refiner.calls.get() {

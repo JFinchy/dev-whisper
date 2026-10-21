@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { VOCAB_BOOKS } from "../../vocabularyBooks";
 import { notifyError } from "../../ui/toast";
 
@@ -90,17 +91,79 @@ function ProjectNamesToggle() {
   );
 }
 
+type CorrectionSuggestion = { from: string; to: string; source: "edit" | "original"; count: number };
+type Replacement = { from: string; to: string };
+
+function suggestionText(s: CorrectionSuggestion): string {
+  return s.source === "edit"
+    ? `You've corrected '${s.from}' to '${s.to}' ${s.count} times. Add it?`
+    : `Refinement changed '${s.to}' to '${s.from}' and you restored it ${s.count} times. Add it?`;
+}
+
 export function VocabularySection() {
   const [terms, setTerms] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
+  const [learn, setLearn] = useState(true);
+  const [suggestions, setSuggestions] = useState<CorrectionSuggestion[]>([]);
+  const [replacements, setReplacements] = useState<Replacement[]>([]);
+
+  function refreshLearning() {
+    Promise.all([
+      invoke<CorrectionSuggestion[]>("get_correction_suggestions"),
+      invoke<Replacement[]>("get_replacements"),
+    ])
+      .then(([found, rules]) => {
+        setSuggestions(found);
+        setReplacements(rules);
+      })
+      .catch((err) => notifyError("get_correction_suggestions", err));
+  }
 
   useEffect(() => {
     invoke<string[]>("get_vocabulary")
       .then(setTerms)
       .catch((err) => notifyError("get_vocabulary", err))
       .finally(() => setLoading(false));
+    invoke<boolean>("get_learn_corrections")
+      .then(setLearn)
+      .catch((err) => notifyError("get_learn_corrections", err));
+    refreshLearning();
+    const unlisten = listen("corrections-updated", refreshLearning);
+    return () => {
+      unlisten.then((f) => f());
+    };
   }, []);
+
+  function toggleLearn(enabled: boolean) {
+    setLearn(enabled);
+    invoke("set_learn_corrections", { enabled }).catch((err) => {
+      notifyError("set_learn_corrections", err);
+      setLearn(!enabled);
+    });
+  }
+
+  function acceptSuggestion(s: CorrectionSuggestion) {
+    setSuggestions((current) => current.filter((c) => c !== s));
+    invoke("accept_correction_suggestion", { from: s.from, to: s.to, source: s.source })
+      .then(() => invoke<string[]>("get_vocabulary"))
+      .then(setTerms)
+      .then(refreshLearning)
+      .catch((err) => notifyError("accept_correction_suggestion", err));
+  }
+
+  function dismissSuggestion(s: CorrectionSuggestion) {
+    setSuggestions((current) => current.filter((c) => c !== s));
+    invoke("dismiss_correction_suggestion", { from: s.from, to: s.to, source: s.source }).catch((err) =>
+      notifyError("dismiss_correction_suggestion", err),
+    );
+  }
+
+  function removeReplacement(rule: Replacement) {
+    const next = replacements.filter((r) => r !== rule);
+    setReplacements(next);
+    invoke("set_replacements", { replacements: next }).catch((err) => notifyError("set_replacements", err));
+  }
 
   function save(next: string[]) {
     setTerms(next);
@@ -129,6 +192,24 @@ export function VocabularySection() {
   return (
     <>
       <ProjectNamesToggle />
+      {suggestions.length > 0 && (
+        <div className="mb-3 flex flex-col gap-1" data-testid="correction-suggestions">
+          {suggestions.map((s) => (
+            <div
+              key={`${s.source}:${s.from}:${s.to}`}
+              className="flex items-center gap-2 rounded bg-base-100 px-2 py-1.5 text-xs"
+            >
+              <span className="flex-1">{suggestionText(s)}</span>
+              <button className="btn btn-xs" onClick={() => acceptSuggestion(s)}>
+                Add
+              </button>
+              <button className="btn btn-ghost btn-xs" onClick={() => dismissSuggestion(s)}>
+                Dismiss
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {loading ? null : <VocabularyBooksSection terms={terms} onAdopt={adoptBook} />}
       <div className="mb-4 border-t border-base-content/10 pt-3">
         <label className="mb-1 block text-xs font-medium opacity-70">Vocabulary</label>
@@ -165,6 +246,34 @@ export function VocabularySection() {
                 Add
               </button>
             </div>
+            <label className="mt-2 flex items-center gap-1.5 text-xs opacity-80">
+              <input
+                type="checkbox"
+                className="checkbox checkbox-xs"
+                checked={learn}
+                onChange={(e) => toggleLearn(e.target.checked)}
+              />
+              Learn from my corrections
+            </label>
+            <p className="text-xs opacity-50">
+              When you edit a History entry, repeated word fixes are suggested here. Only the changed words are kept, on this Mac.
+            </p>
+            {replacements.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1" data-testid="replacement-rules">
+                {replacements.map((rule) => (
+                  <span key={rule.from} className="badge badge-sm gap-1">
+                    {rule.from} → {rule.to}
+                    <button
+                      className="opacity-60 hover:opacity-100"
+                      onClick={() => removeReplacement(rule)}
+                      aria-label={`Remove the ${rule.from} replacement`}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </>
         )}
       </div>

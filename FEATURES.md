@@ -144,6 +144,22 @@ built yet.
   file, never retained — so this reformats the saved text, the same
   formatting/refinement a live dictation goes through. Preview the result,
   then copy it or replace the stored entry with it.
+- **Original kept next to the refined text** — when the LLM changed a
+  dictation, History stores the text from just before refinement (what
+  "paste as-is" would have delivered) and marks the entry "Refined".
+  Expanding it shows the original with Copy original / Use original.
+  Entries the LLM left alone, and older entries, store nothing extra.
+- **Edit an entry** (pencil in History) to fix a word by hand.
+- **Learns from your corrections** — word-level fixes from History edits,
+  and from "Use original" after refinement changed a word, are counted
+  locally (only the changed words, in `corrections.json`). The same
+  one-to-three-word substitution seen twice shows a card in Settings >
+  Vocabulary ("You've corrected 'post gress' to 'Postgres' 2 times. Add
+  it?"). Add puts the term in the vocabulary and saves a whole-word,
+  case-aware replacement rule applied to every later transcript before
+  formatting (listed under the vocabulary, removable). Casing/punctuation
+  changes, pure insertions and large rewrites are ignored, as are common
+  words. Toggle: "Learn from my corrections" (on by default).
 
 ## Widget & Settings UI
 

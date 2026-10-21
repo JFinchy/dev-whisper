@@ -53,6 +53,12 @@ pub struct HistoryEntry {
     /// dictation, which has no explicit stop.
     #[serde(default)]
     pub latency_ms: Option<u64>,
+    /// The text as it stood after rule-based formatting but before the LLM
+    /// rewrote it (what "paste as-is" would have delivered). Only stored
+    /// when refinement actually changed the text, so `Some` means "this
+    /// entry was refined"; cleared once the user restores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_text: Option<String>,
 }
 
 /// A transcript about to be recorded in history (`timestamp_ms` and
@@ -65,6 +71,7 @@ pub struct NewEntry {
     pub features_used: Vec<String>,
     pub spoken_words: Option<u32>,
     pub latency_ms: Option<u64>,
+    pub original_text: Option<String>,
 }
 
 fn history_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -124,6 +131,7 @@ pub fn append_entry(app: &AppHandle, new: NewEntry) -> u64 {
     let Ok(path) = history_path(app) else {
         return timestamp_ms;
     };
+    let original_text = new.original_text.filter(|o| *o != new.text);
     let entry = HistoryEntry {
         timestamp_ms,
         text: new.text,
@@ -134,6 +142,7 @@ pub fn append_entry(app: &AppHandle, new: NewEntry) -> u64 {
         features_used: new.features_used,
         spoken_words: new.spoken_words,
         latency_ms: new.latency_ms,
+        original_text,
     };
     let Ok(line) = serde_json::to_string(&entry) else {
         return timestamp_ms;
@@ -264,22 +273,73 @@ pub fn reprocess_history_text(
 }
 
 /// Overwrites a stored entry's text in place — used to persist the result
-/// of `reprocess_history_text` rather than leaving it as a one-off copy.
-/// Clears any existing journal summary, since it was written for the old
-/// text and would otherwise silently describe content that's no longer
-/// there.
+/// of `reprocess_history_text` rather than leaving it as a one-off copy, and
+/// to save a hand edit. Clears any existing journal summary, since it was
+/// written for the old text and would otherwise silently describe content
+/// that's no longer there. `learn` marks a hand edit: the word-level
+/// difference then feeds the correction suggestions (see `corrections.rs`).
 #[tauri::command]
-pub fn update_history_entry_text(app: AppHandle, timestamp_ms: u64, text: String) {
-    let _guard = HISTORY_LOCK.lock().unwrap();
-    let mut entries = read_all(&app);
-    let Some(entry) = entries.iter_mut().find(|e| e.timestamp_ms == timestamp_ms) else {
+pub fn update_history_entry_text(
+    app: AppHandle,
+    timestamp_ms: u64,
+    text: String,
+    learn: Option<bool>,
+) {
+    let Some(old) = set_entry_text(&app, timestamp_ms, text.clone(), false) else {
         return;
     };
-    entry.text = text;
+    if learn == Some(true) {
+        crate::corrections::learn(&app, &old, &text, crate::corrections::Source::Edit);
+    }
+}
+
+/// Replaces an entry's text with its pre-refinement original (see
+/// `HistoryEntry::original_text`) and drops the "refined" marker. What the
+/// refiner changed counts as a correction signal: the user preferred the
+/// original wording.
+#[tauri::command]
+pub fn use_original_history_text(app: AppHandle, timestamp_ms: u64) {
+    let original = {
+        let _guard = HISTORY_LOCK.lock().unwrap();
+        read_all(&app)
+            .into_iter()
+            .find(|e| e.timestamp_ms == timestamp_ms)
+            .and_then(|e| e.original_text)
+    };
+    let Some(original) = original else { return };
+    let Some(refined) = set_entry_text(&app, timestamp_ms, original.clone(), true) else {
+        return;
+    };
+    crate::corrections::learn(
+        &app,
+        &refined,
+        &original,
+        crate::corrections::Source::Original,
+    );
+}
+
+/// Shared by the two commands above; returns the text it replaced, or `None`
+/// if the entry no longer exists.
+fn set_entry_text(
+    app: &AppHandle,
+    timestamp_ms: u64,
+    text: String,
+    restoring_original: bool,
+) -> Option<String> {
+    let _guard = HISTORY_LOCK.lock().unwrap();
+    let mut entries = read_all(app);
+    let entry = entries
+        .iter_mut()
+        .find(|e| e.timestamp_ms == timestamp_ms)?;
+    let old = std::mem::replace(&mut entry.text, text);
     entry.summary = None;
-    if write_all(&app, &entries).is_ok() {
+    if restoring_original || entry.original_text.as_deref() == Some(entry.text.as_str()) {
+        entry.original_text = None;
+    }
+    if write_all(app, &entries).is_ok() {
         let _ = app.emit("history-updated", ());
     }
+    Some(old)
 }
 
 #[tauri::command]
@@ -339,7 +399,28 @@ mod tests {
             features_used: Vec::new(),
             spoken_words: None,
             latency_ms: None,
+            original_text: None,
         }
+    }
+
+    #[test]
+    fn old_history_lines_load_without_an_original() {
+        let old = r#"{"timestamp_ms":5,"text":"hi","app_name":null,"mode":null}"#;
+        let e: HistoryEntry = serde_json::from_str(old).unwrap();
+        assert_eq!(e.original_text, None);
+        // And an unrefined entry doesn't write the field at all.
+        assert!(!serde_json::to_string(&e).unwrap().contains("original_text"));
+    }
+
+    #[test]
+    fn original_text_round_trips() {
+        let mut e = entry("Let's meet at three.", None, None);
+        e.original_text = Some("um let's meet at three".into());
+        let back: HistoryEntry = serde_json::from_str(&serde_json::to_string(&e).unwrap()).unwrap();
+        assert_eq!(
+            back.original_text.as_deref(),
+            Some("um let's meet at three")
+        );
     }
 
     #[test]

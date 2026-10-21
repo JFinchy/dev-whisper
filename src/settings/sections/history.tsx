@@ -10,6 +10,8 @@ export type HistoryEntry = {
   app_name: string | null;
   mode: string | null;
   summary: string | null;
+  /// Text before the LLM rewrote it; present only on refined entries.
+  original_text?: string | null;
 };
 
 export const RETENTION_OPTIONS = [7, 30, 90, 365];
@@ -39,6 +41,8 @@ export function HistorySection() {
   const [copiedAt, setCopiedAt] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [reprocessing, setReprocessing] = useState<Record<number, ReprocessState>>({});
+  const [showOriginal, setShowOriginal] = useState<Set<number>>(new Set());
+  const [editing, setEditing] = useState<Record<number, string>>({});
 
   // Empty query -> the normal recent-first list; non-empty -> a full-text
   // scan of the entire retained history, not just what's currently loaded.
@@ -157,12 +161,57 @@ export function HistorySection() {
   function replaceWithReprocessed(entry: HistoryEntry) {
     const state = reprocessing[entry.timestamp_ms];
     if (!state?.result) return;
-    invoke("update_history_entry_text", { timestampMs: entry.timestamp_ms, text: state.result })
+    invoke("update_history_entry_text", { timestampMs: entry.timestamp_ms, text: state.result, learn: false })
       .then(() => {
         setReprocessing((current) => {
           const { [entry.timestamp_ms]: _removed, ...rest } = current;
           return rest;
         });
+        refresh();
+      })
+      .catch((err) => notifyError("update_history_entry_text", err));
+  }
+
+  function toggleOriginal(timestampMs: number) {
+    setShowOriginal((current) => {
+      const next = new Set(current);
+      if (!next.delete(timestampMs)) next.add(timestampMs);
+      return next;
+    });
+  }
+
+  function copyOriginal(entry: HistoryEntry) {
+    navigator.clipboard
+      .writeText(entry.original_text ?? "")
+      .catch((err) => notifyError("Couldn't copy to the clipboard", err));
+  }
+
+  function useOriginal(entry: HistoryEntry) {
+    invoke("use_original_history_text", { timestampMs: entry.timestamp_ms })
+      .then(refresh)
+      .catch((err) => notifyError("use_original_history_text", err));
+  }
+
+  function startEdit(entry: HistoryEntry) {
+    setEditing((current) => ({ ...current, [entry.timestamp_ms]: entry.text }));
+  }
+
+  function stopEdit(timestampMs: number) {
+    setEditing((current) => {
+      const { [timestampMs]: _removed, ...rest } = current;
+      return rest;
+    });
+  }
+
+  function saveEdit(entry: HistoryEntry) {
+    const text = editing[entry.timestamp_ms]?.trim();
+    if (!text || text === entry.text) {
+      stopEdit(entry.timestamp_ms);
+      return;
+    }
+    invoke("update_history_entry_text", { timestampMs: entry.timestamp_ms, text, learn: true })
+      .then(() => {
+        stopEdit(entry.timestamp_ms);
         refresh();
       })
       .catch((err) => notifyError("update_history_entry_text", err));
@@ -214,12 +263,35 @@ export function HistorySection() {
         <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto rounded-md bg-base-100 p-1.5">
           {entries.map((entry) => {
             const reprocess = reprocessing[entry.timestamp_ms];
+            const draft = editing[entry.timestamp_ms];
+            const original = entry.original_text;
+            const originalOpen = !!original && showOriginal.has(entry.timestamp_ms);
             return (
               <li key={entry.timestamp_ms} className="group rounded px-1.5 py-1 text-xs hover:bg-base-200">
                 <div className="flex items-center justify-between opacity-50">
-                  <span>{formatTimestamp(entry.timestamp_ms)}</span>
+                  <span className="flex items-center gap-1.5">
+                    {formatTimestamp(entry.timestamp_ms)}
+                    {original && (
+                      <button
+                        className="badge badge-ghost badge-xs"
+                        onClick={() => toggleOriginal(entry.timestamp_ms)}
+                        aria-expanded={originalOpen}
+                        title="Show the text before refinement"
+                      >
+                        Refined {originalOpen ? "▾" : "▸"}
+                      </button>
+                    )}
+                  </span>
                   <div className="flex items-center gap-1.5">
                     {entry.app_name && <span className="truncate">{entry.app_name}</span>}
+                    <button
+                      className={draft !== undefined ? "opacity-100" : "opacity-0 group-hover:opacity-100"}
+                      onClick={() => (draft !== undefined ? stopEdit(entry.timestamp_ms) : startEdit(entry))}
+                      aria-label="Edit transcript"
+                      title="Edit"
+                    >
+                      ✎
+                    </button>
                     <button
                       className={reprocess ? "opacity-100" : "opacity-0 group-hover:opacity-100"}
                       onClick={() => toggleReprocess(entry.timestamp_ms)}
@@ -246,7 +318,25 @@ export function HistorySection() {
                     </button>
                   </div>
                 </div>
-                {entry.summary ? (
+                {draft !== undefined ? (
+                  <div className="mt-1 flex flex-col gap-1">
+                    <textarea
+                      className="textarea textarea-xs w-full"
+                      rows={3}
+                      value={draft}
+                      aria-label="Edit transcript text"
+                      onChange={(e) => setEditing((current) => ({ ...current, [entry.timestamp_ms]: e.target.value }))}
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <button className="btn btn-xs" onClick={() => saveEdit(entry)}>
+                        Save
+                      </button>
+                      <button className="btn btn-ghost btn-xs" onClick={() => stopEdit(entry.timestamp_ms)}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : entry.summary ? (
                   <>
                     <p className="truncate font-medium" title={entry.summary}>
                       {entry.summary}
@@ -259,6 +349,20 @@ export function HistorySection() {
                   <p className="truncate" title={entry.text}>
                     {entry.text}
                   </p>
+                )}
+                {originalOpen && (
+                  <div className="mt-1 flex flex-col gap-1 rounded bg-base-200 p-1.5" data-testid="original-text">
+                    <span className="opacity-50">Original, before refinement</span>
+                    <p className="whitespace-pre-wrap">{original}</p>
+                    <div className="flex items-center gap-1.5">
+                      <button className="btn btn-ghost btn-xs" onClick={() => copyOriginal(entry)}>
+                        Copy original
+                      </button>
+                      <button className="btn btn-ghost btn-xs" onClick={() => useOriginal(entry)}>
+                        Use original
+                      </button>
+                    </div>
+                  </div>
                 )}
                 {reprocess && (
                   <div className="mt-1 flex flex-col gap-1 rounded bg-base-200 p-1.5">

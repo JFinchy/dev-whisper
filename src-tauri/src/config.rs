@@ -151,6 +151,15 @@ pub struct AppConfig {
     /// (see `project.rs`, `names.rs`). On by default; nothing leaves the Mac.
     #[serde(default = "default_true")]
     pub project_names_enabled: bool,
+    /// Learn recurring word-level fixes from History edits (see
+    /// `corrections.rs`) and suggest them as vocabulary. On by default; the
+    /// store only keeps the changed words, locally.
+    #[serde(default = "default_true")]
+    pub learn_corrections: bool,
+    /// Whole-word rewrites applied to every transcript before formatting,
+    /// added by accepting a correction suggestion.
+    #[serde(default)]
+    pub replacements: Vec<crate::corrections::Replacement>,
 }
 
 fn default_true() -> bool {
@@ -188,6 +197,8 @@ impl Default for AppConfig {
             double_tap_fn_enabled: false,
             layout: crate::theme::Layout::default(),
             project_names_enabled: true,
+            learn_corrections: true,
+            replacements: Vec::new(),
         }
     }
 }

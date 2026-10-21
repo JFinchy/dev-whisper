@@ -22,6 +22,7 @@ place with a one-line note.
 - [ ] Snippet library - see `snippets.md`
 - [ ] Backtrack self-correction - see `backtrack.md`
 - [ ] History search + reprocessing - see `history-search-reprocess.md`
+- [ ] History keeps the original + learning from corrections - see `history-original-and-corrections.md`
 - [ ] Output webhook - see `output-webhook.md`
 - [ ] Agent prompt voice commands (send it, attach the error, scratch that) - see `agent-prompt-voice-commands.md`
 - [ ] Transcribe while you talk (chunked transcription, silence skipping) - see `transcribe-while-talking.md`
