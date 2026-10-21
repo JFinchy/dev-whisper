@@ -59,6 +59,10 @@ passed.
 models, point it at another file:
 `DW_E2E_MODEL=/path/to/ggml-small.en-q5_1.bin bun run test:audio`.
 
+The audio tests run one at a time (`--test-threads=1`): Whisper's progress
+counter is process-wide, so two transcriptions running at once would mix
+up each other's progress checks.
+
 ## UI e2e
 
 `e2e/` drives the real React app in WebKit (Tauri's engine on macOS),

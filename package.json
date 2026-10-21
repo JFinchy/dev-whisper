@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
     "test:rust": "cd src-tauri && cargo test --lib",
-    "test:audio": "cd src-tauri && cargo test --lib e2e_audio -- --ignored --nocapture",
+    "test:audio": "cd src-tauri && cargo test --lib e2e_audio -- --ignored --nocapture --test-threads=1",
     "test": "bun run typecheck && bun run test:rust && bun run test:e2e"
   },
   "dependencies": {
