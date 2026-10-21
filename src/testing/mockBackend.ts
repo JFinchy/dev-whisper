@@ -22,6 +22,8 @@ export type Scenario = {
   widgetMode?: "minimal" | "compact" | "detailed";
   layout?: "sidebar" | "chain";
   insights?: Json;
+  /// Coding agents already waiting when the page loads.
+  agents?: Json[];
 };
 
 declare global {
@@ -54,6 +56,9 @@ function initialState(scenario: Scenario) {
     theme: "terminal",
     shortcut: { meta: true, ctrl: false, alt: false, shift: true, code: "Space" },
     doubleTap: false,
+    agents: (scenario.agents ?? []) as { session_id: string }[],
+    agentShortcut: { meta: false, ctrl: true, alt: true, shift: false, code: "KeyR" },
+    agentSound: true,
     copyOnly: false,
     pressEnter: false,
     isolatedVoice: false,
@@ -180,6 +185,46 @@ export function installMockBackend() {
       { bundle_id: "com.apple.Terminal", name: "Terminal", icon_data_uri: null, is_running: true },
       { bundle_id: "com.tinyspeck.slackmacgap", name: "Slack", icon_data_uri: null, is_running: true },
     ],
+    // coding agents
+    get_waiting_agents: () => state.agents,
+    dismiss_waiting_agent: (args) => {
+      state.agents = state.agents.filter((a) => a.session_id !== args.sessionId);
+      void emit("agents-changed", state.agents);
+      return null;
+    },
+    focus_waiting_agent: () => "Terminal",
+    get_agent_reply_shortcut: () => state.agentShortcut,
+    get_agent_reply_shortcut_error: () => null,
+    set_agent_reply_shortcut: (args) => {
+      state.agentShortcut = args.newCfg as typeof state.agentShortcut;
+      return state.agentShortcut;
+    },
+    get_agent_sound_enabled: () => state.agentSound,
+    set_agent_sound_enabled: setter("agentSound", "enabled"),
+    get_agent_hook_config: () => ({
+      script_path: "/Users/me/Library/Application Support/com.devwhisper.app/bin/dev-whisper-hook",
+      json: JSON.stringify(
+        {
+          hooks: Object.fromEntries(
+            ["Notification", "Stop", "UserPromptSubmit"].map((event) => [
+              event,
+              [
+                {
+                  hooks: [
+                    {
+                      type: "command",
+                      command: "'/Users/me/Library/Application Support/com.devwhisper.app/bin/dev-whisper-hook'",
+                    },
+                  ],
+                },
+              ],
+            ]),
+          ),
+        },
+        null,
+        2,
+      ),
+    }),
     // models
     list_models: () => state.models,
     download_model: (args) => {

@@ -80,6 +80,14 @@
     "expect_press_enter": true
   },
   {
+    "name": "agent reply: \"send it\" is rewritten to press enter before formatting",
+    "input": "Yes, go ahead. press enter",
+    "mode": "plain",
+    "press_enter_enabled": true,
+    "expect": "Yes, go ahead.",
+    "expect_press_enter": true
+  },
+  {
     "name": "press enter stays literal when disabled",
     "input": "Run the tests, press enter.",
     "mode": "plain",

@@ -22,6 +22,7 @@ place with a one-line note.
 - [ ] Backtrack self-correction - see `backtrack.md`
 - [ ] History search + reprocessing - see `history-search-reprocess.md`
 - [ ] Output webhook - see `output-webhook.md`
+- [ ] Reply to a waiting coding agent by voice (hook, pill, reply shortcut, focus hop) - see `agent-reply.md`
 
 ## Minor
 

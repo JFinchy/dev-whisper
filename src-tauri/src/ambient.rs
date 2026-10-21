@@ -401,6 +401,7 @@ fn handle_segment(app: &AppHandle, audio: Vec<f32>) {
                     paste_guard: Some(bundle_id.unwrap_or_default()),
                     stopped_at: None,
                     stt_ms: None,
+                    reply_target: None,
                 },
             );
         }

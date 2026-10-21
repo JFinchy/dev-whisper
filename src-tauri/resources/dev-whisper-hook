@@ -1,0 +1,43 @@
+#!/bin/sh
+# dev-whisper-hook: tells Dev Whisper that a Claude Code agent is waiting for
+# you (or has stopped waiting). Run it from Claude Code's Notification, Stop
+# and UserPromptSubmit hooks; Claude Code passes the event as JSON on stdin.
+#
+# It only opens a devwhisper:// link (in the background, so focus doesn't
+# move) and always exits 0, so it can never block or fail an agent.
+# DEV_WHISPER_OPEN replaces /usr/bin/open for tests.
+
+OPEN="${DEV_WHISPER_OPEN:-/usr/bin/open}"
+json=$(cat)
+
+field() {
+  printf '%s' "$json" | plutil -extract "$1" raw -o - - 2>/dev/null
+}
+
+# Every byte becomes %XX, which is safe for any path or message.
+encode() {
+  printf '%s' "$1" | LC_ALL=C od -An -v -tx1 | tr -d ' \n' | sed 's/../%&/g'
+}
+
+event=$(field hook_event_name)
+session=$(field session_id)
+cwd=$(field cwd)
+[ -n "$cwd" ] || cwd=$PWD
+
+if [ "$event" = UserPromptSubmit ]; then
+  "$OPEN" -g "devwhisper://agent-resumed?session=$(encode "$session")&cwd=$(encode "$cwd")" >/dev/null 2>&1
+  exit 0
+fi
+
+if [ "$event" = Stop ]; then
+  kind=done
+  message="Finished"
+else
+  kind=needs_input
+  message=$(field message)
+fi
+# Keep the link short; Dev Whisper trims again.
+message=$(printf '%s' "$message" | tr '\n\r\t' '   ' | LC_ALL=C cut -c1-300)
+
+"$OPEN" -g "devwhisper://agent-waiting?session=$(encode "$session")&cwd=$(encode "$cwd")&message=$(encode "$message")&kind=$kind&pid=$PPID&bundle=$(encode "$__CFBundleIdentifier")&term=$(encode "$TERM_PROGRAM")" >/dev/null 2>&1
+exit 0

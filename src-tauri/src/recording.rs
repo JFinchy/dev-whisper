@@ -62,12 +62,16 @@ pub fn request_dictation(app: &AppHandle, request: Request) {
 fn stop_dictation(app: &AppHandle, state: &RecordingState) {
     let stopped_at = std::time::Instant::now();
     crate::refresh_tray_indicator(app);
+    // Taken even if stopping fails, so it can't leak into the next recording.
+    let reply = app
+        .state::<crate::agents::AgentState>()
+        .take_pending_reply();
     match state.audio.stop() {
         Ok(path) => {
             let _ = app.emit("recording-stopped", path.to_string_lossy().to_string());
             let app = app.clone();
             std::thread::spawn(move || {
-                transcribe_and_paste(&app, &path, stopped_at);
+                transcribe_and_paste(&app, &path, stopped_at, reply);
                 // Raw voice recordings shouldn't accumulate in /tmp; history
                 // keeps the transcript, not the audio.
                 if let Err(err) = std::fs::remove_file(&path) {
@@ -160,18 +164,31 @@ fn transcribe_and_paste(
     app: &AppHandle,
     wav_path: &std::path::Path,
     stopped_at: std::time::Instant,
+    reply: Option<crate::agents::WaitingAgent>,
 ) {
     let state = app.state::<RecordingState>();
 
+    // A reply is formatted for talking to the agent, not for the app that
+    // was in front when recording started, and is credited to the agent's app.
     let active_app = state.active_app.lock().unwrap().clone();
-    let bundle_id = active_app.as_ref().map(|info| info.bundle_id.clone());
-    let app_name = active_app.map(|info| info.name);
+    let (bundle_id, app_name) = match &reply {
+        Some(agent) => (None, agent.app_name.clone()),
+        None => (
+            active_app.as_ref().map(|info| info.bundle_id.clone()),
+            active_app.map(|info| info.name),
+        ),
+    };
 
     // Mode (and its stt_model override, if any) has to be resolved *before*
     // transcribing now, not after — which model to transcribe with depends
     // on it. Casing-command detection still happens after, on the
     // resulting text, since that's orthogonal to which model produced it.
-    let cfg = crate::config::load(app);
+    let mut cfg = crate::config::load(app);
+    if reply.is_some() {
+        // "Send it" / "press enter" ends a reply with Enter without the user
+        // having turned the global voice command on.
+        cfg.press_enter_enabled = true;
+    }
     let mut settings = modes::resolve_settings(bundle_id.as_deref(), &cfg.modes);
     if let Some(override_name) = state.mode_override.lock().unwrap().take() {
         match modes::settings_for_name(&override_name, &cfg.modes) {
@@ -257,6 +274,11 @@ fn transcribe_and_paste(
                 return;
             }
 
+            let text = if reply.is_some() {
+                crate::agents::normalize_reply(&text)
+            } else {
+                text
+            };
             process_transcript(
                 app,
                 text,
@@ -268,6 +290,7 @@ fn transcribe_and_paste(
                     paste_guard: None,
                     stopped_at: Some(stopped_at),
                     stt_ms,
+                    reply_target: reply,
                 },
             );
         }
@@ -295,6 +318,9 @@ pub(crate) struct TranscriptContext<'a> {
     pub stopped_at: Option<std::time::Instant>,
     /// How long Whisper (plus voice isolation) took.
     pub stt_ms: Option<u64>,
+    /// A waiting coding agent this dictation is a reply to: delivered by
+    /// hopping to its window instead of pasting where focus is.
+    pub reply_target: Option<crate::agents::WaitingAgent>,
 }
 
 fn ms_or_dash(ms: Option<u64>) -> String {
@@ -370,9 +396,16 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
             false
         }
     });
-    let copy_only = cfg.copy_only || focus_moved;
+    // A reply goes to the waiting agent's window (or the clipboard if that
+    // can't be reached safely); Enter, if asked for, is pressed over there.
+    let reply = ctx.reply_target.as_ref().map(|target| {
+        crate::agents::deliver_reply(app, target, &formatted, should_press_enter, cfg.copy_only)
+    });
+    let copy_only = cfg.copy_only || focus_moved || reply.as_ref().is_some_and(|r| r.copied);
     let deliver_started = std::time::Instant::now();
-    let deliver = if formatted.is_empty() {
+    let deliver = if let Some(reply) = &reply {
+        reply.result.clone()
+    } else if formatted.is_empty() {
         Ok(())
     } else if copy_only {
         crate::paste::copy_text(&formatted)
@@ -395,7 +428,7 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
             // and why it doesn't need Accessibility permission),
             // so "press enter" is skipped rather than sending one
             // anyway.
-            if should_press_enter && !copy_only {
+            if should_press_enter && !copy_only && reply.is_none() {
                 if let Err(err) = crate::paste::press_enter() {
                     crate::applog!("press_enter: failed to simulate Enter: {err}");
                 }
@@ -470,7 +503,9 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
                 });
             }
 
-            if focus_moved {
+            if let Some(reply) = &reply {
+                let _ = app.emit("transcript-copied", reply.notice.clone());
+            } else if focus_moved {
                 let _ = app.emit(
                     "transcript-copied",
                     "Copied — you switched apps before it could paste".to_string(),

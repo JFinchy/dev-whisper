@@ -9,8 +9,8 @@ import { defineConfig, devices } from "@playwright/test";
 // - "csp": a production build served with the exact CSP from
 //   tauri.conf.json, running the specs tagged @csp. The fixtures fail a
 //   test on any console error, which is how a CSP violation surfaces.
-const DEV_PORT = 1430;
-const CSP_PORT = 1431;
+const DEV_PORT = Number(process.env.DW_E2E_PORT ?? 1430);
+const CSP_PORT = Number(process.env.DW_E2E_CSP_PORT ?? 1431);
 
 export default defineConfig({
   testDir: "e2e",

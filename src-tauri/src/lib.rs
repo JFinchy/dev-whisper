@@ -1,3 +1,4 @@
+mod agents;
 mod ambient;
 mod app_detect;
 mod audio;
@@ -10,6 +11,7 @@ mod doubletap;
 #[cfg(test)]
 mod e2e_audio;
 mod file_tagging;
+mod focus;
 mod history;
 mod insights;
 mod isolate;
@@ -261,6 +263,14 @@ pub fn run() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, triggered, event| {
+                    if event.state == PressState::Pressed
+                        && app
+                            .try_state::<agents::AgentState>()
+                            .is_some_and(|agents| agents.is_reply_shortcut(triggered))
+                    {
+                        agents::reply_hotkey(app);
+                        return;
+                    }
                     let state = app.state::<PushToTalkState>();
                     let cfg = state.current.lock().unwrap().clone();
                     if let Ok(expected) = shortcut::to_shortcut(&cfg) {
@@ -352,6 +362,15 @@ pub fn run() {
             llm::get_llm_only_when_needed,
             llm::set_llm_only_when_needed,
             readiness::open_accessibility_settings,
+            agents::get_waiting_agents,
+            agents::dismiss_waiting_agent,
+            agents::focus_waiting_agent,
+            agents::get_agent_reply_shortcut,
+            agents::get_agent_reply_shortcut_error,
+            agents::set_agent_reply_shortcut,
+            agents::get_agent_sound_enabled,
+            agents::set_agent_sound_enabled,
+            agents::get_agent_hook_config,
         ])
         .setup(|app| {
             use tauri::Manager;
@@ -381,6 +400,8 @@ pub fn run() {
 
             let shortcut_cfg = saved_config.shortcut.clone().unwrap_or_default();
             app.manage(shortcut::register_initial(app.handle(), shortcut_cfg));
+
+            app.manage(agents::init(app.handle(), &saved_config));
 
             app.manage(DoubleTapState::new(saved_config.double_tap_fn_enabled));
             if saved_config.double_tap_fn_enabled {
@@ -438,6 +459,11 @@ pub fn run() {
                         "toggle-recording" => Request::ToggleDictation(DeepLink),
                         "start-recording" => Request::StartDictation(DeepLink),
                         "stop-recording" => Request::StopDictation(DeepLink),
+                        // From the Claude Code hook script (see agents.rs).
+                        "agent-waiting" | "agent-resumed" => {
+                            agents::handle_link(&deep_link_app, &url);
+                            continue;
+                        }
                         other => {
                             crate::applog!("deep-link: unrecognized action {other:?}");
                             continue;
