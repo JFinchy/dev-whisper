@@ -116,6 +116,12 @@ pub struct Formatted {
     /// "Append clipboard" was spoken; the caller appends the clipboard's
     /// text, since reading it is a side effect.
     pub append_clipboard: bool,
+    /// "Attach the error" was spoken; the caller appends the most recent
+    /// error output as a fenced block (reading it is a side effect).
+    pub attach_error: bool,
+    /// The whole dictation was "scratch that" / "undo that": no text, the
+    /// caller undoes the last paste instead.
+    pub undo_last: bool,
     pub features_used: Vec<String>,
     pub spoken_words: Option<u32>,
     /// Time spent waiting on the LLM, if it was called.
@@ -140,6 +146,23 @@ pub fn format(
     // that the function was called on every dictation.
     let mut features_used: Vec<String> = Vec::new();
     let mut llm_ms = None;
+
+    // A standalone "scratch that" undoes the last paste. Checked first, on
+    // the raw transcript: backtrack (below) only handles the mid-sentence
+    // form and leaves a lone trigger as text.
+    if crate::undo::is_undo_command(&text) {
+        return Formatted {
+            text: String::new(),
+            mode_label: "undo".to_string(),
+            press_enter: false,
+            append_clipboard: false,
+            attach_error: false,
+            undo_last: true,
+            features_used: vec!["undo".to_string()],
+            spoken_words: Some(0),
+            llm_ms: None,
+        };
+    }
 
     // Spoken numbered lists ("one... two...") are expanded before
     // punctuation commands — it needs to see the raw marker words
@@ -190,6 +213,14 @@ pub fn format(
     };
     if should_press_enter {
         features_used.push("press_enter".to_string());
+    }
+
+    // "Attach the error": stripped the same way, after "press enter" (the
+    // later-spoken phrase goes first). Always on: the phrases are
+    // deliberate, and nothing happens beyond appending a block.
+    let (text, should_attach_error) = crate::error_context::try_extract_trigger(&text);
+    if should_attach_error {
+        features_used.push("attach_error".to_string());
     }
 
     // Word count of what was actually spoken, captured here (post
@@ -340,6 +371,8 @@ pub fn format(
         mode_label,
         press_enter: should_press_enter,
         append_clipboard: should_append_clipboard,
+        attach_error: should_attach_error,
+        undo_last: false,
         features_used,
         spoken_words,
         llm_ms,
@@ -372,6 +405,8 @@ mod golden {
         expect_label: Option<String>,
         expect_press_enter: Option<bool>,
         expect_append_clipboard: Option<bool>,
+        expect_attach_error: Option<bool>,
+        expect_undo_last: Option<bool>,
         expect_llm_called: Option<bool>,
     }
 
@@ -482,6 +517,19 @@ mod golden {
                         "append_clipboard {}, expected {append}",
                         out.append_clipboard
                     ));
+                }
+            }
+            if let Some(attach) = case.expect_attach_error {
+                if out.attach_error != attach {
+                    problems.push(format!(
+                        "attach_error {}, expected {attach}",
+                        out.attach_error
+                    ));
+                }
+            }
+            if let Some(undo) = case.expect_undo_last {
+                if out.undo_last != undo {
+                    problems.push(format!("undo_last {}, expected {undo}", out.undo_last));
                 }
             }
             if let Some(called) = case.expect_llm_called {

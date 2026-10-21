@@ -100,6 +100,44 @@ pub fn press_enter() -> Result<(), String> {
     Ok(())
 }
 
+fn require_accessibility() -> Result<(), String> {
+    if accessibility_trusted() {
+        Ok(())
+    } else {
+        Err(
+            "Accessibility permission not granted. Enable Dev Whisper in System Settings > \
+             Privacy & Security > Accessibility, then try again."
+                .to_string(),
+        )
+    }
+}
+
+/// Simulates Cmd+Z, for "scratch that" in apps with a real undo stack (see
+/// `undo.rs` for when this is allowed).
+pub fn send_undo() -> Result<(), String> {
+    require_accessibility()?;
+    send(EventType::KeyPress(Key::MetaLeft))?;
+    thread::sleep(Duration::from_millis(40));
+    send(EventType::KeyPress(Key::KeyZ))?;
+    send(EventType::KeyRelease(Key::KeyZ))?;
+    send(EventType::KeyRelease(Key::MetaLeft))?;
+    Ok(())
+}
+
+/// Simulates exactly `count` Backspace presses, for "scratch that" in
+/// terminals: deletes what was pasted and nothing else.
+pub fn send_backspaces(count: usize) -> Result<(), String> {
+    require_accessibility()?;
+    // Tighter than `send`'s 20ms gap, which would take seconds for a long
+    // line; the count is capped well below where this could drop events.
+    for _ in 0..count {
+        simulate(&EventType::KeyPress(Key::Backspace)).map_err(|e| format!("{e:?}"))?;
+        simulate(&EventType::KeyRelease(Key::Backspace)).map_err(|e| format!("{e:?}"))?;
+        thread::sleep(Duration::from_millis(4));
+    }
+    Ok(())
+}
+
 fn send(event: EventType) -> Result<(), String> {
     simulate(&event).map_err(|e| format!("{e:?}"))?;
     thread::sleep(Duration::from_millis(20));

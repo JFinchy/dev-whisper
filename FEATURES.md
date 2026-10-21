@@ -73,6 +73,25 @@ built yet.
   system clipboard gets appended to what you said, so a copied stack
   trace, URL, or code snippet doesn't have to be read aloud. Appended raw,
   after mode formatting/LLM refinement, so it's pasted verbatim.
+- **"Send it"** — alias for the trailing "press enter" (same Settings
+  toggle), also "submit it". Unlike "press enter" it counts only as the
+  whole utterance or right after a comma/period, so "I'll send it
+  tomorrow" and "fix the bug and send it" are pasted as written.
+- **Attach the error** — end with "attach the error" (or "attach the
+  error message", or ", with the error") and the latest error output is
+  appended as a fenced code block. Source: the frontmost terminal's
+  visible text via Accessibility (Terminal.app, iTerm2), else the
+  clipboard if it looks like an error. The last error-looking block
+  (rustc/cargo, tsc, Python, Node, Jest, Vitest, Playwright, pytest) is
+  picked, capped at 60 lines. Nothing found: pastes your words and shows
+  "No error found to attach". Captured text is never logged, only line
+  counts.
+- **Scratch that / undo that** (whole dictation) — undoes the last Dev
+  Whisper paste: Cmd+Z in editors/browsers/chat (within 30s), exactly N
+  backspaces in terminals (single-line ASCII paste, within 15s, not
+  submitted), never Ctrl+U. If the app changed or it can't be done
+  safely, nothing is sent and the widget says "Couldn't undo safely
+  here". Mid-sentence "scratch that" is still Backtrack.
 
 ## History
 

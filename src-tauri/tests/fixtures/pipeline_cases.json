@@ -94,6 +94,88 @@
     "expect_append_clipboard": true
   },
   {
+    "name": "send it after a break is press enter",
+    "input": "Fix the failing test. Send it.",
+    "mode": "plain",
+    "press_enter_enabled": true,
+    "expect": "Fix the failing test.",
+    "expect_press_enter": true
+  },
+  {
+    "name": "send it inside a sentence stays text",
+    "input": "Fix the failing test and send it.",
+    "mode": "plain",
+    "press_enter_enabled": true,
+    "expect": "Fix the failing test and send it.",
+    "expect_press_enter": false
+  },
+  {
+    "name": "send it mid-sentence stays text",
+    "input": "I'll send it tomorrow.",
+    "mode": "plain",
+    "press_enter_enabled": true,
+    "expect": "I'll send it tomorrow.",
+    "expect_press_enter": false
+  },
+  {
+    "name": "send it is off without the press enter setting",
+    "input": "Fix the failing test. Send it.",
+    "mode": "plain",
+    "expect": "Fix the failing test. Send it.",
+    "expect_press_enter": false
+  },
+  {
+    "name": "attach the error is stripped and flagged",
+    "input": "Why does this test fail, attach the error.",
+    "mode": "plain",
+    "expect": "Why does this test fail",
+    "expect_attach_error": true
+  },
+  {
+    "name": "attach the error then send it",
+    "input": "Why does this test fail? Attach the error. Send it.",
+    "mode": "plain",
+    "press_enter_enabled": true,
+    "expect": "Why does this test fail?",
+    "expect_attach_error": true,
+    "expect_press_enter": true
+  },
+  {
+    "name": "attach the error handler is ordinary text",
+    "input": "Attach the error handler to the router.",
+    "mode": "plain",
+    "expect": "Attach the error handler to the router.",
+    "expect_attach_error": false
+  },
+  {
+    "name": "with the error needs a break before it",
+    "input": "I am stuck with the error.",
+    "mode": "plain",
+    "expect": "I am stuck with the error.",
+    "expect_attach_error": false
+  },
+  {
+    "name": "standalone scratch that undoes the last paste",
+    "input": "Scratch that.",
+    "mode": "plain",
+    "expect": "",
+    "expect_undo_last": true
+  },
+  {
+    "name": "standalone undo that undoes the last paste",
+    "input": "undo that",
+    "mode": "cli",
+    "expect": "",
+    "expect_undo_last": true
+  },
+  {
+    "name": "scratch that mid-sentence is still a backtrack",
+    "input": "Call the client at three scratch that four.",
+    "mode": "plain",
+    "expect": "Call the client at four.",
+    "expect_undo_last": false
+  },
+  {
     "name": "snake case",
     "input": "Snake case error response handler",
     "mode": "plain",

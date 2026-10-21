@@ -9,6 +9,7 @@ mod config;
 mod doubletap;
 #[cfg(test)]
 mod e2e_audio;
+mod error_context;
 mod file_tagging;
 mod history;
 mod insights;
@@ -29,6 +30,7 @@ mod snippets;
 mod stt;
 mod syntax;
 mod theme;
+mod undo;
 mod voice_isolation;
 mod webhook;
 mod widget;
@@ -410,6 +412,7 @@ pub fn run() {
                 active_app: Mutex::new(None),
                 mode_override: Mutex::new(None),
                 skip_refine: Default::default(),
+                last_paste: Default::default(),
             });
 
             let voice_isolation = VoiceIsolationState::new();
