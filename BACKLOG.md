@@ -674,6 +674,28 @@ build phases.
   blocks everything except localhost Ollama. Turns the privacy claim into
   something users can check.
 
+- **Rename the app** (idea captured 2026-10-22, deferred: not changing
+  yet). A Mac App Store app called "DevWhisper" (devwhisper.app) does
+  AI-refined dictation with a dark, terminal-style site close to ours, and
+  "whisper" is crowded (Wispr Flow, Superwhisper, MacWhisper). Options,
+  with domains that had no DNS records on 2026-10-22 (confirm with a
+  registrar before deciding):
+  - **Mouthpiece** (mouthpiece.dev) — the current favourite.
+  - **Sotto**, from "sotto voce" (sottocode.dev, sottocode.app).
+  - **Hushprompt** (hushprompt.dev, hushprompt.app).
+  - **Prompt Aloud** (promptaloud.dev, promptaloud.app).
+  Every short dictionary name tried (sotto, hark, utter, murmur, earshot,
+  parley, diction) is taken on .dev and .app. A rename touches the
+  product name, bundle identifier (which resets users' macOS permission
+  grants and the app data folder, so it needs a migration), the
+  `devwhisper://` link scheme (scripts and the Claude Code hook use it),
+  the updater endpoint, the repo name, and the website.
+
+- **New app icon** (idea captured 2026-10-22). The current icon (code
+  brackets over dense sound-wave bars) is busy at small sizes. A prompt
+  for exploring directions with an image model is in
+  `docs/icon-prompt.md`; best done together with, or after, a rename.
+
 ## Research / Exploration
 
 - **Competitive landscape: dictation/Whisper tools beyond SuperWhisper**

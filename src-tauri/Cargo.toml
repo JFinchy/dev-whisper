@@ -5,6 +5,7 @@ version = "0.3.1"
 # macOS permission grants are tied to it (see scripts/dev-sign-runner.sh).
 description = "Dev Whisper: local, private dictation for developers"
 authors = ["Jake Finch"]
+license = "MIT"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

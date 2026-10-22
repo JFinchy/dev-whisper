@@ -155,3 +155,7 @@ Settings → Advanced → Logs).
   weren't signed as a whole bundle, which macOS reports as "damaged"; for
   those, run `xattr -dr com.apple.quarantine "/Applications/Dev Whisper.app"`
   or install 0.3.1 or later.
+
+## License
+
+[MIT](LICENSE)
