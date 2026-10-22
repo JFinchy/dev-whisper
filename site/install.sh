@@ -47,17 +47,37 @@ app="$tmp/mnt/$APP_NAME"
 codesign --verify --deep --strict "$app" 2>/dev/null || fail "the app's signature check failed, so it wasn't installed."
 
 mkdir -p "$APP_DIR" 2>/dev/null || true
-dest="$APP_DIR/$APP_NAME"
-if [ ! -w "$APP_DIR" ] || { [ -e "$dest" ] && [ ! -w "$dest" ]; }; then
-  fail "can't write to $APP_DIR. Run it with DW_APP_DIR=~/Applications, or ask an admin."
+# Without admin rights /Applications is read-only; use the user's own
+# Applications folder instead (unless a folder was asked for).
+if [ ! -w "$APP_DIR" ] && [ -z "${DW_APP_DIR:-}" ]; then
+  APP_DIR="$HOME/Applications"
+  mkdir -p "$APP_DIR"
+  echo "No write access to /Applications, so installing into ~/Applications."
 fi
+[ -w "$APP_DIR" ] || fail "can't write to $APP_DIR."
+dest="$APP_DIR/$APP_NAME"
 
 if pgrep -f "$dest/Contents/MacOS/" >/dev/null 2>&1; then
   fail "Dev Whisper is running. Quit it from the menu bar, then run this again."
 fi
 
-rm -rf "$dest"
-ditto "$app" "$dest" || fail "copying into $APP_DIR failed."
+# Copy the new app in beside the old one, then swap them, so a step macOS
+# blocks never leaves a half-deleted app behind.
+staged="$APP_DIR/.Dev Whisper.installing.app"
+rm -rf "$staged"
+ditto "$app" "$staged" || fail "copying into $APP_DIR failed."
+if [ -e "$dest" ] && ! mv "$dest" "$tmp/previous.app" 2>/dev/null; then
+  rm -rf "$staged"
+  fail "macOS didn't let your terminal replace the Dev Whisper already in $APP_DIR.
+Its App Management setting protects installed apps. Either drag that copy
+of Dev Whisper to the Trash and run this again, or allow your terminal in
+System Settings > Privacy & Security > App Management."
+fi
+if ! mv "$staged" "$dest"; then
+  [ -e "$tmp/previous.app" ] && mv "$tmp/previous.app" "$dest"
+  rm -rf "$staged"
+  fail "couldn't move the new app into $APP_DIR; the old one is unchanged."
+fi
 echo "Installed $dest"
 
 if [ -z "${DW_NO_OPEN:-}" ]; then
