@@ -58,8 +58,9 @@ symbol names, locally, is what nobody else does. Everything stays in-app
 for now (no repo-committed config yet, see `.devwhisper.json` in
 `BACKLOG.md`).
 
-Built and merged into `main` on 2026-10-21 (not yet released); each has a
-manual-testing-inbox file and needs a real-Mac pass before release:
+Built and merged on 2026-10-21, shipped in v0.3.0 on 2026-10-22 after a
+code review, before the manual pass. Each still has a manual-testing-inbox
+file awaiting a real-Mac check:
 
 1. **Codebase-aware vocabulary** — detect the project behind the
    frontmost terminal/editor, collect its file, symbol, dependency and
