@@ -340,8 +340,17 @@ pub struct LiveSession {
 impl LiveSession {
     pub fn start(app: &AppHandle) -> Self {
         let (finish_tx, finish_rx) = mpsc::channel();
+        // A reply is set before its recording starts and taken at stop, so
+        // read it now: every chunk then uses the same mode (and speech
+        // model) as the tail transcribed at stop.
+        let reply = app
+            .try_state::<crate::agents::AgentState>()
+            .and_then(|agents| agents.pending_reply());
+        // Called right after `AudioHandle::start`, so this is the
+        // recording this session belongs to.
+        let generation = app.state::<RecordingState>().audio.generation();
         let app = app.clone();
-        let handle = std::thread::spawn(move || run(&app, finish_rx));
+        let handle = std::thread::spawn(move || run(&app, finish_rx, reply, generation));
         Self { finish_tx, handle }
     }
 
@@ -359,7 +368,12 @@ struct Transcripts {
     failed: bool,
 }
 
-fn run(app: &AppHandle, finish_rx: mpsc::Receiver<Vec<f32>>) -> LiveOutcome {
+fn run(
+    app: &AppHandle,
+    finish_rx: mpsc::Receiver<Vec<f32>>,
+    reply: Option<crate::agents::WaitingAgent>,
+    generation: u64,
+) -> LiveOutcome {
     let vad = match create_vad(app) {
         Ok(vad) => vad,
         Err(err) => {
@@ -377,7 +391,7 @@ fn run(app: &AppHandle, finish_rx: mpsc::Receiver<Vec<f32>>) -> LiveOutcome {
     let (job_tx, job_rx) = mpsc::sync_channel::<Vec<f32>>(QUEUE_DEPTH);
     let transcriber = {
         let (app, transcripts) = (app.clone(), transcripts.clone());
-        std::thread::spawn(move || transcribe_jobs(&app, &job_rx, &transcripts))
+        std::thread::spawn(move || transcribe_jobs(&app, &job_rx, &transcripts, reply.as_ref()))
     };
 
     let mut is_speech = |window: &[f32]| {
@@ -401,7 +415,10 @@ fn run(app: &AppHandle, finish_rx: mpsc::Receiver<Vec<f32>>) -> LiveOutcome {
             }
             Err(RecvTimeoutError::Timeout) => {}
         }
-        let (raw, channels, rate) = app.state::<RecordingState>().audio.recorded_since(offset);
+        let (raw, channels, rate) = app
+            .state::<RecordingState>()
+            .audio
+            .recorded_since(offset, generation);
         if raw.is_empty() || rate == 0 {
             continue;
         }
@@ -449,10 +466,11 @@ fn transcribe_jobs(
     app: &AppHandle,
     jobs: &mpsc::Receiver<Vec<f32>>,
     transcripts: &Mutex<Transcripts>,
+    reply: Option<&crate::agents::WaitingAgent>,
 ) {
     for audio in jobs {
         let state = app.state::<RecordingState>();
-        let model = crate::recording::resolve_mode(app, false, None).model;
+        let model = crate::recording::resolve_mode(app, false, reply).model;
         let context = join_texts(&transcripts.lock().unwrap().texts);
         let started = Instant::now();
         let audio_s = audio.len() as f32 / SAMPLE_RATE as f32;

@@ -509,7 +509,14 @@ pub(crate) fn process_transcript(app: &AppHandle, text: String, ctx: TranscriptC
     );
 
     if undo_last {
-        undo_last_paste(app);
+        if ctx.reply_target.is_some() {
+            // In a reply, "scratch that" cancels the reply. Undoing would
+            // hit whatever app is in front, which isn't the agent's.
+            crate::applog!("agents: reply cancelled by \"scratch that\"");
+            let _ = app.emit("transcript-copied", "Reply cancelled".to_string());
+        } else {
+            undo_last_paste(app);
+        }
         return;
     }
 

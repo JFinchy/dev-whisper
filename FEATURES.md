@@ -222,9 +222,16 @@ built yet.
   window) and plays a soft system sound (toggle in Settings). A separate
   reply shortcut (default ⌃⌥R) records a dictation for the newest waiting
   agent: when ready, Dev Whisper raises the agent's window through the
-  Accessibility API, confirms that app is frontmost, pastes (ending with
-  "send it" or "press enter" also presses Enter), and returns focus to
-  the app and window you were in. Timings are logged to `app.log`.
+  Accessibility API, confirms that app is frontmost, pastes, and returns
+  focus to the app and window you were in. Ending with "press enter" (or
+  "send it" after a pause) asks for Enter, which is pressed only when the
+  window title names the agent's terminal device (tty); otherwise the
+  selected tab could be a plain shell in the same folder, where Enter
+  would run the reply as a command, so the text is pasted and focus stays
+  there for you to check and press Return. "Scratch that" as a reply
+  cancels it. The installed hook script carries a random per-install
+  token (readable only by you) and links without it are ignored, so a web
+  page can't pose as a waiting agent. Timings are logged to `app.log`.
   Settings > Coding agents has the hook snippet with a copy button, the
   shortcut, the sound toggle and the waiting list.
   Limits: the window is identified only by title (folder name or tty), so
@@ -232,7 +239,7 @@ built yet.
   often don't name the folder; with several windows and no match, the
   reply is copied to the clipboard instead of guessing. With a single
   window, tabs and split panes can't be selected, so the reply goes to
-  whichever is showing. It never pastes into a different app. Answering a
+  whichever is showing (and isn't submitted). It never pastes into a different app. Answering a
   permission prompt in the terminal yourself doesn't clear the pill until
   the next prompt you submit, a Stop, or expiry.
 

@@ -51,7 +51,8 @@ pub fn try_apply_casing_command(text: &str) -> Option<String> {
     // `to_lowercase()` on ASCII directive words doesn't change byte length,
     // so slicing the original-casing `trimmed` at `phrase.len()` stays
     // aligned with what we matched in `lower`.
-    let rest = trimmed[phrase.len()..]
+    let rest = trimmed
+        .get(phrase.len()..)?
         .trim_start_matches([':', ','])
         .trim();
     let rest = rest.trim_end_matches('.');

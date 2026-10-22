@@ -36,25 +36,27 @@ const GUARDED_TRIGGERS: &[&str] = &["with the error message", "with the error"];
 pub fn try_extract_trigger(text: &str) -> (String, bool) {
     let trimmed = text.trim();
     let without_trailing_punct = trimmed.trim_end_matches(['.', '!', '?']).trim_end();
-    let lower = without_trailing_punct.to_lowercase();
 
     for phrase in TRIGGERS.iter().chain(GUARDED_TRIGGERS) {
         let guarded = GUARDED_TRIGGERS.contains(phrase);
-        if lower == *phrase {
+        // Matched on the original text, not a lowercased copy: lowercasing
+        // can change the byte length of earlier non-ASCII words.
+        let Some(prefix) =
+            crate::clipboard::strip_suffix_ignore_case(without_trailing_punct, phrase)
+        else {
+            continue;
+        };
+        if prefix.is_empty() {
             return (String::new(), true);
         }
-        // ASCII phrases: lowercasing keeps byte offsets aligned.
-        if let Some(prefix) = lower.strip_suffix(phrase) {
-            if !prefix.ends_with(' ') {
-                continue;
-            }
-            if guarded && !prefix.trim_end().ends_with([',', '.', ';', '!', '?', ':']) {
-                continue;
-            }
-            let remaining =
-                without_trailing_punct[..prefix.len()].trim_end_matches([' ', ',', ';']);
-            return (remaining.to_string(), true);
+        if !prefix.ends_with(' ') {
+            continue;
         }
+        if guarded && !prefix.trim_end().ends_with([',', '.', ';', '!', '?', ':']) {
+            continue;
+        }
+        let remaining = prefix.trim_end_matches([' ', ',', ';']);
+        return (remaining.to_string(), true);
     }
     (text.to_string(), false)
 }
@@ -301,17 +303,7 @@ pub fn read_terminal_text(_pid: i32) -> Option<String> {
 
 /// Bundle ids of terminal emulators worth reading with Accessibility.
 pub fn is_terminal_app(bundle_id: &str) -> bool {
-    matches!(
-        bundle_id,
-        "com.apple.Terminal"
-            | "com.googlecode.iterm2"
-            | "dev.warp.Warp-Stable"
-            | "com.github.wez.wezterm"
-            | "net.kovidgoyal.kitty"
-            | "org.alacritty"
-            | "com.mitchellh.ghostty"
-            | "co.zeit.hyper"
-    )
+    crate::project::is_terminal(bundle_id)
 }
 
 /// Raw Accessibility (AX) reads. Terminal.app and iTerm2 expose their
@@ -450,6 +442,19 @@ mod ax {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trigger_after_text_whose_lowercase_changes_length() {
+        // "İ" lowercases to two chars, which used to misplace the cut.
+        assert_eq!(
+            try_extract_trigger("İzmir build failed, attach the error"),
+            ("İzmir build failed".to_string(), true)
+        );
+        assert_eq!(
+            try_extract_trigger("Attach the error."),
+            (String::new(), true)
+        );
+    }
 
     fn block(text: &str) -> String {
         extract_error_block(text).expect("expected an error block")

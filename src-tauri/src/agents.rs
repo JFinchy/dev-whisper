@@ -29,6 +29,7 @@ const SETTLE_AFTER_RAISE: Duration = Duration::from_millis(90);
 const SETTLE_AFTER_PASTE: Duration = Duration::from_millis(220);
 
 const HOOK_SCRIPT: &str = include_str!("../resources/dev-whisper-hook");
+const TOKEN_PLACEHOLDER: &str = "__DEV_WHISPER_TOKEN__";
 const SOUND_PATH: &str = "/System/Library/Sounds/Tink.aiff";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -312,7 +313,11 @@ fn parse_ps(output: &str) -> Option<ProcInfo> {
 
 #[derive(Debug, PartialEq)]
 pub enum WindowChoice {
-    /// A window title names the agent's folder (or terminal device).
+    /// A window title names the agent's terminal device, so the tab or pane
+    /// in front is the agent's own.
+    Tty(usize),
+    /// A window title names the agent's folder. The selected tab or pane in
+    /// it could still be a different shell in the same folder.
     Match(usize),
     /// Nothing names it, but the app has only one window.
     Only(usize),
@@ -338,7 +343,7 @@ pub fn choose_window(
 
     if let Some(tty) = &tty {
         if let [only] = hits(tty)[..] {
-            return Ok(WindowChoice::Match(only));
+            return Ok(WindowChoice::Tty(only));
         }
     }
     match hits(&folder)[..] {
@@ -353,16 +358,19 @@ pub fn choose_window(
     }
 }
 
-/// In a reply, "send it" means the same as "press enter".
+/// In a reply, "send it" (or "send that") after a clause break means the
+/// same as "press enter".
 pub fn normalize_reply(text: &str) -> String {
     let trimmed = text.trim().trim_end_matches(['.', '!', '?']).trim_end();
-    let lower = trimmed.to_lowercase();
     for phrase in ["send it", "send that"] {
-        if let Some(prefix) = lower.strip_suffix(phrase) {
-            if prefix.is_empty() || prefix.ends_with(' ') || prefix.ends_with(',') {
-                let head = trimmed.get(..prefix.len()).unwrap_or_default().trim_end();
-                return format!("{head} press enter").trim().to_string();
-            }
+        let Some(prefix) = crate::clipboard::strip_suffix_ignore_case(trimmed, phrase) else {
+            continue;
+        };
+        // Same rule as `extract_press_enter`: only after a clause break, so
+        // "fix the bug and send it" stays a sentence.
+        let head = prefix.trim_end();
+        if head.is_empty() || crate::punctuation::ends_clause(head) {
+            return format!("{head} press enter").trim().to_string();
         }
     }
     text.to_string()
@@ -371,6 +379,9 @@ pub fn normalize_reply(text: &str) -> String {
 // -------------------------------------------------------------------- state
 
 pub struct AgentState {
+    /// Secret written into the installed hook script. Agent links must
+    /// carry it, because any web page can open a `devwhisper://` link.
+    token: Option<String>,
     queue: Mutex<AgentQueue>,
     /// The agent the dictation now being recorded is for.
     pending_reply: Mutex<Option<WaitingAgent>>,
@@ -389,6 +400,11 @@ pub fn default_reply_shortcut() -> ShortcutConfig {
 }
 
 impl AgentState {
+    /// The agent the recording in progress is for, left in place.
+    pub fn pending_reply(&self) -> Option<WaitingAgent> {
+        self.pending_reply.lock().unwrap().clone()
+    }
+
     pub fn take_pending_reply(&self) -> Option<WaitingAgent> {
         self.pending_reply.lock().unwrap().take()
     }
@@ -409,10 +425,16 @@ pub fn init(app: &AppHandle, cfg: &config::AppConfig) -> AgentState {
     if let Some(err) = &error {
         crate::applog!("agents: could not register reply shortcut {shortcut:?}: {err}");
     }
-    if let Err(err) = install_hook_script(app) {
-        crate::applog!("agents: could not install the hook script: {err}");
+    let token = hook_token(app)
+        .map_err(|err| crate::applog!("agents: could not set up the hook token: {err}"))
+        .ok();
+    if let Some(token) = &token {
+        if let Err(err) = install_hook_script(app, token) {
+            crate::applog!("agents: could not install the hook script: {err}");
+        }
     }
     AgentState {
+        token,
         queue: Default::default(),
         pending_reply: Default::default(),
         shortcut: Mutex::new(shortcut),
@@ -432,18 +454,64 @@ fn hook_script_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     Ok(dir.join("bin").join("dev-whisper-hook"))
 }
 
+/// This install's hook token: read from the app data folder, or created
+/// there (readable only by the user) on first launch.
+fn hook_token(app: &AppHandle) -> Result<String, String> {
+    use std::io::Read;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let path = dir.join("agent-hook-token");
+    if let Ok(saved) = std::fs::read_to_string(&path) {
+        let saved = saved.trim();
+        if saved.len() >= 32 && saved.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Ok(saved.to_string());
+        }
+    }
+    let mut bytes = [0u8; 16];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut bytes))
+        .map_err(|e| e.to_string())?;
+    let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(&path);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, token.as_bytes()))
+        .map_err(|e| e.to_string())?;
+    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    Ok(token)
+}
+
+/// The hook script with this install's token filled in.
+pub fn hook_script_with_token(token: &str) -> String {
+    HOOK_SCRIPT.replace(TOKEN_PLACEHOLDER, token)
+}
+
+/// Whether a link carries this install's token.
+pub fn link_has_token(url: &tauri::Url, token: &str) -> bool {
+    url.query_pairs()
+        .any(|(k, v)| k == "token" && v.as_bytes() == token.as_bytes())
+}
+
 /// Keeps a copy of the hook script at a stable path outside the app bundle,
 /// so the snippet in `~/.claude/settings.json` survives app updates and
-/// works from a dev build too.
-fn install_hook_script(app: &AppHandle) -> Result<(), String> {
+/// works from a dev build too. Only the user can read it, since it holds
+/// the token.
+fn install_hook_script(app: &AppHandle, token: &str) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     let path = hook_script_path(app)?;
-    if std::fs::read_to_string(&path).is_ok_and(|current| current == HOOK_SCRIPT) {
-        return Ok(());
+    let script = hook_script_with_token(token);
+    let dir = path.parent().ok_or("no folder for the hook script")?;
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+        .map_err(|e| e.to_string())?;
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(script.as_str()) {
+        std::fs::write(&path, &script).map_err(|e| e.to_string())?;
     }
-    std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
-    std::fs::write(&path, HOOK_SCRIPT).map_err(|e| e.to_string())?;
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
         .map_err(|e| e.to_string())
 }
 
@@ -472,6 +540,11 @@ fn emit_changed(app: &AppHandle) {
 /// Handles `agent-waiting` and `agent-resumed` links. Resolving the owning
 /// app shells out to `ps`, so it runs off the deep-link callback.
 pub fn handle_link(app: &AppHandle, url: &tauri::Url) {
+    let token = app.state::<AgentState>().token.clone();
+    if !token.is_some_and(|token| link_has_token(url, &token)) {
+        crate::applog!("agents: ignoring a link without this install's token");
+        return;
+    }
     let event = match parse_link(url) {
         Ok(event) => event,
         Err(err) => {
@@ -601,6 +674,11 @@ fn copied(text: &str, why: String) -> ReplyOutcome {
 /// Hops to the agent's window, pastes (and presses Enter if asked), and
 /// hops back. Falls back to the clipboard whenever it can't be sure the
 /// text will land in the agent's app.
+///
+/// Enter is only pressed when the window title names the agent's own
+/// terminal device. Otherwise the selected tab could be a plain shell in the
+/// same folder, where Enter would run the reply as a command, so the text
+/// is pasted and focus stays there for the user to check and press Return.
 pub fn deliver_reply(
     app: &AppHandle,
     target: &WaitingAgent,
@@ -637,7 +715,7 @@ pub fn deliver_reply(
     let raised = crate::focus::raise_chosen(pid, &|titles| {
         let picked = choose_window(titles, &folder, tty.as_deref())?;
         let index = match &picked {
-            WindowChoice::Match(i) | WindowChoice::Only(i) => *i,
+            WindowChoice::Tty(i) | WindowChoice::Match(i) | WindowChoice::Only(i) => *i,
         };
         choice.set(Some(picked));
         Ok(index)
@@ -671,7 +749,7 @@ pub fn deliver_reply(
     }
     std::thread::sleep(SETTLE_AFTER_RAISE);
     let kind = choice.take().unwrap_or(WindowChoice::Only(0));
-    if matches!(kind, WindowChoice::Match(_))
+    if matches!(kind, WindowChoice::Tty(_) | WindowChoice::Match(_))
         && crate::focus::focused_window_title(pid).is_some_and(|now| now != title)
     {
         if let Some(snapshot) = &previous {
@@ -688,8 +766,10 @@ pub fn deliver_reply(
     } else {
         crate::paste::paste_text(text)
     };
+    let tab_confirmed = matches!(kind, WindowChoice::Tty(_));
+    let hold = press_enter && !tab_confirmed;
     let delivered = delivered.and_then(|()| {
-        if press_enter {
+        if press_enter && !hold {
             crate::paste::press_enter()
         } else {
             Ok(())
@@ -697,11 +777,11 @@ pub fn deliver_reply(
     });
     let pasted_ms = started.elapsed().as_millis();
 
-    // Return to wherever the user was.
+    // Return to wherever the user was, unless they need to press Return.
     std::thread::sleep(SETTLE_AFTER_PASTE);
     let returned = match &previous {
-        Some(snapshot) => crate::focus::restore(snapshot),
-        None => false,
+        Some(snapshot) if !hold => crate::focus::restore(snapshot),
+        _ => false,
     };
     crate::applog!(
         "agents: reply hop app={app_label} window={title:?} raise={raise_ms}ms paste={}ms \
@@ -710,7 +790,7 @@ pub fn deliver_reply(
         started.elapsed().as_millis()
     );
 
-    if delivered.is_ok() {
+    if delivered.is_ok() && !hold {
         // Answered, so it stops showing as waiting.
         app.state::<AgentState>()
             .queue
@@ -721,7 +801,10 @@ pub fn deliver_reply(
     }
 
     let notice = match delivered {
-        Ok(()) if matches!(kind, WindowChoice::Match(_)) => {
+        Ok(()) if hold => format!(
+            "Pasted in {app_label}. Check it's the {folder} agent's tab, then press Return."
+        ),
+        Ok(()) if matches!(kind, WindowChoice::Tty(_) | WindowChoice::Match(_)) => {
             format!("Sent to {folder} in {app_label}")
         }
         Ok(()) => format!("Sent to {app_label} (can't pick the exact tab)"),
@@ -771,7 +854,7 @@ pub fn focus_waiting_agent(app: AppHandle, session_id: String) -> Result<String,
         &target.folder,
         target.tty.as_deref(),
     )? {
-        WindowChoice::Match(i) | WindowChoice::Only(i) => Ok(i),
+        WindowChoice::Tty(i) | WindowChoice::Match(i) | WindowChoice::Only(i) => Ok(i),
     })
     .map_err(|why| format!("Couldn't reach {app_label}: {why}."))?;
     crate::applog!("agents: focused {} in {app_label}", target.folder);

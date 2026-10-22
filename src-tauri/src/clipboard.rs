@@ -19,26 +19,27 @@ const TRIGGERS: &[&str] = &["append clipboard", "paste clipboard", "insert clipb
 pub fn try_extract_trigger(text: &str) -> (String, bool) {
     let trimmed = text.trim();
     let without_trailing_punct = trimmed.trim_end_matches(['.', '!', '?']).trim_end();
-    let lower = without_trailing_punct.to_lowercase();
 
     for phrase in TRIGGERS {
-        if lower == *phrase {
-            return (String::new(), true);
-        }
-
-        // `to_lowercase()` on these ASCII phrases doesn't change byte
-        // length, so slicing `without_trailing_punct` at `prefix.len()`
-        // stays aligned with what matched in `lower` — same technique as
-        // `syntax::try_apply_casing_command`.
-        if let Some(prefix) = lower.strip_suffix(phrase) {
+        if let Some(prefix) = strip_suffix_ignore_case(without_trailing_punct, phrase) {
             if prefix.is_empty() || prefix.ends_with(' ') {
-                let remaining = without_trailing_punct[..prefix.len()].trim_end();
-                return (remaining.to_string(), true);
+                return (prefix.trim_end().to_string(), true);
             }
         }
     }
 
     (text.to_string(), false)
+}
+
+/// `text` without a trailing ASCII `phrase`, compared ignoring case. Works
+/// on the original string, so non-ASCII text before the phrase (whose
+/// lowercase form can be a different length) can't misalign the cut.
+pub fn strip_suffix_ignore_case<'a>(text: &'a str, phrase: &str) -> Option<&'a str> {
+    let cut = text.len().checked_sub(phrase.len())?;
+    if !text.is_char_boundary(cut) || !text[cut..].eq_ignore_ascii_case(phrase) {
+        return None;
+    }
+    Some(&text[..cut])
 }
 
 /// `None` covers both an unreadable clipboard (locked, another app holding

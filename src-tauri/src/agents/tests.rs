@@ -292,7 +292,7 @@ fn the_tty_wins_over_the_folder() {
     let t = titles(&["dev-whisper — a", "dev-whisper — b — ttys004"]);
     assert_eq!(
         choose_window(&t, "dev-whisper", Some("ttys004")),
-        Ok(WindowChoice::Match(1))
+        Ok(WindowChoice::Tty(1))
     );
 }
 
@@ -332,6 +332,10 @@ fn send_it_becomes_press_enter() {
 fn send_it_inside_a_sentence_is_left_alone() {
     assert_eq!(normalize_reply("Don't send it yet"), "Don't send it yet");
     assert_eq!(normalize_reply("resend it"), "resend it");
+    assert_eq!(
+        normalize_reply("Fix the bug and send it"),
+        "Fix the bug and send it"
+    );
 }
 
 #[test]
@@ -368,6 +372,22 @@ fn default_reply_shortcut_is_valid_and_not_the_default_push_to_talk() {
 
 // ---- the real hook script, with a fake `open`
 
+const TEST_TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
+#[test]
+fn hook_links_carry_the_install_token() {
+    let json = r#"{"session_id":"s","cwd":"/tmp/x","hook_event_name":"Stop"}"#;
+    let opened = run_hook("token", json, &[]).expect("opened a link");
+    let link = url(opened.trim_start_matches("-g "));
+    assert!(link_has_token(&link, TEST_TOKEN));
+    assert!(!link_has_token(&link, "ffffffffffffffffffffffffffffffff"));
+    assert!(!link_has_token(
+        &url("devwhisper://agent-waiting?session=s&cwd=/tmp/x"),
+        TEST_TOKEN
+    ));
+    assert!(!hook_script_with_token(TEST_TOKEN).contains(TOKEN_PLACEHOLDER));
+}
+
 fn run_hook(name: &str, stdin: &str, extra_env: &[(&str, &str)]) -> Option<String> {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
@@ -383,7 +403,8 @@ fn run_hook(name: &str, stdin: &str, extra_env: &[(&str, &str)]) -> Option<Strin
     .unwrap();
     std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/resources/dev-whisper-hook");
+    let script = dir.join("dev-whisper-hook");
+    std::fs::write(&script, hook_script_with_token(TEST_TOKEN)).unwrap();
     let mut cmd = std::process::Command::new("/bin/sh");
     cmd.arg(script)
         .env("DEV_WHISPER_OPEN", &fake)

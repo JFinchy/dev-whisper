@@ -32,6 +32,9 @@ test.describe("coding agents: widget", () => {
     await expect(pill).toHaveText("Claude is waiting · dev-whisper");
     await expect(pill).toHaveAttribute("title", /needs your permission.*Terminal.*⌃⌥R/);
 
+    // Entering the widget opens its hover menu, which moves the row up; a
+    // real pointer is already inside by the time it reaches the pill.
+    await pill.hover();
     await pill.click();
     await expect.poll(() => calls(page, "focus_waiting_agent")).toEqual([{ sessionId: "s1" }]);
   });
@@ -60,6 +63,7 @@ test.describe("coding agents: widget", () => {
       agents: [agent()],
       failing: { focus_waiting_agent: "Couldn't reach Terminal: none of its 2 windows mention dev-whisper." },
     });
+    await page.getByTestId("agent-pill").hover();
     await page.getByTestId("agent-pill").click();
     await expect(page.getByText(/none of its 2 windows/)).toBeVisible();
   });

@@ -43,11 +43,19 @@ const PROMPT_TERMS: usize = 40;
 const INDEX_TTL: Duration = Duration::from_secs(90);
 /// How long "this app's shell is in that folder" is trusted.
 const DETECT_TTL: Duration = Duration::from_secs(5);
+/// Repo indexes kept in memory at once.
+const MAX_INDEXES: usize = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum AppKind {
     Terminal,
     Editor,
+}
+
+/// Terminal emulators, the one list shared by project detection, undo and
+/// "attach the error".
+pub fn is_terminal(bundle_id: &str) -> bool {
+    classify(bundle_id) == Some(AppKind::Terminal)
 }
 
 fn classify(bundle_id: &str) -> Option<AppKind> {
@@ -214,11 +222,22 @@ fn build_and_store(root: &Path) -> Option<Arc<Project>> {
         started.elapsed().as_millis()
     );
     let project = Arc::new(Project { name, index, terms });
-    state()
-        .lock()
-        .unwrap()
-        .indexes
+    let mut st = state().lock().unwrap();
+    st.indexes
         .insert(root.to_path_buf(), (project.clone(), Instant::now()));
+    // Keep only the most recently built repos: each index can hold tens of
+    // thousands of names, and every worktree is its own root.
+    while st.indexes.len() > MAX_INDEXES {
+        let Some(oldest) = st
+            .indexes
+            .iter()
+            .min_by_key(|(_, (_, built))| *built)
+            .map(|(root, _)| root.clone())
+        else {
+            break;
+        };
+        st.indexes.remove(&oldest);
+    }
     Some(project)
 }
 
@@ -289,11 +308,32 @@ fn git(root: &Path, args: &[&str]) -> Option<String> {
         Command::new("git")
             .arg("-C")
             .arg(root)
+            // A repo's own config could name an fsmonitor command, which
+            // `git status` would run.
+            .args(["-c", "core.fsmonitor=false"])
             .args(args)
             .env("GIT_OPTIONAL_LOCKS", "0"),
         Duration::from_secs(10),
     )?;
     Some(String::from_utf8_lossy(&out).into_owned())
+}
+
+/// A regular file's text, if it's under [`SOURCE_FILE_MAX_BYTES`]. Doesn't
+/// follow symlinks, so a tracked link to `/dev/zero` or a FIFO can't hang or
+/// exhaust memory, and reads no more than the limit even if the file grows.
+fn read_small_file(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > SOURCE_FILE_MAX_BYTES {
+        return None;
+    }
+    let mut text = String::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(SOURCE_FILE_MAX_BYTES)
+        .read_to_string(&mut text)
+        .ok()?;
+    Some(text)
 }
 
 /// The git repo containing `dir`, unless that's the home folder itself.
@@ -610,7 +650,7 @@ fn collect(root: &Path) -> Vec<NameEntry> {
         if base != "package.json" && base != "Cargo.toml" {
             continue;
         }
-        if let Ok(text) = std::fs::read_to_string(root.join(path)) {
+        if let Some(text) = read_small_file(&root.join(path)) {
             deps.extend(if base == "package.json" {
                 package_json_deps(&text)
             } else {
@@ -646,11 +686,7 @@ fn collect(root: &Path) -> Vec<NameEntry> {
         if started.elapsed() > SCAN_BUDGET || identifiers >= IDENTIFIER_CAP {
             break;
         }
-        let full = root.join(path);
-        if std::fs::metadata(&full).map_or(true, |m| m.len() > SOURCE_FILE_MAX_BYTES) {
-            continue;
-        }
-        let Ok(text) = std::fs::read_to_string(&full) else {
+        let Some(text) = read_small_file(&root.join(path)) else {
             continue;
         };
         let mut seen = std::collections::HashSet::new();

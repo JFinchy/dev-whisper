@@ -444,6 +444,12 @@ fn capitalize_first(text: &str) -> String {
 /// docs example shows "hello world press enter." becoming "Hello world."
 /// with an inserted period) — out of scope for a pure deterministic pass,
 /// same as everything else in this module.
+/// True when `text` ends at a clause break, which is what lets an everyday
+/// phrase like "send it" act as a command.
+pub fn ends_clause(text: &str) -> bool {
+    text.ends_with([',', '.', ';', '!', '?', ':'])
+}
+
 pub fn extract_press_enter(text: &str) -> (String, bool) {
     const PHRASE: &str = "press enter";
     // Aliases that are ordinary English ("and send it"), so they only count
@@ -452,21 +458,14 @@ pub fn extract_press_enter(text: &str) -> (String, bool) {
 
     let trimmed = text.trim();
     let without_trailing_punct = trimmed.trim_end_matches(['.', '!', '?']).trim_end();
-    let lower = without_trailing_punct.to_lowercase();
+    let strip =
+        |phrase: &str| crate::clipboard::strip_suffix_ignore_case(without_trailing_punct, phrase);
 
-    if lower == PHRASE || GUARDED_ALIASES.contains(&lower.as_str()) {
-        return (String::new(), true);
-    }
-
-    // `to_lowercase()` on this ASCII phrase doesn't change byte length, so
-    // `prefix.len()` stays aligned with the original-casing string below —
-    // same technique as `syntax::try_apply_casing_command`.
-    if let Some(prefix) = lower.strip_suffix(PHRASE) {
+    if let Some(prefix) = strip(PHRASE) {
         if prefix.is_empty() || prefix.ends_with(' ') {
             // Whisper puts a comma at the pause before "press enter"; with
             // the phrase gone it would be the last character pasted.
-            let remaining =
-                without_trailing_punct[..prefix.len()].trim_end_matches([' ', ',', ';']);
+            let remaining = prefix.trim_end_matches([' ', ',', ';']);
             return (remaining.to_string(), true);
         }
     }
@@ -478,11 +477,13 @@ pub fn extract_press_enter(text: &str) -> (String, bool) {
     // ("fix the bug send it") therefore don't fire; say "press enter" or
     // pause before it.
     for alias in GUARDED_ALIASES {
-        if let Some(prefix) = lower.strip_suffix(alias) {
+        if let Some(prefix) = strip(alias) {
+            if prefix.is_empty() {
+                return (String::new(), true);
+            }
             let before = prefix.trim_end();
-            if prefix.ends_with(' ') && before.ends_with([',', '.', ';', '!', '?', ':']) {
-                let remaining = without_trailing_punct[..before.len()].trim_end_matches([',', ';']);
-                return (remaining.to_string(), true);
+            if prefix.ends_with(' ') && ends_clause(before) {
+                return (before.trim_end_matches([',', ';']).to_string(), true);
             }
         }
     }
@@ -493,6 +494,19 @@ pub fn extract_press_enter(text: &str) -> (String, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn press_enter_after_non_ascii_text() {
+        assert_eq!(
+            extract_press_enter("İstanbul deploy, press enter"),
+            ("İstanbul deploy".to_string(), true)
+        );
+        assert_eq!(
+            extract_press_enter("Ünïcode works. Send it."),
+            ("Ünïcode works.".to_string(), true)
+        );
+        assert_eq!(extract_press_enter("Send it"), (String::new(), true));
+    }
 
     #[test]
     fn terminal_punctuation_glues_to_preceding_word() {

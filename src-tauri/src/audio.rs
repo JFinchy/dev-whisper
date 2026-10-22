@@ -39,6 +39,9 @@ pub struct AudioHandle {
     /// transcriber can read what's been recorded so far (`recorded_since`).
     samples: Arc<Mutex<Vec<f32>>>,
     format: Arc<AtomicU64>,
+    /// Bumped by each `start`, so a reader from an earlier recording can
+    /// tell the buffer now holds a different one.
+    generation: AtomicU64,
 }
 
 /// Which microphone recording will actually use, as surfaced to the widget.
@@ -225,11 +228,25 @@ impl AudioHandle {
             status,
             samples,
             format,
+            generation: AtomicU64::new(0),
         }
     }
 
     pub fn start(&self) {
+        // Cleared here as well as on the audio thread, so nothing from the
+        // last recording is readable under the new generation. Callbacks
+        // don't append until the thread handles `Start`.
+        {
+            let mut samples = self.samples.lock().unwrap();
+            samples.clear();
+            self.generation.fetch_add(1, Ordering::SeqCst);
+        }
         let _ = self.tx.send(AudioCommand::Start);
+    }
+
+    /// Which recording the buffer holds; see `recorded_since`.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
     }
 
     /// Route every captured chunk to `tap` (ambient listening) until called
@@ -252,11 +269,15 @@ impl AudioHandle {
     /// samples) in the current push-to-talk recording, with the stream's
     /// channel count and sample rate. Empty (and rate 0) before the first
     /// audio callback. An `offset` past the end means the buffer was
-    /// restarted, so it reads from the beginning.
-    pub fn recorded_since(&self, offset: usize) -> (Vec<f32>, u16, u32) {
+    /// restarted, so it reads from the beginning. Returns nothing once a
+    /// newer recording than `generation` has started.
+    pub fn recorded_since(&self, offset: usize, generation: u64) -> (Vec<f32>, u16, u32) {
         // Format is read under the lock: a callback stores it before it
         // appends, so any samples seen here come with their own format.
         let samples = self.samples.lock().unwrap();
+        if self.generation.load(Ordering::SeqCst) != generation {
+            return (Vec::new(), 0, 0);
+        }
         let (rate, channels) = unpack_format(self.format.load(Ordering::Relaxed));
         let from = if offset > samples.len() { 0 } else { offset };
         (samples[from..].to_vec(), channels, rate)

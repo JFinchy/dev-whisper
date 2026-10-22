@@ -1,5 +1,5 @@
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
 use crate::config::{self, ShortcutConfig};
@@ -102,6 +102,19 @@ pub fn set_shortcut(
     state: State<PushToTalkState>,
 ) -> Result<ShortcutConfig, String> {
     let new_shortcut = to_shortcut(&new_cfg)?;
+    // Same check `set_agent_reply_shortcut` makes from the other side: the
+    // shortcut and its paste-as-is variant both have to be free.
+    if let Some(agents) = app.try_state::<crate::agents::AgentState>() {
+        let clash = [new_cfg.clone(), skip_variant(&new_cfg)]
+            .iter()
+            .filter_map(|c| to_shortcut(c).ok())
+            .any(|s| agents.is_reply_shortcut(&s));
+        if clash {
+            return Err(
+                "That clashes with the reply-to-agent shortcut. Pick a different one.".to_string(),
+            );
+        }
+    }
 
     let mut current = state.current.lock().unwrap();
     // The old shortcut may never have registered (see `register_initial`),

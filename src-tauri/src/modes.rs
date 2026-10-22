@@ -221,11 +221,9 @@ pub fn apply_mode(mode: Behavior, transcript: &str) -> String {
 }
 
 fn strip_prefix_ci<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
-    if text.len() >= prefix.len() && text[..prefix.len()].eq_ignore_ascii_case(prefix) {
-        Some(text[prefix.len()..].trim())
-    } else {
-        None
-    }
+    let head = text.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| text[prefix.len()..].trim())
 }
 
 fn normalize_cli_input(text: &str) -> &str {

@@ -77,7 +77,8 @@ function ReplyShortcut() {
       </button>
       <p className="mt-1.5 text-xs opacity-60">
         Press it, speak your reply, press it again. The text goes to the agent that has been waiting the shortest time,
-        then you land back where you were. End with "send it" or "press enter" to submit.
+        then you land back where you were. End with "press enter" to submit. If Dev Whisper can't confirm the agent's
+        tab is the one showing, it pastes without submitting and leaves you there to check and press Return.
       </p>
       {error && <p className="mt-1.5 text-xs text-error">{error}</p>}
       {registerError && (
