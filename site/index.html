@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dev Whisper</title>
-  <meta name="description" content="Free, local dictation for developers on Apple Silicon. Talk, and the text lands at your cursor with file tags, casing and line breaks where they belong. Nothing leaves your Mac.">
+  <meta name="description" content="Free, local dictation for developers on Apple Silicon. Talk to Claude Code, Cursor and your terminal, and the text lands with file tags, casing and line breaks where they belong. Nothing leaves your Mac.">
   <meta property="og:title" content="Dev Whisper: dictation that speaks developer">
-  <meta property="og:description" content="Free, local dictation for developers on Apple Silicon. Nothing leaves your Mac.">
+  <meta property="og:description" content="Free, local dictation for developers on Apple Silicon. Built for talking to coding agents. Nothing leaves your Mac.">
   <meta property="og:image" content="icon.png">
-  <meta name="theme-color" content="#16181b">
+  <meta name="theme-color" content="#0f1113">
   <link rel="icon" href="icon.png">
   <link rel="preload" href="fonts/bricolage-grotesque-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/ibm-plex-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
@@ -18,76 +18,137 @@
   <a class="skip" href="#main">Skip to content</a>
 
   <header class="nav">
-    <div class="wrap nav-row">
+    <div class="nav-pill">
       <a class="brand" href="#top" aria-label="Dev Whisper home">
-        <img src="icon.png" alt="" width="28" height="28">
+        <img src="icon.png" alt="" width="26" height="26">
         <span>Dev Whisper</span>
       </a>
       <nav aria-label="Sections">
-        <a href="#examples">Examples</a>
         <a href="#agents">Agents</a>
-        <a href="#features">Features</a>
-        <a href="#privacy">Privacy</a>
-        <a href="https://github.com/JFinchy/dev-whisper">GitHub</a>
+        <a href="#examples">Examples</a>
+        <a href="#compare">Compare</a>
+        <a href="#faq">FAQ</a>
       </nav>
       <a class="btn btn-small" href="#download">Download</a>
     </div>
   </header>
 
   <main id="main">
-    <!-- Hero: the product doing its one job, on a loop -->
+    <!-- Hero: the product doing its one job, big and centered -->
     <section class="hero" id="top">
-      <div class="wrap hero-grid">
-        <div class="hero-copy">
-          <p class="eyebrow">Free · Runs on your Mac · Apple Silicon</p>
-          <h1>Dictation that speaks developer.</h1>
-          <p class="lede">Press a key, talk, and the text lands at your cursor with
-            <code>@file</code> tags, <code>snake_case</code> and line breaks where they
-            belong. Speech recognition and cleanup both run on your Mac.</p>
-          <div class="cta-row">
-            <a class="btn" href="https://github.com/JFinchy/dev-whisper/releases/latest/download/Dev-Whisper.dmg">
-              <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16"><path d="M8 1v9m0 0 3.5-3.5M8 10 4.5 6.5M2 13.5h12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              Download for Mac
-            </a>
-            <span class="cta-note"><span data-version>Latest version</span> · macOS 12 or later</span>
-          </div>
+      <div class="wrap hero-copy">
+        <a class="badge" href="#agents"><span class="badge-dot"></span>New in 0.3: built for coding agents <span aria-hidden="true">→</span></a>
+        <h1>Dictation that speaks <span class="underline">developer<svg aria-hidden="true" viewBox="0 0 300 24" preserveAspectRatio="none"><path pathLength="1" d="M2 14 C 20 14, 24 6, 32 6 S 42 20, 50 20 S 60 4, 70 4 S 80 22, 92 22 S 104 8, 114 8 S 124 18, 136 18 S 148 10, 160 10 S 172 15, 186 15 S 204 12, 222 12 S 260 13, 298 13"/></svg></span>.</h1>
+        <p class="lede">Talk to Claude Code, Cursor and your terminal. The text lands at your cursor
+          with <code>@file</code> tags, <code>snake_case</code> and line breaks where they belong,
+          and nothing leaves your Mac.</p>
+        <div class="cta-row">
+          <a class="btn btn-large" href="https://github.com/JFinchy/dev-whisper/releases/latest/download/Dev-Whisper.dmg">
+            <svg aria-hidden="true" viewBox="0 0 16 16" width="17" height="17"><path d="M8 1v9m0 0 3.5-3.5M8 10 4.5 6.5M2 13.5h12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Download for Mac
+          </a>
+          <a class="btn-ghost" href="https://github.com/JFinchy/dev-whisper">Source on GitHub</a>
         </div>
+        <p class="cta-note"><span data-version>Latest version</span> · Free · Apple Silicon · macOS 12+</p>
+      </div>
 
-        <figure class="demo" aria-label="Animated example: speaking into three different apps">
-          <div class="window">
-            <div class="window-bar">
-              <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
-              <span class="window-title" data-demo-title>Terminal — agent</span>
-            </div>
-            <div class="window-body" data-demo-body></div>
+      <figure class="wrap stage" aria-label="Animated example: speaking into four different apps">
+        <figcaption class="spoken">
+          <span class="spoken-tag">You say</span>
+          <span class="spoken-text" data-spoken>&nbsp;</span>
+        </figcaption>
+        <div class="window">
+          <div class="window-bar">
+            <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="window-title" data-demo-title>Terminal — agent</span>
           </div>
-
-          <div class="widget" data-widget aria-hidden="true">
-            <div class="widget-row">
-              <span class="widget-dot"></span>
-              <span class="widget-label" data-widget-label>Ready</span>
-              <span class="widget-meter"><i></i><i></i><i></i><i></i><i></i></span>
-            </div>
-            <div class="widget-bar"><span data-widget-fill></span></div>
+          <div class="window-body" data-demo-body></div>
+        </div>
+        <div class="widget" data-widget aria-hidden="true">
+          <div class="widget-row">
+            <span class="widget-dot"></span>
+            <span class="widget-label" data-widget-label>Ready</span>
+            <span class="widget-meter"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
           </div>
+          <div class="widget-bar"><span data-widget-fill></span></div>
+        </div>
+      </figure>
+    </section>
 
-          <figcaption class="spoken">
-            <span class="spoken-tag">You say</span>
-            <span class="spoken-text" data-spoken>&nbsp;</span>
-          </figcaption>
-        </figure>
+    <!-- Proof in three numbers -->
+    <section class="numbers" aria-label="Dev Whisper in numbers">
+      <div class="wrap numbers-row">
+        <div class="stat reveal">
+          <span class="stat-value">¼<small> s</small></span>
+          <span class="stat-label">from the moment you stop talking to text, in our real-speech test</span>
+        </div>
+        <div class="stat reveal">
+          <span class="stat-value">0<small> bytes</small></span>
+          <span class="stat-label">of your voice leave your Mac. No account, no cloud fallback.</span>
+        </div>
+        <div class="stat reveal">
+          <span class="stat-value">$0</span>
+          <span class="stat-label">No paid tier, no usage limits. The source is on GitHub.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- The coding-agent features, the product's direction -->
+    <section class="section" id="agents">
+      <div class="wrap">
+        <div class="section-head reveal">
+          <p class="eyebrow">New in 0.3</p>
+          <h2>Made for talking to coding agents.</h2>
+          <p>Claude Code, Cursor and the terminal are where most of your words go now. These
+            features are for them.</p>
+        </div>
+        <div class="bento">
+          <article class="card card-wide reveal">
+            <div class="card-copy">
+              <h3>Reply to a waiting agent</h3>
+              <p>A Claude Code hook tells Dev Whisper when an agent is waiting for you. Press
+                <kbd>⌃⌥R</kbd>, answer out loud, and the reply lands in that agent's window while
+                you stay where you were.</p>
+            </div>
+            <div class="mini" aria-hidden="true">
+              <div class="mini-pill"><span class="pulse"></span>Claude is waiting · api</div>
+              <div class="mini-line"><span class="dim">claude ›</span> Run the migration on staging first?</div>
+              <div class="mini-line mini-reply"><span class="dim">you ›</span> Yes, staging first, then show me the diff.</div>
+            </div>
+          </article>
+          <article class="card reveal">
+            <h3>Knows your codebase</h3>
+            <p>Names come from the repo you're in, so "the paste text function in the paste file"
+              comes out as <code>paste_text</code> in <code>@src-tauri/src/paste.rs</code>.</p>
+          </article>
+          <article class="card reveal">
+            <h3>Transcribes while you talk</h3>
+            <p>Each phrase is transcribed at the pause after it. Long pauses cost nothing, and the
+              text is ready a quarter of a second after you stop.</p>
+          </article>
+          <article class="card reveal">
+            <h3>"Send it." "Attach the error."</h3>
+            <p>Submit the prompt, add your latest stack trace as a code block, or say "scratch
+              that" to take back the last paste.</p>
+          </article>
+          <article class="card reveal">
+            <h3>Learns your corrections</h3>
+            <p>History keeps what you said next to the cleaned-up text. Fix the same word twice
+              and it offers to remember it.</p>
+          </article>
+        </div>
       </div>
     </section>
 
     <!-- What you say vs. what lands -->
     <section class="section" id="examples">
       <div class="wrap">
-        <div class="section-head">
+        <div class="section-head reveal">
           <h2>What you say, and what gets typed.</h2>
-          <p>The same voice, formatted for the app in front of you. Real outputs from the
-            app's test suite.</p>
+          <p>The same voice, formatted for the app in front of you. Real outputs from the app's
+            test suite.</p>
         </div>
-        <ol class="pairs">
+        <ol class="pairs reveal">
           <li>
             <span class="ctx">Claude Code</span>
             <q>Look at recording.rs and fix the crash.</q>
@@ -128,47 +189,20 @@
       </div>
     </section>
 
-    <!-- The coding-agent features, the product's direction -->
-    <section class="section" id="agents">
-      <div class="wrap">
-        <div class="section-head">
-          <p class="eyebrow">New in 0.3</p>
-          <h2>Made for talking to coding agents.</h2>
-          <p>Claude Code, Cursor and the terminal are where most of your words go now. These
-            features are for them.</p>
-        </div>
-        <ul class="next-list">
-          <li><strong>Knows your codebase.</strong> <span>Names come from the repo you're working in, so
-            "the paste text function in the paste file" comes out as <code>paste_text</code> in
-            <code>@src-tauri/src/paste.rs</code>.</span></li>
-          <li><strong>Transcribes while you talk.</strong> <span>Each phrase is transcribed at the pause
-            after it, so long pauses cost nothing and the text is ready about a quarter of a second
-            after you stop.</span></li>
-          <li><strong>"Send it." "Attach the error." "Scratch that."</strong> <span>Submit the prompt,
-            add your latest stack trace as a code block, or take back the last paste.</span></li>
-          <li><strong>Reply to a waiting agent.</strong> <span>A Claude Code hook tells Dev Whisper when an
-            agent is waiting. Press <kbd>⌃⌥R</kbd>, answer out loud, and the reply lands in that
-            agent's window while you stay where you were.</span></li>
-          <li><strong>Learns from your corrections.</strong> <span>History keeps what you said next to the
-            cleaned-up text. Fix the same word twice and it offers to remember it.</span></li>
-        </ul>
-      </div>
-    </section>
-
     <!-- Features -->
     <section class="section" id="features">
       <div class="wrap">
-        <div class="section-head">
+        <div class="section-head reveal">
           <h2>Everything between the key press and the paste.</h2>
         </div>
         <div class="feature-groups">
-          <div class="group">
+          <div class="group reveal">
             <h3>Fits where you're typing</h3>
             <dl>
               <dt>Knows the app you're in</dt>
               <dd>Sentences in Slack and email. File tags and real line breaks in Claude Code,
                 Cursor and your terminal. Set your own mode for any app.</dd>
-              <dt>Two-stage progress you can see</dt>
+              <dt>Progress you can see</dt>
               <dd>An amber bar while it transcribes, a violet one while the LLM tidies up, each
                 with a real percentage.</dd>
               <dt>Paste it as-is</dt>
@@ -176,7 +210,7 @@
                 without waiting for the LLM.</dd>
             </dl>
           </div>
-          <div class="group">
+          <div class="group reveal">
             <h3>Speaks developer</h3>
             <dl>
               <dt>Your vocabulary</dt>
@@ -187,14 +221,14 @@
               <dd>Say "snake case", "camel case", "kebab case", "Pascal case" or "screaming
                 snake case" before a name.</dd>
               <dt>Backtrack, lists, punctuation</dt>
-              <dd>"Actually" and "scratch that" correct you mid-sentence. Spoken lists become
-                numbered lists. Say "period" or "new line" when you want them.</dd>
+              <dd>"Actually" corrects you mid-sentence. Spoken lists become numbered lists. Say
+                "period" or "new line" when you want them.</dd>
               <dt>Snippets and boilerplate</dt>
               <dd>A short cue pastes a saved block of text. "Generate boilerplate for…" writes
                 the code.</dd>
             </dl>
           </div>
-          <div class="group">
+          <div class="group reveal">
             <h3>Stays out of your way</h3>
             <dl>
               <dt>Only refines when it helps</dt>
@@ -215,16 +249,79 @@
       </div>
     </section>
 
+    <!-- Honest comparison: verifiable facts only, including where others win -->
+    <section class="section" id="compare">
+      <div class="wrap">
+        <div class="section-head reveal">
+          <h2>How it compares.</h2>
+          <p>Wispr Flow and Superwhisper are great general-purpose dictation apps that run on
+            more devices and in more languages. Dev Whisper is narrower: English, Apple Silicon,
+            and tuned for code.</p>
+        </div>
+        <div class="table-scroll reveal">
+          <table class="compare">
+            <thead>
+              <tr>
+                <th scope="col"><span class="sr-only">Feature</span></th>
+                <th scope="col" class="us">Dev Whisper</th>
+                <th scope="col">Wispr Flow</th>
+                <th scope="col">Superwhisper</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Price</th>
+                <td class="us">Free, no paid tier</td>
+                <td>Free tier, Pro from $12/mo</td>
+                <td>Free tier, Pro from $8.49/mo</td>
+              </tr>
+              <tr>
+                <th scope="row">Where your speech is processed</th>
+                <td class="us">On your Mac</td>
+                <td>In the cloud</td>
+                <td>On your Mac or in the cloud</td>
+              </tr>
+              <tr>
+                <th scope="row">Source code</th>
+                <td class="us">On GitHub</td>
+                <td>Closed</td>
+                <td>Closed</td>
+              </tr>
+              <tr>
+                <th scope="row">Names from your codebase</th>
+                <td class="us">Automatic</td>
+                <td>Custom dictionary</td>
+                <td>Custom vocabulary</td>
+              </tr>
+              <tr>
+                <th scope="row">Devices</th>
+                <td class="us">Mac (Apple Silicon)</td>
+                <td>Mac, Windows, iPhone, Android</td>
+                <td>Mac, Windows, iOS, Android</td>
+              </tr>
+              <tr>
+                <th scope="row">Languages</th>
+                <td class="us">English</td>
+                <td>100+</td>
+                <td>100+</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small compare-note">From each app's own website and pricing page, October 2026.</p>
+      </div>
+    </section>
+
     <!-- Privacy, shown as the app's entire network footprint -->
     <section class="section privacy" id="privacy">
       <div class="wrap privacy-grid">
-        <div>
+        <div class="reveal">
           <h2>Your voice never leaves your Mac.</h2>
           <p>Speech recognition runs in whisper.cpp on your Mac's GPU. The optional LLM
             cleanup runs in Ollama, also on your Mac. There's no account, no telemetry and no
             cloud fallback. This is everything the app ever connects to:</p>
         </div>
-        <div class="netlog" role="table" aria-label="Every network connection Dev Whisper makes">
+        <div class="netlog reveal" role="table" aria-label="Every network connection Dev Whisper makes">
           <div class="netlog-head" role="row">
             <span role="columnheader">What</span><span role="columnheader">Where</span><span role="columnheader">When</span>
           </div>
@@ -237,30 +334,77 @@
       </div>
     </section>
 
-    <!-- Download -->
+    <!-- FAQ -->
+    <section class="section" id="faq">
+      <div class="wrap faq-grid">
+        <div class="section-head reveal">
+          <h2>Good questions.</h2>
+          <p>Something else? <a href="https://github.com/JFinchy/dev-whisper/issues">Open an issue</a>.</p>
+        </div>
+        <div class="faq reveal">
+          <details>
+            <summary>macOS says Dev Whisper can't be opened, or is damaged.</summary>
+            <p>Dev Whisper isn't notarized by Apple yet, so macOS blocks the first launch. Open
+              it once, then go to <strong>System Settings → Privacy &amp; Security</strong>,
+              scroll down and click <strong>Open Anyway</strong>. On macOS 14 or earlier,
+              right-click the app and choose Open instead.</p>
+            <p>Versions before 0.3.1 show "damaged" instead. Download the latest version, or
+              run <code>xattr -dr com.apple.quarantine "/Applications/Dev Whisper.app"</code>
+              in Terminal.</p>
+          </details>
+          <details>
+            <summary>Do I need Ollama?</summary>
+            <p>No. Without it you still get formatting for each app, casing commands, file tags,
+              lists, punctuation and snippets. Ollama adds an optional cleanup pass for rambling
+              or casual speech, and it also runs on your Mac.</p>
+          </details>
+          <details>
+            <summary>How do I connect it to Claude Code?</summary>
+            <p>Open Settings → Coding agents, copy the hook config, and add it to
+              <code>~/.claude/settings.json</code>. From then on, the widget shows when an agent
+              is waiting, and <kbd>⌃⌥R</kbd> records your reply.</p>
+          </details>
+          <details>
+            <summary>Which apps does it work in?</summary>
+            <p>Any app you can paste into. Terminals, Claude Code, Cursor, VS Code, Slack, email
+              and browsers each get their own formatting, and you can set a mode for any other
+              app.</p>
+          </details>
+          <details>
+            <summary>Does it work on an Intel Mac?</summary>
+            <p>No. It needs Apple Silicon (M1 or later), whose GPU runs the speech model fast
+              enough to feel instant.</p>
+          </details>
+          <details>
+            <summary>Other languages?</summary>
+            <p>English only for now. The speech models it ships with are tuned for English,
+              which keeps them small and quick.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- Closing call to action, with install steps -->
     <section class="section download" id="download">
-      <div class="wrap download-grid">
-        <div>
-          <h2>Get Dev Whisper</h2>
-          <p>Free. For Macs with Apple Silicon, macOS 12 or later.</p>
+      <div class="wrap">
+        <div class="closer reveal">
+          <h2>Say it. Ship it.</h2>
+          <p>Free for Macs with Apple Silicon, macOS 12 or later. Updates install themselves.</p>
           <a class="btn btn-large" href="https://github.com/JFinchy/dev-whisper/releases/latest/download/Dev-Whisper.dmg">
             <svg aria-hidden="true" viewBox="0 0 16 16" width="18" height="18"><path d="M8 1v9m0 0 3.5-3.5M8 10 4.5 6.5M2 13.5h12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             Download Dev-Whisper.dmg
           </a>
           <p class="small"><span data-version>Latest version</span> ·
-            <a href="https://github.com/JFinchy/dev-whisper/releases">All releases</a> ·
-            Updates install themselves.</p>
+            <a href="https://github.com/JFinchy/dev-whisper/releases">All releases</a></p>
         </div>
-        <ol class="steps">
-          <li><strong>Open the DMG</strong> <span>and drag Dev Whisper into Applications.</span></li>
-          <li><strong>Open it, then allow it once.</strong> <span>It isn't notarized by Apple yet, so
-            macOS blocks the first launch. Go to System Settings → Privacy &amp; Security, scroll
-            down and click Open Anyway. On macOS 14 or earlier, right-click the app and choose
-            Open instead.</span></li>
-          <li><strong>Follow the setup checklist</strong> <span>in Settings: download a speech model
+        <ol class="steps reveal">
+          <li><strong>Install</strong> <span>Open the DMG and drag Dev Whisper into Applications.</span></li>
+          <li><strong>Allow it once</strong> <span>Open it, then click Open Anyway in System Settings →
+            Privacy &amp; Security. It isn't notarized by Apple yet.</span></li>
+          <li><strong>Set up</strong> <span>Follow the checklist in Settings: download a speech model
             (Base, 57 MB, is a good start) and allow Accessibility so it can paste.</span></li>
-          <li><strong>Optional:</strong> <span>install <a href="https://ollama.com">Ollama</a> for LLM
-            cleanup, then pick a small model in Settings → LLM.</span></li>
+          <li><strong>Optional: add cleanup</strong> <span>Install <a href="https://ollama.com">Ollama</a>,
+            then pick a small model in Settings → LLM.</span></li>
         </ol>
       </div>
     </section>

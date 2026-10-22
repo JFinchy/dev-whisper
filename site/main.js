@@ -1,3 +1,25 @@
+// Marks that scripts run, so scroll reveals only hide content when
+// something will bring it back.
+document.documentElement.classList.add("js");
+
+const revealed = document.querySelectorAll(".reveal");
+if ("IntersectionObserver" in window) {
+  const io = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("in");
+          io.unobserve(entry.target);
+        }
+      }
+    },
+    { rootMargin: "0px 0px -8% 0px" },
+  );
+  revealed.forEach((el) => io.observe(el));
+} else {
+  revealed.forEach((el) => el.classList.add("in"));
+}
+
 // Fill in the latest release version, quietly keeping the fallback text
 // if GitHub's API is unreachable or rate-limited.
 fetch("https://api.github.com/repos/JFinchy/dev-whisper/releases/latest")
@@ -50,6 +72,20 @@ const scenes = [
       <div class="chat-msg">When do you want to cut 0.3?</div>
       <div class="composer">${typed}</div>`,
     output: [{ text: "I think we should ship it tomorrow." }],
+  },
+  {
+    // Replying to a Claude Code session that's waiting, from another app.
+    title: "Terminal — api · claude",
+    waiting: "Claude is waiting · api",
+    spoken: "Yes, staging first, then show me the diff.",
+    refine: false,
+    skipNote: "Replying to api",
+    body: (typed) => `
+      <div class="dim">● Wrote migrations/0042_add_team_role.sql</div>
+      <div class="ask">Run the migration on staging first, or straight to prod?</div>
+      <div class="prompt">${typed}</div>`,
+    output: [{ text: "Yes, staging first, then show me the diff." }],
+    after: `<div class="ok">✓ Sent to api in Terminal</div>`,
   },
 ];
 
@@ -117,6 +153,12 @@ async function playScene(scene) {
   spoken.innerHTML = "&nbsp;";
   setStage("ready", "Ready", 0);
   await sleep(700);
+  if (scene.waiting) {
+    setStage("waiting", scene.waiting, 0);
+    await sleep(1600);
+    setStage("waiting", "⌃⌥R  Reply by voice", 0);
+    await sleep(900);
+  }
 
   // Listening: words arrive as they're said.
   const words = scene.spoken.split(" ");
