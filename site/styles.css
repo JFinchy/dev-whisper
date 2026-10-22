@@ -130,6 +130,18 @@ code {
   padding: 0.08em 0.38em;
 }
 
+kbd {
+  font-family: var(--mono);
+  font-size: 0.82em;
+  white-space: nowrap;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 0.04em 0.4em;
+  color: var(--ink);
+}
+
 .wrap { width: min(1120px, 100% - 2 * var(--gutter)); margin-inline: auto; }
 
 .skip { position: absolute; left: -9999px; }

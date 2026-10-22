@@ -25,6 +25,7 @@
       </a>
       <nav aria-label="Sections">
         <a href="#examples">Examples</a>
+        <a href="#agents">Agents</a>
         <a href="#features">Features</a>
         <a href="#privacy">Privacy</a>
         <a href="https://github.com/JFinchy/dev-whisper">GitHub</a>
@@ -127,6 +128,33 @@
       </div>
     </section>
 
+    <!-- The coding-agent features, the product's direction -->
+    <section class="section" id="agents">
+      <div class="wrap">
+        <div class="section-head">
+          <p class="eyebrow">New in 0.3</p>
+          <h2>Made for talking to coding agents.</h2>
+          <p>Claude Code, Cursor and the terminal are where most of your words go now. These
+            features are for them.</p>
+        </div>
+        <ul class="next-list">
+          <li><strong>Knows your codebase.</strong> <span>Names come from the repo you're working in, so
+            "the paste text function in the paste file" comes out as <code>paste_text</code> in
+            <code>@src-tauri/src/paste.rs</code>.</span></li>
+          <li><strong>Transcribes while you talk.</strong> <span>Each phrase is transcribed at the pause
+            after it, so long pauses cost nothing and the text is ready about a quarter of a second
+            after you stop.</span></li>
+          <li><strong>"Send it." "Attach the error." "Scratch that."</strong> <span>Submit the prompt,
+            add your latest stack trace as a code block, or take back the last paste.</span></li>
+          <li><strong>Reply to a waiting agent.</strong> <span>A Claude Code hook tells Dev Whisper when an
+            agent is waiting. Press <kbd>⌃⌥R</kbd>, answer out loud, and the reply lands in that
+            agent's window while you stay where you were.</span></li>
+          <li><strong>Learns from your corrections.</strong> <span>History keeps what you said next to the
+            cleaned-up text. Fix the same word twice and it offers to remember it.</span></li>
+        </ul>
+      </div>
+    </section>
+
     <!-- Features -->
     <section class="section" id="features">
       <div class="wrap">
@@ -206,28 +234,6 @@
           <div role="row"><span role="cell">Speech models</span><span role="cell">huggingface.co</span><span role="cell">when you click Download</span></div>
           <div role="row"><span role="cell">Webhook</span><span role="cell">your URL</span><span role="cell">only if you set one</span></div>
         </div>
-      </div>
-    </section>
-
-    <!-- Honest about what's coming -->
-    <section class="section" id="next">
-      <div class="wrap">
-        <div class="section-head">
-          <h2>In the works</h2>
-          <p>Being built now, all aimed at one thing: talking to coding agents.</p>
-        </div>
-        <ul class="next-list">
-          <li><strong>Knows your codebase.</strong> <span>Names from the project you're working in, so
-            "the paste text function" comes out as <code>paste_text</code>.</span></li>
-          <li><strong>Transcribes while you talk.</strong> <span>Long pauses cost nothing, and the text is
-            nearly ready when you stop.</span></li>
-          <li><strong>"Attach the error."</strong> <span>Adds your latest stack trace to the prompt as a
-            code block.</span></li>
-          <li><strong>Reply to a waiting agent.</strong> <span>Answer the Claude Code session that's
-            waiting for you without switching windows.</span></li>
-          <li><strong>Learns from your corrections.</strong> <span>Fix a word twice and it offers to
-            remember it.</span></li>
-        </ul>
       </div>
     </section>
 
