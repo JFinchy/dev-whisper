@@ -358,7 +358,7 @@ fn handle_segment(app: &AppHandle, audio: Vec<f32>) {
         }
     };
     let text = crate::stt::strip_non_speech(&raw);
-    crate::applog!("ambient: heard {raw:?}");
+    crate::applog!("ambient: heard {}", crate::logging::said(&raw));
 
     match parse_wake(&text) {
         Addressed::Unaddressed => {

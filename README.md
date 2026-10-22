@@ -77,6 +77,27 @@ the first launch: open it once, then go to **System Settings → Privacy &
 Security**, scroll down and click **Open Anyway** (on macOS 14 and
 earlier, right-click the app → **Open** instead).
 
+Two ways to skip that step:
+
+- **One-line install.** Downloads the same DMG from GitHub, checks the
+  app's signature and copies it into Applications. Files downloaded with
+  `curl` aren't flagged, so macOS doesn't prompt. The script is
+  [`site/install.sh`](site/install.sh).
+  ```sh
+  curl -fsSL https://jfinchy.github.io/dev-whisper/install.sh | sh
+  ```
+- **Build from source.** Needs [Rust](https://rustup.rs),
+  [Bun](https://bun.sh) and the Xcode command line tools
+  (`xcode-select --install`):
+  ```sh
+  git clone https://github.com/JFinchy/dev-whisper && cd dev-whisper
+  bun install
+  bun run tauri build --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+  ditto "src-tauri/target/release/bundle/macos/Dev Whisper.app" "/Applications/Dev Whisper.app"
+  ```
+  (The config flag skips the signed update package, which needs the
+  project's private key.)
+
 On first launch, Settings shows a setup checklist until everything's in
 place:
 

@@ -28,6 +28,8 @@ export type Scenario = {
   corrections?: { from: string; to: string; source: "edit" | "original"; count: number }[];
   /// Coding agents already waiting when the page loads.
   agents?: Json[];
+  /// History lock already turned on (and closed) when the page loads.
+  historyLock?: boolean;
 };
 
 declare global {
@@ -63,6 +65,9 @@ function initialState(scenario: Scenario) {
     agents: (scenario.agents ?? []) as { session_id: string }[],
     agentShortcut: { meta: false, ctrl: true, alt: true, shift: false, code: "KeyR" },
     agentSound: true,
+    historyLockEnabled: scenario.historyLock ?? false,
+    historyUnlocked: false,
+    logTranscripts: false,
     copyOnly: false,
     pressEnter: false,
     isolatedVoice: false,
@@ -121,6 +126,8 @@ export function installMockBackend() {
 
   const state = initialState(scenario);
   const calls: Call[] = [];
+  const historyLocked = () => state.historyLockEnabled && !state.historyUnlocked;
+  const lockStatus = () => ({ enabled: state.historyLockEnabled, locked: historyLocked() });
   const setter = <K extends keyof typeof state>(key: K, argName: string) => (args: Record<string, Json>) => {
     state[key] = args[argName] as (typeof state)[K];
     return null;
@@ -269,9 +276,28 @@ export function installMockBackend() {
     start_voice_enrollment: () => null,
     stop_voice_enrollment: () => null,
     // history, insights, logs
-    list_history_entries: () => state.history,
+    list_history_entries: () => (historyLocked() ? Promise.reject("History is locked.") : state.history),
     search_history_entries: (args) =>
-      state.history.filter((h) => h.text.toLowerCase().includes(String(args.query).toLowerCase())),
+      historyLocked()
+        ? Promise.reject("History is locked.")
+        : state.history.filter((h) => h.text.toLowerCase().includes(String(args.query).toLowerCase())),
+    // privacy (Touch ID always succeeds here)
+    get_history_lock: () => lockStatus(),
+    set_history_lock_enabled: (args) => {
+      state.historyLockEnabled = Boolean(args.enabled);
+      state.historyUnlocked = !state.historyLockEnabled;
+      return lockStatus();
+    },
+    unlock_history: () => {
+      state.historyUnlocked = true;
+      return lockStatus();
+    },
+    lock_history: () => {
+      state.historyUnlocked = false;
+      return lockStatus();
+    },
+    get_log_transcripts: () => state.logTranscripts,
+    set_log_transcripts: setter("logTranscripts", "enabled"),
     reprocess_history_text: (args) => String(args.text),
     update_history_entry_text: (args) => {
       state.history = state.history.map((h) => (h.timestamp_ms === args.timestampMs ? { ...h, text: String(args.text) } : h));

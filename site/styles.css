@@ -501,6 +501,39 @@ kbd {
 }
 .steps strong { color: var(--ink); font-weight: 600; }
 
+/* Other ways to install */
+.alt-installs { margin-top: clamp(40px, 5vw, 64px); display: grid; gap: 12px; }
+.alt-intro { color: var(--ink-soft); max-width: 70ch; }
+.alt-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 14px; margin-top: 8px; }
+.alt {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start; min-width: 0;
+  padding: 22px; border-radius: 16px;
+  background: var(--surface); border: 1px solid var(--line);
+  box-shadow: 0 1px 0 var(--highlight) inset;
+}
+.alt h4 { margin: 0; font-family: var(--display); font-size: 1.05rem; font-weight: 650; letter-spacing: -0.01em; }
+.alt p { color: var(--ink-soft); font-size: 0.93rem; }
+.cmd {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 8px 8px 8px 14px; border-radius: 10px;
+  background: var(--bg-sunk); border: 1px solid var(--line-strong);
+}
+.cmd code {
+  background: none; border: 0; padding: 4px 0; font-size: 0.76rem; color: var(--ink);
+  white-space: nowrap; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: thin;
+}
+.copy {
+  flex: none; font: 500 0.78rem var(--body); color: var(--ink);
+  padding: 6px 12px; border-radius: 8px; cursor: pointer;
+  background: var(--bg-raised); border: 1px solid var(--line-strong);
+  transition: border-color 150ms, color 150ms;
+}
+.copy:hover { border-color: var(--muted); }
+.copy[data-copied] { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
+
+.faq ul { margin: 0 0 16px; padding-left: 1.1em; display: grid; gap: 8px; color: var(--ink-soft); max-width: 62ch; }
+.faq li strong { color: var(--ink); font-weight: 600; }
+
 /* Footer */
 .footer { padding: 32px 0 44px; color: var(--muted); font-size: var(--step--1); border-top: 1px solid var(--line); }
 .footer-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
@@ -518,6 +551,7 @@ kbd {
   .feature-groups { grid-template-columns: minmax(0, 1fr); }
   .card-wide { grid-template-columns: minmax(0, 1fr); }
   .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .alt-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 720px) {
   .nav nav { display: none; }

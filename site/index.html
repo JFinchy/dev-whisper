@@ -318,8 +318,8 @@
         <div class="reveal">
           <h2>Your voice never leaves your Mac.</h2>
           <p>Speech recognition runs in whisper.cpp on your Mac's GPU. The optional LLM
-            cleanup runs in Ollama, also on your Mac. There's no account, no telemetry and no
-            cloud fallback. This is everything the app ever connects to:</p>
+            cleanup runs in Ollama, also on your Mac, and Ollama's cloud models are blocked. There's no
+            account, no telemetry and no cloud fallback. This is everything the app ever connects to:</p>
         </div>
         <div class="netlog reveal" role="table" aria-label="Every network connection Dev Whisper makes">
           <div class="netlog-head" role="row">
@@ -348,15 +348,40 @@
               it once, then go to <strong>System Settings → Privacy &amp; Security</strong>,
               scroll down and click <strong>Open Anyway</strong>. On macOS 14 or earlier,
               right-click the app and choose Open instead.</p>
+            <p>To skip that step entirely, install with the <a href="#download">one-line command</a>
+              or build it from source.</p>
             <p>Versions before 0.3.1 show "damaged" instead. Download the latest version, or
               run <code>xattr -dr com.apple.quarantine "/Applications/Dev Whisper.app"</code>
               in Terminal.</p>
           </details>
           <details>
+            <summary>Is it safe? Could it contain malware or leak what I say?</summary>
+            <p>Dev Whisper is open source, so anyone can read exactly what it does. What we check:</p>
+            <ul>
+              <li><strong>Your voice stays on your Mac.</strong> Speech recognition and the optional
+                cleanup both run locally. The <a href="#privacy">list above</a> is every connection the
+                app makes, and none of them carry what you say.</li>
+              <li><strong>No cloud models.</strong> Ollama can run some models on its own servers. Dev
+                Whisper hides those and refuses to use them, so cleanup never leaves your Mac.</li>
+              <li><strong>Your transcripts are yours.</strong> History stays on your Mac in a file only
+                your account can read. You can lock it behind Touch ID or your password, and logs leave
+                out what you said unless you turn that on.</li>
+              <li><strong>Dependencies are scanned.</strong> Every change is checked against the public
+                databases of known vulnerabilities in the libraries the app uses, and the build fails if
+                one turns up.</li>
+              <li><strong>Downloads are verified.</strong> Speech models are checked against known
+                checksums, and updates must carry our signature before they install.</li>
+            </ul>
+            <p>The realistic risk is the one every app has: bugs. Dev Whisper types into other apps and
+              listens while you hold the key, so a bug could put text in the wrong place. If you hit one,
+              please <a href="https://github.com/JFinchy/dev-whisper/issues">open an issue</a>.</p>
+          </details>
+          <details>
             <summary>Do I need Ollama?</summary>
             <p>No. Without it you still get formatting for each app, casing commands, file tags,
               lists, punctuation and snippets. Ollama adds an optional cleanup pass for rambling
-              or casual speech, and it also runs on your Mac.</p>
+              or casual speech, and it also runs on your Mac. Ollama's cloud models are hidden and
+              never used, to keep your text private.</p>
           </details>
           <details>
             <summary>How do I connect it to Claude Code?</summary>
@@ -406,6 +431,32 @@
           <li><strong>Optional: add cleanup</strong> <span>Install <a href="https://ollama.com">Ollama</a>,
             then pick a small model in Settings → LLM.</span></li>
         </ol>
+
+        <div class="alt-installs reveal">
+          <h3>Other ways to install</h3>
+          <p class="alt-intro">Dev Whisper isn't notarized by Apple yet (that costs $99 a year), so a
+            download from the button above needs the one-time "Open Anyway" step. These two skip it.</p>
+          <div class="alt-grid">
+            <div class="alt">
+              <h4>One-line install</h4>
+              <p>Paste into Terminal. It downloads the same DMG from GitHub, checks the app's
+                signature and copies it into Applications. Files downloaded this way aren't flagged,
+                so macOS doesn't prompt. <a href="install.sh">Read the script</a> first if you like.</p>
+              <div class="cmd">
+                <code data-cmd>curl -fsSL https://jfinchy.github.io/dev-whisper/install.sh | sh</code>
+                <button type="button" class="copy" data-copy aria-label="Copy the install command">Copy</button>
+              </div>
+            </div>
+            <div class="alt">
+              <h4>Build from source</h4>
+              <p>Anything you build on your own Mac runs without the prompt. You'll need Rust and Bun;
+                the steps are in the <a href="https://github.com/JFinchy/dev-whisper#install">README</a>.</p>
+              <div class="cmd">
+                <code>git clone https://github.com/JFinchy/dev-whisper</code>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   </main>

@@ -61,6 +61,11 @@ built yet.
 
 ## App-aware modes & LLM refinement
 
+- **Local models only** — Ollama's cloud models ("…-cloud", or reported
+  with a remote host) are never listed, downloaded, prewarmed or sent a
+  prompt, so LLM cleanup can't leave the Mac. A cloud model already
+  saved in settings is refused with a message.
+
 - **Frontmost-app detection** (`NSWorkspace`) picks a formatting Mode
   (Plain / Casual / CLI) based on whichever app was focused when
   recording started, with built-in defaults for common apps (terminals →
@@ -134,6 +139,17 @@ built yet.
   the background after the paste already happened so it never adds
   latency. Skips dictations under 6 words (not worth summarizing) and
   falls back to just the raw transcript if Ollama is unreachable.
+- **History lock** (opt-in, Settings → History → Privacy) — Touch ID or
+  the Mac password (LocalAuthentication) before History is shown, enforced
+  in the backend commands that read or change history, not only the UI.
+  Locks again when you leave History, hide Settings, or after 5 minutes;
+  turning the lock off needs the same confirmation. It's a screen against
+  someone at your unlocked Mac, not encryption: `history.jsonl` and
+  `app.log` are owner-only (0600) files.
+- **Transcript text out of logs by default** — `app.log` keeps events
+  and timings, with each transcript replaced by its length ("<42 chars>").
+  "Include transcript text in logs" (Settings → History → Privacy) turns
+  it back on for bug reports.
 - **Per-entry copy/delete** in the History settings section.
 - **Full-text search** — a search box filters the entire retained history
   (not just the most recent 200 entries the list view normally loads), by

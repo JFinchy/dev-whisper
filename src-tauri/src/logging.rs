@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -17,6 +18,28 @@ const MAX_LOG_ENTRIES: usize = 500;
 pub struct LogEntry {
     pub timestamp_ms: u64,
     pub message: String,
+}
+
+/// Whether dictated text goes into the log (Settings > Privacy, "Include
+/// transcript text in logs"). Off by default.
+static LOG_TRANSCRIPTS: AtomicBool = AtomicBool::new(false);
+
+pub fn set_log_transcripts(enabled: bool) {
+    LOG_TRANSCRIPTS.store(enabled, Ordering::Relaxed);
+}
+
+/// What a log line shows for something the user said: the text itself when
+/// transcript logging is on, otherwise only its length.
+pub fn said(text: &str) -> String {
+    redact(text, LOG_TRANSCRIPTS.load(Ordering::Relaxed))
+}
+
+fn redact(text: &str, include: bool) -> String {
+    if include {
+        format!("{text:?}")
+    } else {
+        format!("<{} chars>", text.chars().count())
+    }
 }
 
 static LOG_BUFFER: Mutex<VecDeque<LogEntry>> = Mutex::new(VecDeque::new());
@@ -35,7 +58,16 @@ pub fn init_file(path: PathBuf) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     rotate_if_large(&path, MAX_LOG_FILE_BYTES);
-    let file = OpenOptions::new().create(true).append(true).open(path)?;
+    let file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        // Readable only by the user, like the rest of the app's data.
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(&path)?
+    };
+    let _ = std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o600));
     let _ = LOG_FILE.set(Mutex::new(file));
     Ok(())
 }
@@ -139,6 +171,12 @@ macro_rules! applog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transcripts_are_left_out_unless_asked_for() {
+        assert_eq!(redact("ship it tonight", false), "<15 chars>");
+        assert_eq!(redact("ship it tonight", true), "\"ship it tonight\"");
+    }
 
     // LOG_BUFFER is a single process-wide static, and cargo test runs
     // tests in parallel by default — so this is deliberately one test

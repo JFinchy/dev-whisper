@@ -30,7 +30,9 @@ LLM refinement on for the case), `press_enter_enabled`, `expect_prefix`,
 `expect_label`, `expect_press_enter`, `expect_append_clipboard`,
 `expect_llm_called`.
 
-**Every dictation bug gets a case.** When a paste comes out wrong, grab
+**Every dictation bug gets a case.** When a paste comes out wrong, turn
+on Settings → History → Privacy → "Include transcript text in logs"
+(off by default, so logs show only `<N chars>`), reproduce it, and grab
 the `whisper: raw transcript=` line from `app.log`. Add it as `input`,
 with what should have been pasted as `expect`, and fix the code until
 `cargo test --lib pipeline` passes.

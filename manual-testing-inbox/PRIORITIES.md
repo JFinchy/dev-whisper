@@ -27,6 +27,7 @@ place with a one-line note.
 - [ ] Agent prompt voice commands (send it, attach the error, scratch that) - see `agent-prompt-voice-commands.md`
 - [ ] Transcribe while you talk (chunked transcription, silence skipping) - see `transcribe-while-talking.md`
 - [ ] Reply to a waiting coding agent by voice (hook, pill, reply shortcut, focus hop) - see `agent-reply.md`
+- [ ] Privacy: History lock (Touch ID), transcript-free logs, no Ollama cloud models - see `privacy-lock.md`
 
 ## Minor
 

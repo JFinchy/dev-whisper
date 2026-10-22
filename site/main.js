@@ -20,6 +20,22 @@ if ("IntersectionObserver" in window) {
   revealed.forEach((el) => el.classList.add("in"));
 }
 
+// Copy buttons next to commands.
+document.querySelectorAll("[data-copy]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const text = button.parentElement.querySelector("[data-cmd]")?.textContent?.trim();
+    if (!text || !navigator.clipboard) return;
+    navigator.clipboard.writeText(text).then(() => {
+      button.textContent = "Copied";
+      button.dataset.copied = "";
+      setTimeout(() => {
+        button.textContent = "Copy";
+        delete button.dataset.copied;
+      }, 1600);
+    }, () => {});
+  });
+});
+
 // Fill in the latest release version, quietly keeping the fallback text
 // if GitHub's API is unreachable or rate-limited.
 fetch("https://api.github.com/repos/JFinchy/dev-whisper/releases/latest")

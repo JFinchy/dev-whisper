@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { notifyError } from "../../ui/toast";
 import { BEHAVIORS, BEHAVIOR_LABEL, type Behavior } from "../shared";
+import { HistoryPrivacy, LockedHistory, useHistoryLock } from "./privacy";
 
 export type HistoryEntry = {
   timestamp_ms: number;
@@ -33,7 +34,7 @@ export type ReprocessState = {
   error: string | null;
 };
 
-export function HistorySection() {
+function HistoryContent() {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [retentionDays, setRetentionDays] = useState<number>(30);
   const [journalEnabled, setJournalEnabledState] = useState(false);
@@ -428,5 +429,22 @@ export function HistorySection() {
         </ul>
       )}
     </div>
+  );
+}
+
+// History, behind the optional lock (see privacy.tsx and privacy.rs).
+export function HistorySection() {
+  const lock = useHistoryLock();
+  return (
+    <>
+      <HistoryPrivacy lock={lock} />
+      {lock.status === null ? (
+        <span className="loading loading-spinner loading-xs" />
+      ) : lock.status.locked ? (
+        <LockedHistory lock={lock} />
+      ) : (
+        <HistoryContent />
+      )}
+    </>
   );
 }

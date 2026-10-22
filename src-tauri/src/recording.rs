@@ -331,7 +331,7 @@ fn transcribe_and_paste(
             // `text` below) — the only place to see what Whisper actually
             // heard, needed to tell a real STT mis-transcription apart from
             // a bug in one of those passes when a voice command misfires.
-            crate::applog!("whisper: raw transcript={text:?}");
+            crate::applog!("whisper: raw transcript={}", crate::logging::said(&text));
 
             let text = crate::stt::strip_non_speech(&text);
             if text.is_empty() {

@@ -38,6 +38,23 @@ jobs:
       - run: cargo test --lib
         working-directory: src-tauri
 
+  audit:
+    name: Dependency audit (known vulnerabilities)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      # Fails on any known vulnerability in a Rust dependency, apart from
+      # the Windows-only ones listed (with reasons) in .cargo/audit.toml.
+      - run: cargo audit
+        working-directory: src-tauri
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun audit
+      - run: sh -n site/install.sh
+
   audio-e2e:
     name: Dictation e2e (real audio → Whisper → pipeline)
     runs-on: macos-latest

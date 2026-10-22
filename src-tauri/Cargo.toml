@@ -43,6 +43,7 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 sha2 = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
 core-foundation = "0.10"
 core-graphics = "0.25"
 coreaudio-sys = { version = "0.2", default-features = false, features = ["core_audio"] }
@@ -56,4 +57,5 @@ objc2-app-kit = { version = "0.3", features = [
     "NSBitmapImageRep",
 ] }
 objc2-foundation = "0.3"
+objc2-local-authentication = { version = "0.3", features = ["LAContext", "block2"] }
 

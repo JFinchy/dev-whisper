@@ -167,6 +167,14 @@ pub struct AppConfig {
     /// Play a soft sound when a coding agent starts waiting. On by default.
     #[serde(default = "default_true")]
     pub agent_sound_enabled: bool,
+    /// Write dictated text into `app.log`. Off by default: logs then keep
+    /// events and timings, with each transcript replaced by its length.
+    #[serde(default)]
+    pub log_transcripts: bool,
+    /// Ask for Touch ID or the Mac password before showing History in
+    /// Settings (`privacy.rs`). Off by default.
+    #[serde(default)]
+    pub history_lock_enabled: bool,
 }
 
 fn default_true() -> bool {
@@ -208,6 +216,8 @@ impl Default for AppConfig {
             replacements: Vec::new(),
             agent_reply_shortcut: None,
             agent_sound_enabled: true,
+            log_transcripts: false,
+            history_lock_enabled: false,
         }
     }
 }

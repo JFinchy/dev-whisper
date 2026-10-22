@@ -272,154 +272,176 @@ pub fn format_in_project(
     // commands and boilerplate requests, in case of a coincidental
     // overlap. Like those, skips mode formatting and LLM
     // refinement entirely: the output is already fully resolved.
-    let (formatted, mode_label) = if let Some(expanded) =
-        crate::snippets::try_expand(&text, &cfg.snippets)
-    {
-        crate::applog!("snippets: trigger matched, transcript={text:?}");
-        (expanded, "snippet".to_string())
-    }
-    // Casing directives ("snake case error response handler") are a
-    // cross-cutting syntax command, not gated behind a Mode — they
-    // apply no matter which app/mode is active, and skip both
-    // rule-based formatting and LLM refinement entirely since the
-    // mechanical transform already fully resolves the output.
-    else if let Some(cased) = crate::syntax::try_apply_casing_command(&text) {
-        crate::applog!("syntax: casing command matched, transcript={text:?} output={cased:?}");
-        (cased, "casing".to_string())
-    } else if let Some(request) = crate::boilerplate::try_extract_request(&text) {
-        crate::applog!("boilerplate: request matched, transcript={text:?} request={request:?}");
-        on_refining(&cfg.llm_model);
-        let boilerplate_started = Instant::now();
-        let result = refiner.boilerplate(&request, &cfg.llm_model);
-        llm_ms = Some(boilerplate_started.elapsed().as_millis() as u64);
-        match result {
-            Ok(code) => (code, "boilerplate".to_string()),
-            Err(err) => {
-                // Falls back to normal mode formatting rather than
-                // pasting nothing — a down/missing Ollama shouldn't
-                // eat the user's dictation.
-                crate::applog!(
-                    "boilerplate: generation failed, falling back to plain formatting: {err}"
-                );
-                let formatted = crate::modes::apply_mode(settings.mode, &text);
-                (formatted, format!("{:?}", settings.mode))
-            }
-        }
-    } else {
-        // Names from the project (code and file names), for terminals and
-        // editors only: not Casual messaging, and not the literal shell
-        // directives, whose arguments are already final.
-        let project = project.filter(|_| {
-            settings.mode != crate::modes::Behavior::Casual
-                && !(settings.mode == crate::modes::Behavior::Cli
-                    && crate::modes::is_literal_cli_directive(&text))
-        });
-        let named = project.map(|p| {
-            p.index
-                .apply(&text, settings.mode == crate::modes::Behavior::Cli)
-        });
-        let formatted = match named {
-            Some((named, n)) if n > 0 => {
-                crate::applog!("project: replaced {n} spoken names");
-                crate::modes::apply_mode(settings.mode, &named)
-            }
-            _ => crate::modes::apply_mode(settings.mode, &text),
-        };
-        crate::applog!("modes: transcript={text:?} formatted={formatted:?}");
-
-        let llm_model = match &settings.llm_refinement {
-            crate::modes::LlmRefinement::Off => None,
-            crate::modes::LlmRefinement::Global => Some(cfg.llm_model.as_str()),
-            crate::modes::LlmRefinement::Model(id) => Some(id.as_str()),
-        };
-        // A literal spoken command (`git commit ...`, `make directory ...`)
-        // is already a finished shell command after `apply_mode`; sending it
-        // through the LLM only risks corrupting it (observed: `mkdir for
-        // the new service` came back as bare `mkdir`).
-        let llm_model = if settings.mode == crate::modes::Behavior::Cli
-            && crate::modes::is_literal_cli_directive(&text)
-        {
-            None
-        } else {
-            llm_model
-        };
-        // Refinement costs seconds and usually hands back the text
-        // unchanged, so a clean transcript skips it. Tone-changing modes
-        // (Casual) and modes with custom instructions always refine: there
-        // the rewrite is the point.
-        let llm_model = llm_model.filter(|model| {
-            if refiner.skipped() {
-                crate::applog!("llm: pasting as-is (skipped {model} at the user's request)");
-                return false;
-            }
-            let always = !cfg.llm_only_when_needed
-                || settings.mode == crate::modes::Behavior::Casual
-                || settings
-                    .custom_instructions
-                    .as_deref()
-                    .is_some_and(|i| !i.trim().is_empty());
-            if always {
-                return true;
-            }
-            match refinement_needed(&formatted) {
-                Some(reason) => {
-                    crate::applog!("llm: refining with {model} ({reason})");
-                    true
-                }
-                None => {
-                    crate::applog!("llm: transcript already clean, skipping {model}");
-                    false
-                }
-            }
-        });
-        let formatted = if let Some(model) = llm_model {
-            on_refining(model);
-            let refine_started = Instant::now();
-            // The user's own terms first, then the project's top names.
-            let mut vocabulary = cfg.vocabulary.clone();
-            if let Some(project) = project {
-                vocabulary.extend(project.terms.iter().cloned());
-            }
-            let result = refiner.refine(
-                settings.mode,
-                &formatted,
-                model,
-                settings.custom_instructions.as_deref(),
-                &vocabulary,
+    let (formatted, mode_label) =
+        if let Some(expanded) = crate::snippets::try_expand(&text, &cfg.snippets) {
+            crate::applog!(
+                "snippets: trigger matched, transcript={}",
+                crate::logging::said(&text)
             );
-            llm_ms = Some(refine_started.elapsed().as_millis() as u64);
+            (expanded, "snippet".to_string())
+        }
+        // Casing directives ("snake case error response handler") are a
+        // cross-cutting syntax command, not gated behind a Mode — they
+        // apply no matter which app/mode is active, and skip both
+        // rule-based formatting and LLM refinement entirely since the
+        // mechanical transform already fully resolves the output.
+        else if let Some(cased) = crate::syntax::try_apply_casing_command(&text) {
+            crate::applog!(
+                "syntax: casing command matched, transcript={} output={}",
+                crate::logging::said(&text),
+                crate::logging::said(&cased)
+            );
+            (cased, "casing".to_string())
+        } else if let Some(request) = crate::boilerplate::try_extract_request(&text) {
+            crate::applog!(
+                "boilerplate: request matched, transcript={} request={}",
+                crate::logging::said(&text),
+                crate::logging::said(&request)
+            );
+            on_refining(&cfg.llm_model);
+            let boilerplate_started = Instant::now();
+            let result = refiner.boilerplate(&request, &cfg.llm_model);
+            llm_ms = Some(boilerplate_started.elapsed().as_millis() as u64);
             match result {
-                Ok(refined) => match crate::llm::degenerate_output(&formatted, &refined) {
-                    None => {
-                        crate::applog!("llm: {model} refined {formatted:?} -> {refined:?}");
-                        // The model sometimes drops the `@` that marks a
-                        // file reference for terminal coding agents; tagging
-                        // skips tokens already tagged, so re-running it is safe.
-                        let refined = if settings.mode == crate::modes::Behavior::Cli {
-                            crate::file_tagging::tag_file_references(&refined)
-                        } else {
-                            refined
-                        };
-                        if refined != formatted {
-                            unrefined = Some(formatted.clone());
-                        }
-                        refined
-                    }
+                Ok(code) => (code, "boilerplate".to_string()),
+                Err(err) => {
+                    // Falls back to normal mode formatting rather than
+                    // pasting nothing — a down/missing Ollama shouldn't
+                    // eat the user's dictation.
+                    crate::applog!(
+                        "boilerplate: generation failed, falling back to plain formatting: {err}"
+                    );
+                    let formatted = crate::modes::apply_mode(settings.mode, &text);
+                    (formatted, format!("{:?}", settings.mode))
+                }
+            }
+        } else {
+            // Names from the project (code and file names), for terminals and
+            // editors only: not Casual messaging, and not the literal shell
+            // directives, whose arguments are already final.
+            let project = project.filter(|_| {
+                settings.mode != crate::modes::Behavior::Casual
+                    && !(settings.mode == crate::modes::Behavior::Cli
+                        && crate::modes::is_literal_cli_directive(&text))
+            });
+            let named = project.map(|p| {
+                p.index
+                    .apply(&text, settings.mode == crate::modes::Behavior::Cli)
+            });
+            let formatted = match named {
+                Some((named, n)) if n > 0 => {
+                    crate::applog!("project: replaced {n} spoken names");
+                    crate::modes::apply_mode(settings.mode, &named)
+                }
+                _ => crate::modes::apply_mode(settings.mode, &text),
+            };
+            crate::applog!(
+                "modes: transcript={} formatted={}",
+                crate::logging::said(&text),
+                crate::logging::said(&formatted)
+            );
+
+            let llm_model = match &settings.llm_refinement {
+                crate::modes::LlmRefinement::Off => None,
+                crate::modes::LlmRefinement::Global => Some(cfg.llm_model.as_str()),
+                crate::modes::LlmRefinement::Model(id) => Some(id.as_str()),
+            };
+            // A literal spoken command (`git commit ...`, `make directory ...`)
+            // is already a finished shell command after `apply_mode`; sending it
+            // through the LLM only risks corrupting it (observed: `mkdir for
+            // the new service` came back as bare `mkdir`).
+            let llm_model = if settings.mode == crate::modes::Behavior::Cli
+                && crate::modes::is_literal_cli_directive(&text)
+            {
+                None
+            } else {
+                llm_model
+            };
+            // Refinement costs seconds and usually hands back the text
+            // unchanged, so a clean transcript skips it. Tone-changing modes
+            // (Casual) and modes with custom instructions always refine: there
+            // the rewrite is the point.
+            let llm_model = llm_model.filter(|model| {
+                if refiner.skipped() {
+                    crate::applog!("llm: pasting as-is (skipped {model} at the user's request)");
+                    return false;
+                }
+                let always = !cfg.llm_only_when_needed
+                    || settings.mode == crate::modes::Behavior::Casual
+                    || settings
+                        .custom_instructions
+                        .as_deref()
+                        .is_some_and(|i| !i.trim().is_empty());
+                if always {
+                    return true;
+                }
+                match refinement_needed(&formatted) {
                     Some(reason) => {
-                        crate::applog!("llm: rejected {model} refinement ({reason}): {refined:?}; pasting {formatted:?}");
+                        crate::applog!("llm: refining with {model} ({reason})");
+                        true
+                    }
+                    None => {
+                        crate::applog!("llm: transcript already clean, skipping {model}");
+                        false
+                    }
+                }
+            });
+            let formatted = if let Some(model) = llm_model {
+                on_refining(model);
+                let refine_started = Instant::now();
+                // The user's own terms first, then the project's top names.
+                let mut vocabulary = cfg.vocabulary.clone();
+                if let Some(project) = project {
+                    vocabulary.extend(project.terms.iter().cloned());
+                }
+                let result = refiner.refine(
+                    settings.mode,
+                    &formatted,
+                    model,
+                    settings.custom_instructions.as_deref(),
+                    &vocabulary,
+                );
+                llm_ms = Some(refine_started.elapsed().as_millis() as u64);
+                match result {
+                    Ok(refined) => match crate::llm::degenerate_output(&formatted, &refined) {
+                        None => {
+                            crate::applog!(
+                                "llm: {model} refined {} -> {}",
+                                crate::logging::said(&formatted),
+                                crate::logging::said(&refined)
+                            );
+                            // The model sometimes drops the `@` that marks a
+                            // file reference for terminal coding agents; tagging
+                            // skips tokens already tagged, so re-running it is safe.
+                            let refined = if settings.mode == crate::modes::Behavior::Cli {
+                                crate::file_tagging::tag_file_references(&refined)
+                            } else {
+                                refined
+                            };
+                            if refined != formatted {
+                                unrefined = Some(formatted.clone());
+                            }
+                            refined
+                        }
+                        Some(reason) => {
+                            crate::applog!(
+                                "llm: rejected {model} refinement ({reason}): {}; pasting {}",
+                                crate::logging::said(&refined),
+                                crate::logging::said(&formatted)
+                            );
+                            formatted
+                        }
+                    },
+                    Err(err) => {
+                        crate::applog!("llm: refinement failed, pasting unrefined text: {err}");
                         formatted
                     }
-                },
-                Err(err) => {
-                    crate::applog!("llm: refinement failed, pasting unrefined text: {err}");
-                    formatted
                 }
-            }
-        } else {
-            formatted
+            } else {
+                formatted
+            };
+            (formatted, format!("{:?}", settings.mode))
         };
-        (formatted, format!("{:?}", settings.mode))
-    };
 
     Formatted {
         text: formatted,

@@ -107,12 +107,25 @@ fn read_all(app: &AppHandle) -> Vec<HistoryEntry> {
 /// landed.
 static HISTORY_LOCK: Mutex<()> = Mutex::new(());
 
+/// History is readable only by the user's own account.
+fn private_file(options: &mut std::fs::OpenOptions) -> &mut std::fs::OpenOptions {
+    use std::os::unix::fs::OpenOptionsExt;
+    options.mode(0o600)
+}
+
 /// Caller must hold `HISTORY_LOCK`. Writes a temp file and renames it into
 /// place so readers never see a half-written file.
 fn write_all(app: &AppHandle, entries: &[HistoryEntry]) -> Result<(), String> {
     let path = history_path(app)?;
     let tmp = path.with_extension("jsonl.tmp");
-    let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+    let mut file = private_file(
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true),
+    )
+    .open(&tmp)
+    .map_err(|e| e.to_string())?;
     for entry in entries {
         let line = serde_json::to_string(entry).map_err(|e| e.to_string())?;
         writeln!(file, "{line}").map_err(|e| e.to_string())?;
@@ -148,7 +161,7 @@ pub fn append_entry(app: &AppHandle, new: NewEntry) -> u64 {
         return timestamp_ms;
     };
     let _guard = HISTORY_LOCK.lock().unwrap();
-    if let Ok(mut file) = std::fs::OpenOptions::new()
+    if let Ok(mut file) = private_file(&mut std::fs::OpenOptions::new())
         .create(true)
         .append(true)
         .open(&path)
@@ -201,11 +214,12 @@ pub fn purge_old_entries(app: &AppHandle, retention_days: u32) {
 
 // Off the main thread: sync commands run on it, and this one does I/O.
 #[tauri::command(async)]
-pub fn list_history_entries(app: AppHandle) -> Vec<HistoryEntry> {
+pub fn list_history_entries(app: AppHandle) -> Result<Vec<HistoryEntry>, String> {
+    crate::privacy::require_history_unlocked(&app)?;
     let mut entries = read_all(&app);
     entries.reverse(); // most recent first
     entries.truncate(MAX_ENTRIES_RETURNED);
-    entries
+    Ok(entries)
 }
 
 /// Full-text search across the *entire* retained history, not just the
@@ -217,7 +231,8 @@ pub fn list_history_entries(app: AppHandle) -> Vec<HistoryEntry> {
 /// app doesn't have yet.
 // Off the main thread: sync commands run on it, and this one does I/O.
 #[tauri::command(async)]
-pub fn search_history_entries(app: AppHandle, query: String) -> Vec<HistoryEntry> {
+pub fn search_history_entries(app: AppHandle, query: String) -> Result<Vec<HistoryEntry>, String> {
+    crate::privacy::require_history_unlocked(&app)?;
     let query = query.trim().to_lowercase();
     if query.is_empty() {
         return list_history_entries(app);
@@ -229,7 +244,7 @@ pub fn search_history_entries(app: AppHandle, query: String) -> Vec<HistoryEntry
         .collect();
     entries.reverse(); // most recent first
     entries.truncate(MAX_ENTRIES_RETURNED);
-    entries
+    Ok(entries)
 }
 
 /// Pulled out of `search_history_entries` so the matching logic is
@@ -263,6 +278,7 @@ pub fn reprocess_history_text(
     mode: crate::modes::Behavior,
     use_llm_refinement: bool,
 ) -> Result<String, String> {
+    crate::privacy::require_history_unlocked(&app)?;
     let formatted = crate::modes::apply_mode(mode, &text);
     if use_llm_refinement {
         let cfg = config::load(&app);
@@ -284,13 +300,15 @@ pub fn update_history_entry_text(
     timestamp_ms: u64,
     text: String,
     learn: Option<bool>,
-) {
+) -> Result<(), String> {
+    crate::privacy::require_history_unlocked(&app)?;
     let Some(old) = set_entry_text(&app, timestamp_ms, text.clone(), false) else {
-        return;
+        return Ok(());
     };
     if learn == Some(true) {
         crate::corrections::learn(&app, &old, &text, crate::corrections::Source::Edit);
     }
+    Ok(())
 }
 
 /// Replaces an entry's text with its pre-refinement original (see
@@ -298,7 +316,8 @@ pub fn update_history_entry_text(
 /// refiner changed counts as a correction signal: the user preferred the
 /// original wording.
 #[tauri::command]
-pub fn use_original_history_text(app: AppHandle, timestamp_ms: u64) {
+pub fn use_original_history_text(app: AppHandle, timestamp_ms: u64) -> Result<(), String> {
+    crate::privacy::require_history_unlocked(&app)?;
     let original = {
         let _guard = HISTORY_LOCK.lock().unwrap();
         read_all(&app)
@@ -306,9 +325,11 @@ pub fn use_original_history_text(app: AppHandle, timestamp_ms: u64) {
             .find(|e| e.timestamp_ms == timestamp_ms)
             .and_then(|e| e.original_text)
     };
-    let Some(original) = original else { return };
+    let Some(original) = original else {
+        return Ok(());
+    };
     let Some(refined) = set_entry_text(&app, timestamp_ms, original.clone(), true) else {
-        return;
+        return Ok(());
     };
     crate::corrections::learn(
         &app,
@@ -316,6 +337,7 @@ pub fn use_original_history_text(app: AppHandle, timestamp_ms: u64) {
         &original,
         crate::corrections::Source::Original,
     );
+    Ok(())
 }
 
 /// Shared by the two commands above; returns the text it replaced, or `None`
@@ -343,20 +365,33 @@ fn set_entry_text(
 }
 
 #[tauri::command]
-pub fn clear_history(app: AppHandle) {
+pub fn clear_history(app: AppHandle) -> Result<(), String> {
+    crate::privacy::require_history_unlocked(&app)?;
     let _guard = HISTORY_LOCK.lock().unwrap();
-    let _ = write_all(&app, &[]);
+    write_all(&app, &[])
 }
 
 #[tauri::command]
-pub fn delete_history_entry(app: AppHandle, timestamp_ms: u64) {
+pub fn delete_history_entry(app: AppHandle, timestamp_ms: u64) -> Result<(), String> {
+    crate::privacy::require_history_unlocked(&app)?;
     let _guard = HISTORY_LOCK.lock().unwrap();
     let entries = read_all(&app);
     let kept: Vec<HistoryEntry> = entries
         .into_iter()
         .filter(|e| e.timestamp_ms != timestamp_ms)
         .collect();
-    let _ = write_all(&app, &kept);
+    write_all(&app, &kept)
+}
+
+/// Makes an existing history file (written by a version before files were
+/// created owner-only) readable only by the user. Called at launch.
+pub fn make_private(app: &AppHandle) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(path) = history_path(app) {
+        if path.exists() {
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
+    }
 }
 
 #[tauri::command]

@@ -5,6 +5,16 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { notifyError } from "../../ui/toast";
 import { type LlmModelStatus } from "../shared";
 
+
+// Ollama cloud models run on Ollama's servers ("gpt-oss:120b-cloud"); the
+// backend never lists or uses them (llm::is_cloud_model).
+function isCloudModel(model: string | null | undefined) {
+  if (!model) return false;
+  const name = model.trim().toLowerCase();
+  const tag = name.includes(":") ? name.slice(name.lastIndexOf(":") + 1) : "";
+  return tag === "cloud" || tag.endsWith("-cloud") || name.endsWith("-cloud");
+}
+
 export function LlmSection() {
   const [catalog, setCatalog] = useState<LlmModelStatus[]>([]);
   const [activeModel, setActiveModel] = useState("");
@@ -130,7 +140,15 @@ export function LlmSection() {
               {id}: {err}
             </p>
           ))}
-          <p className="mt-1.5 text-xs opacity-50">Used by any mode with "Refine with LLM" enabled above.</p>
+          {isCloudModel(activeModel) && (
+            <p className="mt-1.5 text-xs text-warning" data-testid="llm-cloud-warning">
+              {activeModel} is an Ollama cloud model, so it isn't used. Pick a local model above.
+            </p>
+          )}
+          <p className="mt-1.5 text-xs opacity-50">
+            Used by any mode with "Refine with LLM" enabled above. Ollama cloud models are hidden and never used, so
+            your text stays on your Mac.
+          </p>
         </>
       )}
     </div>

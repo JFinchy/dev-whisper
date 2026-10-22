@@ -1,0 +1,10 @@
+# `cargo audit` settings (run in CI's "Dependency audit" job).
+[advisories]
+ignore = [
+  # zip 4.x, pulled in by tauri-plugin-updater only on Windows (it unpacks
+  # .zip updates there). Not compiled into the macOS app; fixed in zip 9,
+  # which the updater doesn't allow yet.
+  "RUSTSEC-2026-0367",
+  "RUSTSEC-2026-0368",
+  "RUSTSEC-2026-0369",
+]

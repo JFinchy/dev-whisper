@@ -43,6 +43,9 @@ pub fn prewarm(model: &str) {
         }
         last.insert(model.to_string(), now);
     }
+    if require_local(model).is_err() {
+        return;
+    }
     let model = model.to_string();
     std::thread::spawn(move || {
         let started = Instant::now();
@@ -193,6 +196,7 @@ pub fn list_llm_catalog() -> Vec<LlmModelStatus> {
 }
 
 fn pull_ollama_model(app: &AppHandle, id: &str) -> Result<(), String> {
+    require_local(id)?;
     let body = serde_json::json!({ "name": id, "stream": true });
     let resp = ureq::post(OLLAMA_PULL_URL)
         .timeout(std::time::Duration::from_secs(30 * 60))
@@ -255,6 +259,32 @@ struct TagsResponse {
 #[derive(Deserialize)]
 struct TagEntry {
     name: String,
+    /// Set by Ollama for cloud models, which it runs on its own servers.
+    #[serde(default)]
+    remote_host: Option<String>,
+}
+
+/// Why a cloud model is refused, shown where the request would have gone.
+pub const CLOUD_REFUSED: &str =
+    "Ollama cloud models are turned off in Dev Whisper so your text stays on your Mac.";
+
+/// Ollama's cloud models ("gpt-oss:120b-cloud", "kimi-k2:cloud") send the
+/// prompt to Ollama's servers. Dev Whisper promises nothing you say leaves
+/// your Mac, so they're never listed or used.
+pub fn is_cloud_model(name: &str) -> bool {
+    let name = name.trim().to_ascii_lowercase();
+    let tag = name.rsplit_once(':').map_or("", |(_, tag)| tag);
+    tag == "cloud" || tag.ends_with("-cloud") || name.ends_with("-cloud")
+}
+
+/// Refuses a cloud model before any request is made.
+fn require_local(model: &str) -> Result<(), String> {
+    if is_cloud_model(model) {
+        crate::applog!("llm: refused cloud model {model}");
+        Err(CLOUD_REFUSED.to_string())
+    } else {
+        Ok(())
+    }
 }
 
 fn prompt_for_mode(
@@ -386,6 +416,7 @@ fn refine_streaming_at(
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<String, String> {
     use std::sync::atomic::Ordering;
+    require_local(req.model)?;
 
     let body = serde_json::json!({
         "model": req.model,
@@ -571,6 +602,9 @@ pub fn summarize_for_journal(text: &str, model: &str) -> Option<Result<String, S
                         journal, in the style of a git commit subject: imperative mood, no \
                         trailing period, under 10 words. Output ONLY the summary line, nothing \
                         else.";
+    if let Err(err) = require_local(model) {
+        return Some(Err(err));
+    }
     let body = serde_json::json!({
         "model": model,
         "prompt": format!("{instruction}\n\nDictated text: {text}"),
@@ -635,6 +669,7 @@ pub fn generate_boilerplate(request: &str, model: &str) -> Result<String, String
                         explanation, no markdown code fences, no surrounding commentary. If the \
                         request doesn't specify a language, infer the most likely one from \
                         context.";
+    require_local(model)?;
     let body = serde_json::json!({
         "model": model,
         "prompt": format!("{instruction}\n\nRequest: {request}"),
@@ -688,7 +723,14 @@ pub fn ollama_models() -> Option<Vec<String>> {
     let Ok(parsed) = resp.into_json::<TagsResponse>() else {
         return None;
     };
-    Some(parsed.models.into_iter().map(|m| m.name).collect())
+    Some(
+        parsed
+            .models
+            .into_iter()
+            .filter(|m| m.remote_host.is_none() && !is_cloud_model(&m.name))
+            .map(|m| m.name)
+            .collect(),
+    )
 }
 
 #[tauri::command]
@@ -819,6 +861,30 @@ mod tests {
         assert!(!prompt_for_mode(crate::modes::Behavior::Cli, "x", None, &[]).contains("spell it"));
     }
     use super::*;
+
+    #[test]
+    fn cloud_models_are_recognized() {
+        for cloud in [
+            "gpt-oss:120b-cloud",
+            "qwen3-coder:480b-cloud",
+            "kimi-k2:cloud",
+            "GLM-4.6:Cloud",
+        ] {
+            assert!(is_cloud_model(cloud), "{cloud}");
+        }
+        for local in [
+            "gemma3:4b",
+            "llama3.2:3b",
+            "qwen2.5:1.5b-instruct",
+            "cloudy-model:7b",
+        ] {
+            assert!(!is_cloud_model(local), "{local}");
+        }
+        assert_eq!(
+            require_local("gpt-oss:20b-cloud"),
+            Err(CLOUD_REFUSED.to_string())
+        );
+    }
 
     /// Smoke test against a real, locally-running Ollama instance — skips
     /// (doesn't fail) if Ollama isn't reachable, e.g. in CI or on a machine

@@ -35,6 +35,9 @@
     "daisyui": "^5.7.17",
     "tailwindcss": "^4.3.3",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.3.7"
+  },
+  "overrides": {
+    "source-map-js": "^1.2.2"
   }
 }

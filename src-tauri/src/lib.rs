@@ -27,6 +27,7 @@ mod modes;
 mod names;
 mod paste;
 mod pipeline;
+mod privacy;
 mod project;
 mod punctuation;
 mod readiness;
@@ -392,6 +393,12 @@ pub fn run() {
             agents::get_agent_reply_shortcut,
             agents::get_agent_reply_shortcut_error,
             agents::set_agent_reply_shortcut,
+            privacy::get_history_lock,
+            privacy::set_history_lock_enabled,
+            privacy::unlock_history,
+            privacy::lock_history,
+            privacy::get_log_transcripts,
+            privacy::set_log_transcripts,
             agents::get_agent_sound_enabled,
             agents::set_agent_sound_enabled,
             agents::get_agent_hook_config,
@@ -421,6 +428,9 @@ pub fn run() {
             }
 
             let saved_config = config::load(app.handle());
+            logging::set_log_transcripts(saved_config.log_transcripts);
+            app.manage(privacy::PrivacyState::default());
+            history::make_private(app.handle());
 
             let shortcut_cfg = saved_config.shortcut.clone().unwrap_or_default();
             app.manage(shortcut::register_initial(app.handle(), shortcut_cfg));
