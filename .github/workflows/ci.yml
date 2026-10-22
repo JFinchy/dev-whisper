@@ -31,11 +31,16 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
       # sherpa-onnx-sys downloads its prebuilt library into
-      # target/sherpa-onnx-prebuilt, which rust-cache doesn't keep, while it
-      # does keep the record that the build script already ran. Rebuild that
-      # crate whenever the download is missing, or linking fails.
+      # target/sherpa-onnx-prebuilt, and rust-cache can restore that folder
+      # without the library in it, while keeping the record that the build
+      # script already ran. Re-download whenever the library is missing, or
+      # linking fails.
       - name: Re-fetch the sherpa-onnx library if the cache dropped it
-        run: '[ -d target/sherpa-onnx-prebuilt ] || cargo clean -p sherpa-onnx-sys'
+        run: |
+          if ! ls target/sherpa-onnx-prebuilt/*/lib/libsherpa-onnx-c-api.a >/dev/null 2>&1; then
+            rm -rf target/sherpa-onnx-prebuilt
+            cargo clean -p sherpa-onnx-sys
+          fi
         working-directory: src-tauri
       - run: ./scripts/check-versions.sh
       - run: cargo fmt --check
@@ -78,11 +83,16 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
       # sherpa-onnx-sys downloads its prebuilt library into
-      # target/sherpa-onnx-prebuilt, which rust-cache doesn't keep, while it
-      # does keep the record that the build script already ran. Rebuild that
-      # crate whenever the download is missing, or linking fails.
+      # target/sherpa-onnx-prebuilt, and rust-cache can restore that folder
+      # without the library in it, while keeping the record that the build
+      # script already ran. Re-download whenever the library is missing, or
+      # linking fails.
       - name: Re-fetch the sherpa-onnx library if the cache dropped it
-        run: '[ -d target/sherpa-onnx-prebuilt ] || cargo clean -p sherpa-onnx-sys'
+        run: |
+          if ! ls target/sherpa-onnx-prebuilt/*/lib/libsherpa-onnx-c-api.a >/dev/null 2>&1; then
+            rm -rf target/sherpa-onnx-prebuilt
+            cargo clean -p sherpa-onnx-sys
+          fi
         working-directory: src-tauri
       - uses: actions/cache@v4
         with:
