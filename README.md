@@ -72,8 +72,10 @@ The full, detailed list is in [`FEATURES.md`](FEATURES.md).
 **[Download Dev Whisper for Mac (Apple Silicon)](https://github.com/JFinchy/dev-whisper/releases/latest/download/Dev-Whisper.dmg)**:
 open it and drag Dev Whisper into Applications. Always the newest
 version; older ones are on the
-[Releases](https://github.com/JFinchy/dev-whisper/releases) page. The app isn't notarized yet, so the first
-launch needs right-click (Control-click) → **Open**.
+[Releases](https://github.com/JFinchy/dev-whisper/releases) page. The app isn't notarized yet, so macOS blocks
+the first launch: open it once, then go to **System Settings → Privacy &
+Security**, scroll down and click **Open Anyway** (on macOS 14 and
+earlier, right-click the app → **Open** instead).
 
 On first launch, Settings shows a setup checklist until everything's in
 place:
@@ -148,5 +150,8 @@ Settings → Advanced → Logs).
   opens but delivers no audio. The widget now flags this as "No sound from
   mic" within ~2 seconds; use a built-in, USB or Bluetooth mic for
   anything important.
-- **Not notarized**, so Gatekeeper needs the right-click → Open step on
-  first install.
+- **Not notarized**, so Gatekeeper needs the **Open Anyway** step (System
+  Settings → Privacy & Security) on first install. Releases before 0.3.1
+  weren't signed as a whole bundle, which macOS reports as "damaged"; for
+  those, run `xattr -dr com.apple.quarantine "/Applications/Dev Whisper.app"`
+  or install 0.3.1 or later.

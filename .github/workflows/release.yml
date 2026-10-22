@@ -42,6 +42,17 @@ jobs:
           # Releases page once you've sanity-checked it.
           releaseDraft: true
 
+      # A bundle that isn't signed as a whole (only the linker's signature
+      # on the binary) is reported as "damaged" by macOS once downloaded.
+      # `signingIdentity: "-"` in tauri.conf.json ad-hoc signs it; this
+      # fails the release if that ever stops happening.
+      - name: Verify the app's signature
+        run: |
+          app=$(ls -d src-tauri/target/release/bundle/macos/*.app | head -1)
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv "$app" 2>&1 | grep -q "Sealed Resources version" \
+            || { echo "app bundle resources aren't sealed"; exit 1; }
+
       # A copy of the installer under a fixed name, so one link always
       # downloads the newest version:
       # https://github.com/JFinchy/dev-whisper/releases/latest/download/Dev-Whisper.dmg
