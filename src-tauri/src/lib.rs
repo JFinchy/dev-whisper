@@ -480,7 +480,9 @@ pub fn run() {
                 use capture::{Request, Trigger::DeepLink};
                 for url in event.urls() {
                     let action = url.host_str().unwrap_or("");
-                    crate::applog!("deep-link: received action={action:?} url={url}");
+                    // Only the action: agent links carry the hook token
+                    // (and the agent's folder and message) in the query.
+                    crate::applog!("deep-link: received action={action:?}");
                     let request = match action {
                         "toggle-recording" => Request::ToggleDictation(DeepLink),
                         "start-recording" => Request::StartDictation(DeepLink),

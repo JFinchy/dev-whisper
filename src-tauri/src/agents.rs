@@ -801,6 +801,9 @@ pub fn deliver_reply(
     }
 
     let notice = match delivered {
+        Ok(()) if hold && text.is_empty() => {
+            format!("In {app_label}. Check it's the {folder} agent's tab, then press Return.")
+        }
         Ok(()) if hold => format!(
             "Pasted in {app_label}. Check it's the {folder} agent's tab, then press Return."
         ),
