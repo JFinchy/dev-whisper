@@ -207,12 +207,15 @@ built yet.
 
 - **Auto-launch at login** — off by default (a privacy-first app
   shouldn't silently add itself as a login item), toggle in Settings.
-- **Tray icon reflects recording state** — a red dot overlays the mic
-  glyph while recording. The glyph itself is a custom mic-themed icon
-  (replacing the default Tauri icon) rendered as a macOS template image
-  so it auto-adapts to light/dark menu bars.
-- **Custom app icon** — same mic-themed design, full color, for
-  Dock/Finder/the About window.
+- **Tray icon reflects recording state** — the glyph is the app icon's
+  prompt, wave and cursor as plain strokes (drawn by
+  `src-tauri/icons/source/tray-icon.py`), a macOS template image so it
+  adapts to light/dark menu bars. While recording it turns grey with a red
+  dot (green while always-on listening is awake); grey because colored
+  icons aren't recolored by macOS, and black would vanish on a dark bar.
+- **Custom app icon** — a terminal prompt flowing into a waveform and a
+  text cursor, amber to violet (source in `src-tauri/icons/source/`), for
+  Dock/Finder/the About window and the website.
 - **Deep-link/CLI automation hooks** — `open devwhisper://start-recording`
   / `stop-recording` / `toggle-recording` for Raycast, Hammerspoon,
   Alfred, or plain shell scripts. Start/stop are idempotent, so a script

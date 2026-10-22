@@ -31,6 +31,7 @@ place with a one-line note.
 
 ## Minor
 
+- [ ] New app icon and menu bar icon (incl. recording dot on dark menu bars) - see `new-icons.md`
 - [ ] Live input level meter - see `live-level-meter.md`
 - [ ] Insights page - see `insights.md`
 - [ ] Signal sidebar Settings, theme picker, widget flyout - see `signal-sidebar-settings.md`

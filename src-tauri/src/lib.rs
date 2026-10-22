@@ -93,14 +93,14 @@ use widget::{get_widget_mode, set_widget_mode, set_widget_size};
 /// through `RecordingState`.
 pub const TRAY_ICON_ID: &str = "main";
 
-/// The tray glyph is deliberately a separate, simpler asset from the Dock
-/// icon (icons/icon.png) — mic silhouette only, no waveform, no
-/// background — since the waveform accent turns to mush at 16-22px menu
-/// bar sizes. Rendered as a macOS "template" image by default so the
-/// system tints it to match light/dark menu bars, like every other
-/// well-behaved menu-bar app; recording.rs switches off template mode
-/// and overlays a red dot on top of it while actively recording, since
-/// template images can't show color.
+/// The tray glyph is a separate, simpler asset from the Dock icon
+/// (icons/icon.png): the same prompt, wave and cursor as single strokes, no
+/// background or glow, which would turn to mush at menu bar size. It's
+/// wider than tall (macOS scales it to 18pt high and keeps the shape).
+/// Rendered as a macOS "template" image by default so the system tints it
+/// to match light/dark menu bars; while recording or listening it gets a
+/// colored dot instead, and template mode is off since template images
+/// can't show color. Drawn by `icons/source/tray-icon.py`.
 pub fn tray_base_icon() -> tauri::image::Image<'static> {
     tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon-template.png"))
         .expect("bundled tray-icon-template.png must decode")
@@ -114,6 +114,9 @@ pub fn recording_tray_icon(base: &tauri::image::Image) -> tauri::image::Image<'s
     tray_icon_with_dot(base, [220, 38, 38])
 }
 
+/// macOS's secondary label grey: legible on light and dark menu bars.
+const TRAY_GLYPH_GREY: [u8; 3] = [142, 142, 147];
+
 fn tray_icon_with_dot(
     base: &tauri::image::Image,
     [r, g, b]: [u8; 3],
@@ -122,9 +125,17 @@ fn tray_icon_with_dot(
     let height = base.height();
     let mut rgba = base.rgba().to_vec();
 
-    let radius = (width.min(height) as f32 * 0.3).max(3.0);
-    let cx = width as f32 * 0.72;
-    let cy = height as f32 * 0.72;
+    // Without template mode macOS no longer recolors the glyph for the menu
+    // bar, so a black glyph would vanish on a dark one. Mid-grey reads on
+    // both.
+    for pixel in rgba.chunks_exact_mut(4) {
+        pixel[..3].copy_from_slice(&TRAY_GLYPH_GREY);
+    }
+
+    // Top-right, over the end of the cursor stroke, clear of the wave.
+    let radius = (width.min(height) as f32 * 0.24).max(3.0);
+    let cx = width as f32 - radius;
+    let cy = radius;
 
     for y in 0..height {
         for x in 0..width {
@@ -698,8 +709,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_bundled_tray_glyph_decodes() {
+        let base = tray_base_icon();
+        assert!(base.width() > base.height(), "the glyph is wider than tall");
+    }
+
+    #[test]
     fn recording_tray_icon_paints_a_red_dot_without_changing_dimensions() {
-        let width = 32;
+        let width = 44;
         let height = 32;
         let base = tauri::image::Image::new_owned(
             vec![10u8; (width * height * 4) as usize],
@@ -711,15 +728,16 @@ mod tests {
         assert_eq!(marked.width(), width);
         assert_eq!(marked.height(), height);
 
-        // Center of the dot (per recording_tray_icon's 0.72/0.72 placement)
-        // should be opaque red.
-        let cx = (width as f32 * 0.72) as u32;
-        let cy = (height as f32 * 0.72) as u32;
+        // Center of the dot (top-right corner) should be opaque red.
+        let radius = height as f32 * 0.24;
+        let cx = (width as f32 - radius) as u32;
+        let cy = radius as u32;
         let idx = ((cy * width + cx) * 4) as usize;
         let rgba = marked.rgba();
         assert_eq!(&rgba[idx..idx + 4], &[220, 38, 38, 255]);
 
-        // Top-left corner, far from the dot, should be untouched.
-        assert_eq!(&rgba[0..4], &[10, 10, 10, 10]);
+        // Bottom-left, far from the dot: recolored grey, alpha kept.
+        let last_row = ((height - 1) * width * 4) as usize;
+        assert_eq!(&rgba[last_row..last_row + 4], &[142, 142, 147, 10]);
     }
 }
