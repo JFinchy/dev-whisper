@@ -30,6 +30,13 @@ jobs:
       # tests need dist/ to exist.
       - run: bun install --frozen-lockfile
       - run: bun run build
+      # sherpa-onnx-sys downloads its prebuilt library into
+      # target/sherpa-onnx-prebuilt, which rust-cache doesn't keep, while it
+      # does keep the record that the build script already ran. Rebuild that
+      # crate whenever the download is missing, or linking fails.
+      - name: Re-fetch the sherpa-onnx library if the cache dropped it
+        run: '[ -d target/sherpa-onnx-prebuilt ] || cargo clean -p sherpa-onnx-sys'
+        working-directory: src-tauri
       - run: ./scripts/check-versions.sh
       - run: cargo fmt --check
         working-directory: src-tauri
@@ -70,6 +77,13 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run build
+      # sherpa-onnx-sys downloads its prebuilt library into
+      # target/sherpa-onnx-prebuilt, which rust-cache doesn't keep, while it
+      # does keep the record that the build script already ran. Rebuild that
+      # crate whenever the download is missing, or linking fails.
+      - name: Re-fetch the sherpa-onnx library if the cache dropped it
+        run: '[ -d target/sherpa-onnx-prebuilt ] || cargo clean -p sherpa-onnx-sys'
+        working-directory: src-tauri
       - uses: actions/cache@v4
         with:
           path: src-tauri/models
