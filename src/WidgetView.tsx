@@ -8,7 +8,25 @@ import { shortcutLabel, skipVariant, type ShortcutConfig } from "./shortcut";
 import { type WaitingAgent } from "./settings/sections/agents";
 
 type Phase = "idle" | "recording" | "transcribing" | "refining";
-type WidgetMode = "minimal" | "compact" | "detailed";
+type WidgetMode = "minimal" | "compact" | "detailed" | "pill" | "notch" | "caption" | "stacked";
+
+// Every style, in picker order, with its short name (the flyout's Style
+// row; Settings and the menu bar show the same list).
+export const WIDGET_STYLES: { id: WidgetMode; label: string }[] = [
+  { id: "minimal", label: "Minimal" },
+  { id: "pill", label: "Pill" },
+  { id: "compact", label: "Compact" },
+  { id: "stacked", label: "Two-line" },
+  { id: "notch", label: "Notch" },
+  { id: "caption", label: "Caption" },
+  { id: "detailed", label: "Detailed" },
+];
+
+// Two-line compact is the compact layout plus a second, smaller line.
+const STACKED_EXTRA = 6;
+// Notch: small while idle, wider while recording or showing something.
+const NOTCH_IDLE = { width: 184, height: 32 };
+const NOTCH_ACTIVE = { width: 300, height: 34 };
 // Only the name is needed here — the flyout just offers a pick list, the
 // backend resolves the full mode (behavior/models) by name when the
 // override is consumed. See `modes::ModeDefinition` for the full shape.
@@ -76,10 +94,14 @@ const FLYOUT_MODE_ROW_GAP = 4;
 // 6px gap, ~12px label line) — each mic row then adds a full row height.
 const FLYOUT_MIC_SECTION_BASE = 18;
 
+// The Style section: its label plus one row per two styles.
+const FLYOUT_STYLE_SECTION = 18 + Math.ceil(WIDGET_STYLES.length / 2) * (26 + 4);
+
 function compactFlyoutSize(modeCount: number, micRowCount: number) {
   const extraRows = Math.ceil(Math.max(modeCount, 1) / 2) - 1;
   const micRows = micRowCount > 0 ? FLYOUT_MIC_SECTION_BASE + micRowCount * (FLYOUT_MODE_ROW_HEIGHT + FLYOUT_MODE_ROW_GAP) : 0;
-  const natural = COMPACT_FLYOUT_BASE_HEIGHT + extraRows * (FLYOUT_MODE_ROW_HEIGHT + FLYOUT_MODE_ROW_GAP) + micRows;
+  const natural =
+    COMPACT_FLYOUT_BASE_HEIGHT + extraRows * (FLYOUT_MODE_ROW_HEIGHT + FLYOUT_MODE_ROW_GAP) + micRows + FLYOUT_STYLE_SECTION;
   return { width: COMPACT_WIDTH, height: Math.min(natural, COMPACT_FLYOUT_MAX_HEIGHT) };
 }
 
@@ -214,6 +236,27 @@ function StageProgress({
 
 // Minimal mode's version: a ring that fills around the record button, in
 // the stage's color.
+// A hairline progress bar for the small styles (Pill, Notch), in the
+// stage's color; indeterminate (a shimmer) without a percentage.
+function ThinProgress({ stage, percent }: { stage: Stage; percent: number | null }) {
+  return (
+    <div
+      className="dw-thin-progress"
+      role="progressbar"
+      aria-label={stage === "transcribe" ? "Transcribing" : "Refining"}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={percent ?? undefined}
+      data-testid={`${stage}-progress`}
+    >
+      <span
+        className={percent === null ? "dw-thin-indeterminate" : undefined}
+        style={{ background: STAGE_COLOR[stage], width: percent === null ? undefined : `${percent}%` }}
+      />
+    </div>
+  );
+}
+
 function ProgressRing({ stage, percent }: { stage: Stage; percent: number }) {
   const r = 21;
   const circumference = 2 * Math.PI * r;
@@ -259,6 +302,11 @@ function WidgetView() {
   // real backend state (isolated_voice_enabled / the one-shot mode
   // override), not local-only UI state.
   const [flyoutHovered, setFlyoutHovered] = useState(false);
+  // A discarded recording (or cancelled paste) can be brought back for a
+  // few seconds; see discard.rs.
+  const [undoOffer, setUndoOffer] = useState(false);
+  // What was pasted last, for the Live caption style.
+  const [lastPasted, setLastPasted] = useState<string | null>(null);
   const compactMessageRef = useRef<HTMLSpanElement | null>(null);
   const [errorHeight, setErrorHeight] = useState<number | null>(null);
   const [micMode, setMicMode] = useState(false);
@@ -454,6 +502,7 @@ function WidgetView() {
     const unlistenModeChanged = listen<WidgetMode>("widget-mode-changed", (e) => setMode(e.payload));
     const unlistenLive = listen<string>("live-transcript", (e) => setLiveText(e.payload));
     const unlistenStart = listen("recording-started", () => {
+      setUndoOffer(false);
       setLiveText("");
       setMicSilent(null);
       setPhase("recording");
@@ -481,7 +530,8 @@ function WidgetView() {
       setPhase("idle");
       announce(event.payload, true);
     });
-    const unlistenTranscriptReady = listen<string>("transcript-ready", () => {
+    const unlistenTranscriptReady = listen<string>("transcript-ready", (event) => {
+      setLastPasted(event.payload || null);
       setPhase("idle");
       announce("Pasted", false);
       // The backend consumes the override the moment it's used (see
@@ -499,6 +549,15 @@ function WidgetView() {
       setOverrideMode(null);
       announce(event.payload, false);
     });
+    const unlistenDiscarded = listen<string>("dictation-discarded", (event) => {
+      setPhase("idle");
+      setLiveText("");
+      setMicSilent(null);
+      setUndoOffer(true);
+      announce(event.payload === "cancelled" ? "Paste cancelled" : "Recording discarded", false);
+    });
+    const unlistenDiscardOver = listen("discard-expired", () => setUndoOffer(false));
+    const unlistenDiscardUndone = listen("discard-undone", () => setUndoOffer(false));
     const unlistenUpdateAvailable = listen<string>("update-available", (event) => {
       setUpdateAvailable(event.payload);
     });
@@ -522,11 +581,25 @@ function WidgetView() {
       unlistenDevice.then((f) => f());
       unlistenAmbient.then((f) => f());
       unlistenCopied.then((f) => f());
+      unlistenDiscarded.then((f) => f());
+      unlistenDiscardOver.then((f) => f());
+      unlistenDiscardUndone.then((f) => f());
     };
   }, []);
 
+  // Notch grows from the middle while it has something to show (the
+  // backend re-centers it on every resize).
+  const notchActive = phase !== "idle" || (flashVisible && message !== null) || undoOffer;
   useEffect(() => {
-    if (mode !== "compact") return;
+    if (mode !== "notch") return;
+    invoke("set_widget_size", notchActive ? NOTCH_ACTIVE : NOTCH_IDLE).catch((err) =>
+      console.error("set_widget_size failed:", err),
+    );
+  }, [mode, notchActive]);
+
+  useEffect(() => {
+    if (mode !== "compact" && mode !== "stacked") return;
+    const extra = mode === "stacked" ? STACKED_EXTRA : 0;
     // The flyout takes priority over the error-expansion size — hovering
     // to check mic mode mid-error is a rare enough overlap that showing
     // the flyout (rather than fighting over which one "wins" the window
@@ -535,9 +608,9 @@ function WidgetView() {
       ? compactFlyoutSize(modes.length, micRows.length)
       : flashVisible && isError
         ? errorHeight
-          ? { width: COMPACT_WIDTH, height: errorHeight }
+          ? { width: COMPACT_WIDTH, height: errorHeight + extra }
           : COMPACT_EXPANDED_SIZE
-        : COMPACT_BASE_SIZE;
+        : { width: COMPACT_WIDTH, height: COMPACT_BASE_SIZE.height + extra };
     invoke("set_widget_size", size).catch((err) => console.error("set_widget_size failed:", err));
   }, [mode, flashVisible, isError, flyoutHovered, modes.length, micRows.length, errorHeight]);
 
@@ -546,13 +619,19 @@ function WidgetView() {
   // clamp), so a short error stays small and a long one isn't cut off.
   useLayoutEffect(() => {
     const el = compactMessageRef.current;
-    if (mode !== "compact" || !flashVisible || !isError || !el) {
+    if ((mode !== "compact" && mode !== "stacked") || !flashVisible || !isError || !el) {
       setErrorHeight(null);
       return;
     }
     const needed = Math.ceil(el.scrollHeight) + COMPACT_ERROR_CHROME;
     setErrorHeight(Math.min(Math.max(needed, COMPACT_BASE_SIZE.height), COMPACT_ERROR_MAX_HEIGHT));
   }, [mode, flashVisible, isError, message]);
+
+  function pickStyle(next: WidgetMode) {
+    if (next === mode) return;
+    setFlyoutHovered(false);
+    invoke("set_widget_mode", { mode: next }).catch(actionFailed("switch the widget style"));
+  }
 
   function toggleRecording() {
     invoke("toggle_recording_command").catch(actionFailed("start recording"));
@@ -662,6 +741,39 @@ function WidgetView() {
       </button>
     ) : null;
 
+  // ✕ while recording or preparing the paste: same as pressing Esc.
+  const discardButton =
+    phase !== "idle" ? (
+      <button
+        type="button"
+        className="dw-icon-btn"
+        onClick={() => invoke("discard_recording").catch(actionFailed("discard the recording"))}
+        aria-label={phase === "recording" ? "Discard recording (Esc)" : "Cancel paste (Esc)"}
+        title={phase === "recording" ? "Discard recording (Esc)" : "Cancel paste (Esc)"}
+        data-testid="discard"
+      >
+        <svg aria-hidden="true" viewBox="0 0 12 12" width="10" height="10">
+          <path d="M2.5 2.5l7 7m0-7l-7 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+      </button>
+    ) : null;
+
+  const undoButton =
+    phase === "idle" && undoOffer ? (
+      <button
+        type="button"
+        className="dw-undo-btn"
+        onClick={() => {
+          setUndoOffer(false);
+          invoke("undo_discard").catch(actionFailed("undo"));
+        }}
+        title="Bring it back (⇧Esc)"
+        data-testid="undo-discard"
+      >
+        Undo <kbd>⇧⎋</kbd>
+      </button>
+    ) : null;
+
   const recordButton = (
     <button
       className={`btn btn-circle border-none ${mode === "minimal" ? "btn-md" : "btn-sm"} ${
@@ -706,6 +818,145 @@ function WidgetView() {
       )}
     </button>
   );
+
+  // One short status for the small styles.
+  const shortStatus =
+    phase === "recording"
+      ? micSilent
+        ? "No sound from mic"
+        : formatElapsed(elapsedMs)
+      : phase === "transcribing"
+        ? `Transcribing${progress !== null ? ` ${progress}%` : "…"}`
+        : phase === "refining"
+          ? "Refining…"
+          : flashing
+            ? (message ?? "")
+            : showSetup
+              ? "Finish setup"
+              : idleLabel;
+  const statusTone =
+    flashing && isError ? "text-error" : micSilent || (showSetup && !flashing) ? "text-warning" : "";
+  const fullStatus =
+    micSilent ??
+    (flashing ? message : null) ??
+    (showSetup && setupProblem ? `${setupProblem.title}. ${setupProblem.detail}` : null) ??
+    (micName ? `${STATUS_LABEL[phase]} · Mic: ${micName}` : STATUS_LABEL[phase]);
+
+  if (mode === "pill") {
+    return (
+      <main
+        className="dw-widget group flex h-screen w-screen cursor-grab items-center gap-1.5 overflow-hidden rounded-full border border-white/10 bg-neutral/90 pl-0.5 pr-2 text-neutral-content backdrop-blur-md active:cursor-grabbing"
+        onMouseDown={startDrag}
+        title={fullStatus ?? undefined}
+      >
+        <span className="dw-small-record">{recordButton}</span>
+        <div className="flex h-4 min-w-0 flex-1 items-center">
+          {showProgress ? (
+            <ThinProgress stage={activeStage!.stage} percent={activeStage!.percent} />
+          ) : flashing || showSetup ? (
+            <span className={`truncate text-xs ${statusTone}`}>{shortStatus}</span>
+          ) : (
+            <>
+              <LevelMeter
+                levels={levels}
+                className={`flex-1 group-hover:hidden ${phase === "idle" ? "opacity-40 grayscale" : ""}`}
+              />
+              <span className="hidden truncate text-xs opacity-75 group-hover:inline">{shortStatus}</span>
+            </>
+          )}
+        </div>
+        {discardButton}
+        {undoButton}
+      </main>
+    );
+  }
+
+  if (mode === "notch") {
+    return (
+      <main
+        className={`dw-widget dw-notch flex h-screen w-screen items-center overflow-hidden text-neutral-content ${
+          notchActive ? "gap-2 px-2" : "justify-center gap-1.5 px-3"
+        }`}
+        title={fullStatus ?? undefined}
+      >
+        {notchActive ? (
+          <>
+            <span className="dw-small-record">{recordButton}</span>
+            <span className={`min-w-0 shrink truncate text-xs ${statusTone || "opacity-80"}`}>{shortStatus}</span>
+            <div className="flex h-4 min-w-0 flex-1 items-center">
+              {showProgress ? (
+                <ThinProgress stage={activeStage!.stage} percent={activeStage!.percent} />
+              ) : phase === "recording" ? (
+                <LevelMeter levels={levels} className="flex-1" />
+              ) : null}
+            </div>
+            {discardButton}
+            {undoButton}
+          </>
+        ) : (
+          <button type="button" className="dw-notch-idle" onClick={toggleRecording} aria-label="Start recording">
+            <span className={`h-1.5 w-1.5 rounded-full ${showSetup ? "bg-warning" : "bg-neutral-content/50"}`} />
+            <LevelMeter levels={SILENT_LEVELS} className="w-10 opacity-40 grayscale" />
+          </button>
+        )}
+      </main>
+    );
+  }
+
+  if (mode === "caption") {
+    const body =
+      phase === "recording" ? (
+        micSilent ? (
+          <span className="text-warning">{micSilent}</span>
+        ) : liveText ? (
+          <span data-testid="live-transcript">{liveTail(liveText)}</span>
+        ) : (
+          <span className="opacity-40">Listening…</span>
+        )
+      ) : busy ? (
+        <span className="opacity-60">{liveText ? liveTail(liveText) : shortStatus}</span>
+      ) : flashing && isError ? (
+        <span className="text-error">{message}</span>
+      ) : lastPasted ? (
+        <span className="opacity-60" data-testid="last-pasted">
+          {lastPasted}
+        </span>
+      ) : (
+        <span className="opacity-40">
+          Press {hotkey ?? "the hotkey"} and start talking. Your words show up here as you speak.
+        </span>
+      );
+    return (
+      <main className="dw-widget flex h-screen flex-col gap-1.5 overflow-hidden rounded-2xl border border-white/10 bg-neutral/90 p-2.5 text-neutral-content backdrop-blur-md">
+        <div className="flex items-center gap-2">
+          {recordButton}
+          <div className="flex h-5 min-w-0 flex-1 cursor-grab items-center gap-2 active:cursor-grabbing" onMouseDown={startDrag}>
+            <span className={`shrink-0 truncate text-xs ${statusTone || "opacity-70"}`}>
+              {phase === "idle" && !flashing && lastPasted ? "Pasted" : shortStatus}
+            </span>
+            {showProgress ? (
+              <ThinProgress stage={activeStage!.stage} percent={activeStage!.percent} />
+            ) : phase === "recording" ? (
+              <LevelMeter levels={levels} className="flex-1" />
+            ) : null}
+          </div>
+          {discardButton}
+          {undoButton}
+          <button
+            className="btn btn-ghost btn-circle relative h-7 w-7 min-h-0"
+            onClick={openSettings}
+            aria-label={updateAvailable ? `Open settings — update to v${updateAvailable} available` : "Open settings"}
+          >
+            <GearIcon />
+            {updateAvailable && <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-accent" />}
+          </button>
+        </div>
+        <p className="dw-caption-text line-clamp-3 flex-1 text-sm leading-snug" onMouseDown={startDrag}>
+          {body}
+        </p>
+      </main>
+    );
+  }
 
   if (mode === "minimal") {
     return (
@@ -759,6 +1010,8 @@ function WidgetView() {
               {idleLabel}
             </span>
           )}
+          {discardButton}
+          {undoButton}
           <button
             className="btn btn-ghost btn-circle relative h-7 w-7 min-h-0"
             onClick={openSettings}
@@ -849,6 +1102,8 @@ function WidgetView() {
             {flashing ? message : phase === "idle" && warning ? warning.short : idleLabel}
           </span>
         )}
+        {discardButton}
+        {undoButton}
         <button
           className="btn btn-ghost btn-circle relative h-7 w-7 min-h-0"
           onClick={openSettings}
@@ -859,6 +1114,13 @@ function WidgetView() {
           {updateAvailable && <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-accent" />}
         </button>
       </div>
+      {mode === "stacked" && !flyoutHovered && (
+        <div className="dw-second-line" data-testid="second-line">
+          <span className="truncate">{micName ?? "No microphone"}</span>
+          <span aria-hidden="true">·</span>
+          <span className="shrink-0 truncate">{overrideMode ? `Next: ${overrideMode}` : "Mode by app"}</span>
+        </div>
+      )}
       {flyoutHovered && (
         <div className="dw-fly-body dw-scroll" data-testid="widget-flyout">
           <div className="dw-fly-label">Microphone</div>
@@ -905,6 +1167,20 @@ function WidgetView() {
                 title={overrideMode === m.name ? "Click again to use the auto-detected mode" : undefined}
               >
                 {m.name}
+              </button>
+            ))}
+          </div>
+          <div className="dw-fly-label">Style</div>
+          <div className="dw-fly-grid" data-testid="style-picker">
+            {WIDGET_STYLES.map((style) => (
+              <button
+                key={style.id}
+                type="button"
+                className={`dw-fly-btn ${mode === style.id ? "sel" : ""}`}
+                onClick={() => pickStyle(style.id)}
+                aria-pressed={mode === style.id}
+              >
+                {style.label}
               </button>
             ))}
           </div>

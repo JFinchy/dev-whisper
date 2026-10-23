@@ -33,6 +33,8 @@ pub enum Request {
     StartDictation(Trigger),
     StopDictation(Trigger),
     ToggleDictation(Trigger),
+    /// Stop recording and throw it away (Esc, the widget's ✕).
+    DiscardDictation,
     StartEnrollment,
     StopEnrollment,
 }
@@ -41,6 +43,7 @@ pub enum Request {
 pub enum Transition {
     StartedDictation { session: u64 },
     StoppedDictation { session: u64 },
+    DiscardedDictation { session: u64 },
     StartedEnrollment { session: u64 },
     StoppedEnrollment { session: u64 },
     Rejected(&'static str),
@@ -68,6 +71,12 @@ fn transition(
         ),
         (Dictating { session, .. }, StopDictation(_) | ToggleDictation(_)) => {
             (Idle, Transition::StoppedDictation { session })
+        }
+        (Dictating { session, .. }, DiscardDictation) => {
+            (Idle, Transition::DiscardedDictation { session })
+        }
+        (Idle | Enrolling { .. }, DiscardDictation) => {
+            (state, Transition::Rejected("not dictating"))
         }
         (Idle, StartEnrollment) => (
             Enrolling {
@@ -183,6 +192,27 @@ mod tests {
         let (state, t) = transition(current, StartDictation(Trigger::DeepLink), 2);
         assert_eq!(state, current);
         assert!(matches!(t, Transition::Rejected(_)));
+    }
+
+    #[test]
+    fn discard_ends_a_dictation_and_is_rejected_otherwise() {
+        let current = Dictating {
+            trigger: Trigger::Hotkey,
+            session: 4,
+        };
+        assert_eq!(
+            transition(current, DiscardDictation, 5),
+            (Idle, Transition::DiscardedDictation { session: 4 })
+        );
+        assert!(matches!(
+            transition(Idle, DiscardDictation, 5),
+            (Idle, Transition::Rejected(_))
+        ));
+        let enrolling = Enrolling { session: 2 };
+        assert!(matches!(
+            transition(enrolling, DiscardDictation, 5),
+            (Enrolling { session: 2 }, Transition::Rejected(_))
+        ));
     }
 
     #[test]

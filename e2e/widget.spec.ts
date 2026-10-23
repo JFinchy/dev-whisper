@@ -243,4 +243,62 @@ test.describe("widget", () => {
     await refine.click();
     await expect.poll(() => calls(page, "paste_as_is_command")).toHaveLength(1);
   });
+
+  test("a recording can be discarded and brought back", async ({ page, consoleErrors: _ }) => {
+    await open(page, "widget");
+    await emit(page, "recording-started");
+    // Entering the widget opens its hover menu, which moves the row.
+    await page.getByTestId("discard").hover();
+    await page.getByTestId("discard").click();
+    await expect.poll(() => calls(page, "discard_recording")).toHaveLength(1);
+
+    await emit(page, "dictation-discarded", "recording");
+    await expect(page.getByText("Recording discarded")).toBeVisible();
+    await expect(page.getByTestId("discard")).toHaveCount(0);
+    await page.getByTestId("undo-discard").hover();
+    await page.getByTestId("undo-discard").click();
+    await expect.poll(() => calls(page, "undo_discard")).toHaveLength(1);
+    await expect(page.getByTestId("undo-discard")).toHaveCount(0);
+  });
+
+  test("the undo offer goes away when it expires", async ({ page, consoleErrors: _ }) => {
+    await open(page, "widget");
+    await emit(page, "dictation-discarded", "cancelled");
+    await expect(page.getByText("Paste cancelled")).toBeVisible();
+    await expect(page.getByTestId("undo-discard")).toBeVisible();
+    await emit(page, "discard-expired");
+    await expect(page.getByTestId("undo-discard")).toHaveCount(0);
+  });
+
+  test("the hover menu switches the widget style", async ({ page, consoleErrors: _ }) => {
+    await open(page, "widget");
+    await page.locator("main").hover();
+    const picker = page.getByTestId("style-picker");
+    await expect(picker.getByRole("button", { name: "Compact" })).toHaveAttribute("aria-pressed", "true");
+    await picker.getByRole("button", { name: "Notch" }).click();
+    await expect.poll(() => calls(page, "set_widget_mode")).toEqual([{ mode: "notch" }]);
+  });
+
+  for (const style of ["pill", "notch", "caption", "stacked"] as const) {
+    test(`the ${style} style records, shows progress and offers discard`, async ({ page, consoleErrors: _ }) => {
+      await open(page, "widget", { widgetMode: style });
+      await emit(page, "recording-started");
+      await expect(page.getByTestId("discard")).toBeVisible();
+      await emit(page, "recording-stopped");
+      await emit(page, "transcribe-progress", 40);
+      await expect(page.getByTestId("transcribe-progress")).toBeVisible();
+      await emit(page, "transcript-ready", "Look at @recording.rs");
+      await expect(page.getByTestId("discard")).toHaveCount(0);
+    });
+  }
+
+  test("live caption shows your words, then what was pasted", async ({ page, consoleErrors: _ }) => {
+    await open(page, "widget", { widgetMode: "caption" });
+    await emit(page, "recording-started");
+    await emit(page, "live-transcript", "fix the stop path");
+    await expect(page.getByTestId("live-transcript")).toContainText("fix the stop path");
+    await emit(page, "recording-stopped");
+    await emit(page, "transcript-ready", "Fix the stop path.");
+    await expect(page.getByTestId("last-pasted")).toHaveText("Fix the stop path.");
+  });
 });

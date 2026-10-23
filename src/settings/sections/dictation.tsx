@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { notifyError } from "../../ui/toast";
 import { type WidgetMode } from "../shared";
 import { shortcutLabel, skipVariant, type ShortcutConfig } from "../../shortcut";
@@ -151,10 +152,126 @@ export function DeviceSection() {
 }
 
 export const WIDGET_MODE_LABEL: Record<WidgetMode, string> = {
-  minimal: "Minimal — icon only",
-  compact: "Compact — status pill",
-  detailed: "Detailed — full status panel",
+  minimal: "Minimal",
+  pill: "Pill",
+  compact: "Compact",
+  stacked: "Compact, two-line",
+  notch: "Notch",
+  caption: "Live caption",
+  detailed: "Detailed",
 };
+
+const WIDGET_MODE_HINT: Record<WidgetMode, string> = {
+  minimal: "Just the button",
+  pill: "Dot and waveform; text on hover",
+  compact: "Button, status and settings",
+  stacked: "Compact plus mic and next mode",
+  notch: "Hangs under the menu bar, grows while you talk",
+  caption: "Your words as you speak",
+  detailed: "Full status and messages",
+};
+
+const WIDGET_MODE_ORDER: WidgetMode[] = ["minimal", "pill", "compact", "stacked", "notch", "caption", "detailed"];
+
+// A tiny drawing of each style, so the choice is visual.
+function StylePreview({ mode }: { mode: WidgetMode }) {
+  const dot = <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-error" />;
+  const wave = (
+    <span className="flex items-center gap-[1.5px]">
+      {[3, 6, 4, 8, 5, 3].map((h, i) => (
+        <span key={i} className="w-[1.5px] rounded-full bg-current opacity-60" style={{ height: h }} />
+      ))}
+    </span>
+  );
+  const line = (w: string) => <span className={`h-1 rounded-full bg-current opacity-40 ${w}`} />;
+  const box = "flex items-center gap-1 border border-base-content/20 bg-base-300 px-1.5";
+  switch (mode) {
+    case "minimal":
+      return <span className={`${box} h-5 w-5 justify-center rounded-full px-0`}>{dot}</span>;
+    case "pill":
+      return (
+        <span className={`${box} h-4 w-14 rounded-full`}>
+          {dot}
+          {wave}
+        </span>
+      );
+    case "compact":
+      return (
+        <span className={`${box} h-6 w-20 rounded-md`}>
+          {dot}
+          {line("w-8")}
+        </span>
+      );
+    case "stacked":
+      return (
+        <span className={`${box} h-8 w-20 flex-col items-start justify-center gap-1 rounded-md`}>
+          <span className="flex items-center gap-1">
+            {dot}
+            {line("w-8")}
+          </span>
+          {line("ml-2.5 w-10")}
+        </span>
+      );
+    case "notch":
+      return (
+        <span className="flex w-24 flex-col items-center">
+          <span className="h-1 w-full rounded-sm bg-base-content/20" />
+          <span className="flex h-3.5 w-14 items-center justify-center gap-1 rounded-b-lg bg-black px-1.5 text-white">
+            {dot}
+            {wave}
+          </span>
+        </span>
+      );
+    case "caption":
+      return (
+        <span className={`${box} h-10 w-24 flex-col items-start justify-center gap-1 rounded-md`}>
+          <span className="flex items-center gap-1">
+            {dot}
+            {wave}
+          </span>
+          {line("w-16")}
+          {line("w-12")}
+        </span>
+      );
+    case "detailed":
+      return (
+        <span className={`${box} h-10 w-20 flex-col items-start justify-center gap-1 rounded-md`}>
+          <span className="flex items-center gap-1">
+            {dot}
+            {line("w-8")}
+          </span>
+          {line("w-14")}
+          {line("w-10")}
+        </span>
+      );
+  }
+}
+
+export function WidgetStylePicker({ value, onChange }: { value: WidgetMode; onChange: (mode: WidgetMode) => void }) {
+  return (
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Widget style">
+      {WIDGET_MODE_ORDER.map((m) => (
+        <button
+          key={m}
+          type="button"
+          role="radio"
+          aria-checked={value === m}
+          onClick={() => onChange(m)}
+          className={`flex flex-col items-center gap-2 rounded-lg border p-3 text-center transition-colors ${
+            value === m ? "border-primary bg-primary/10" : "border-base-content/10 hover:border-base-content/30"
+          }`}
+          data-testid={`style-${m}`}
+        >
+          <span className="flex h-11 items-center justify-center">
+            <StylePreview mode={m} />
+          </span>
+          <span className="text-xs font-medium">{WIDGET_MODE_LABEL[m]}</span>
+          <span className="text-[11px] leading-tight opacity-60">{WIDGET_MODE_HINT[m]}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export function GeneralSection() {
   const [autostart, setAutostart] = useState(false);
@@ -169,6 +286,11 @@ export function GeneralSection() {
       })
       .catch((err) => notifyError("Couldn't load general settings", err))
       .finally(() => setChecked(true));
+    // Follow changes made from the widget or the menu bar.
+    const unlisten = listen<WidgetMode>("widget-mode-changed", (e) => setWidgetModeState(e.payload));
+    return () => {
+      unlisten.then((f) => f());
+    };
   }, []);
 
   function toggleAutostart(enabled: boolean) {
@@ -204,20 +326,13 @@ export function GeneralSection() {
             />
             Launch Dev Whisper at login
           </label>
-          <label className="flex items-center gap-2 text-xs">
-            Widget:
-            <select
-              className="select select-xs flex-1"
-              value={widgetMode}
-              onChange={(e) => changeWidgetMode(e.target.value as WidgetMode)}
-            >
-              {(Object.keys(WIDGET_MODE_LABEL) as WidgetMode[]).map((m) => (
-                <option key={m} value={m}>
-                  {WIDGET_MODE_LABEL[m]}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs">Widget style</span>
+            <WidgetStylePicker value={widgetMode} onChange={changeWidgetMode} />
+            <span className="text-[11px] opacity-60">
+              Also switchable from the widget's hover menu and the menu bar icon (Widget style).
+            </span>
+          </div>
         </div>
       )}
     </div>

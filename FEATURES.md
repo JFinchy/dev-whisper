@@ -179,6 +179,22 @@ built yet.
 
 ## Widget & Settings UI
 
+- **Discard and undo** — Esc while recording (or the widget's ✕) throws
+  the recording away without transcribing; Esc while transcribing or
+  refining cancels the paste. Either way it's held for 8 seconds:
+  "Discarded · Undo" in the widget, or ⇧Esc, transcribes and pastes it
+  after all (a cancelled paste pastes the text that was ready). Esc and
+  ⇧Esc are registered only while they mean something, so other apps keep
+  them, and not at all if the dictation hotkey itself uses Esc
+  (`discard.rs`).
+- **Seven widget styles** — Minimal, Pill (dot and waveform, text on
+  hover), Compact, Compact two-line (adds mic and next-dictation mode),
+  Notch (black, docked top-center under the menu bar, widens while
+  active and re-centers on every resize), Live caption (your words as you
+  speak, then what was pasted) and Detailed. Switch from Settings
+  (visual picker), the widget's hover menu (Style), or the menu bar
+  icon's "Widget style" submenu; all three stay in sync.
+
 - **Three widget display modes** — Minimal (icon-only recording button),
   Compact (the default status pill), and Detailed (a larger panel with a
   persistent, non-truncating status/error area), switchable from Settings.

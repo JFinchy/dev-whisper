@@ -19,7 +19,7 @@ export type Scenario = {
   deviceStatus?: Json;
   /// Commands that reject, with this message.
   failing?: Record<string, string>;
-  widgetMode?: "minimal" | "compact" | "detailed";
+  widgetMode?: "minimal" | "compact" | "detailed" | "pill" | "notch" | "caption" | "stacked";
   layout?: "sidebar" | "chain";
   insights?: Json;
   /// The project Settings reports as last detected.
@@ -282,6 +282,8 @@ export function installMockBackend() {
         ? Promise.reject("History is locked.")
         : state.history.filter((h) => h.text.toLowerCase().includes(String(args.query).toLowerCase())),
     // privacy (Touch ID always succeeds here)
+    discard_recording: () => null,
+    undo_discard: () => true,
     request_microphone_access: () => "authorized",
     open_microphone_settings: () => null,
     get_history_lock: () => lockStatus(),

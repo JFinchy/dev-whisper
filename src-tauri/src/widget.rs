@@ -22,7 +22,29 @@ pub enum WidgetMode {
     /// for when you want the detail visible at a glance rather than
     /// digging through Settings > Logs after the fact.
     Detailed,
+    /// Slim capsule: status dot and live waveform; text on hover.
+    Pill,
+    /// Docked top-center under the menu bar (or notch), Dynamic Island
+    /// style: small when idle, wider while recording or working. Always
+    /// re-centered there, not draggable.
+    Notch,
+    /// A card that shows your words as you speak (live transcription),
+    /// then what was pasted.
+    Caption,
+    /// Compact with a second line: mic, and the mode for the next dictation.
+    Stacked,
 }
+
+/// Every style, in the order the pickers show them.
+pub const ALL_MODES: [WidgetMode; 7] = [
+    WidgetMode::Minimal,
+    WidgetMode::Pill,
+    WidgetMode::Compact,
+    WidgetMode::Stacked,
+    WidgetMode::Notch,
+    WidgetMode::Caption,
+    WidgetMode::Detailed,
+];
 
 impl WidgetMode {
     /// Logical-pixel size for the base state of each mode. Compact grows
@@ -33,14 +55,68 @@ impl WidgetMode {
             WidgetMode::Minimal => (46.0, 46.0),
             WidgetMode::Compact => (280.0, 60.0),
             WidgetMode::Detailed => (320.0, 170.0),
+            WidgetMode::Pill => (156.0, 34.0),
+            WidgetMode::Notch => (184.0, 32.0),
+            WidgetMode::Caption => (380.0, 116.0),
+            WidgetMode::Stacked => (280.0, 66.0),
         }
+    }
+
+    /// Name in the menu bar's "Widget style" menu.
+    pub fn label(self) -> &'static str {
+        match self {
+            WidgetMode::Minimal => "Minimal",
+            WidgetMode::Pill => "Pill",
+            WidgetMode::Compact => "Compact",
+            WidgetMode::Stacked => "Compact, two-line",
+            WidgetMode::Notch => "Notch",
+            WidgetMode::Caption => "Live caption",
+            WidgetMode::Detailed => "Detailed",
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            WidgetMode::Minimal => "minimal",
+            WidgetMode::Pill => "pill",
+            WidgetMode::Compact => "compact",
+            WidgetMode::Stacked => "stacked",
+            WidgetMode::Notch => "notch",
+            WidgetMode::Caption => "caption",
+            WidgetMode::Detailed => "detailed",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        ALL_MODES.into_iter().find(|m| m.id() == id)
     }
 }
 
 pub fn apply_size(app: &AppHandle, width: f64, height: f64) {
     if let Some(window) = app.get_webview_window("widget") {
         let _ = window.set_size(tauri::LogicalSize::new(width, height));
+        if crate::config::load(app).widget_mode == WidgetMode::Notch {
+            dock_top_center(&window, width);
+        }
     }
+}
+
+/// Notch style: centered under the menu bar of the screen the widget is
+/// on, re-done on every resize so it grows from the middle.
+fn dock_top_center(window: &tauri::WebviewWindow, width: f64) {
+    let Some(monitor) = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten())
+    else {
+        return;
+    };
+    let scale = monitor.scale_factor();
+    let area = monitor.work_area();
+    let x = area.position.x as f64 + (area.size.width as f64 - width * scale) / 2.0;
+    let y = area.position.y as f64;
+    let _ = window.set_position(tauri::PhysicalPosition::new(x.round() as i32, y as i32));
 }
 
 #[tauri::command]
@@ -50,13 +126,20 @@ pub fn get_widget_mode(app: AppHandle) -> WidgetMode {
 
 #[tauri::command]
 pub fn set_widget_mode(app: AppHandle, mode: WidgetMode) {
-    let mut cfg = crate::config::load(&app);
+    set_mode(&app, mode);
+}
+
+/// Switches style from anywhere: Settings, the widget's hover menu, or the
+/// menu bar's "Widget style" menu.
+pub fn set_mode(app: &AppHandle, mode: WidgetMode) {
+    let mut cfg = crate::config::load(app);
     cfg.widget_mode = mode;
-    let _ = crate::config::save(&app, &cfg);
+    let _ = crate::config::save(app, &cfg);
 
     let (width, height) = mode.base_size();
-    apply_size(&app, width, height);
+    apply_size(app, width, height);
     let _ = app.emit("widget-mode-changed", mode);
+    crate::sync_widget_style_menu(app, mode);
 }
 
 /// Lets the widget itself request a temporary size override (compact
@@ -71,6 +154,17 @@ pub fn set_widget_size(app: AppHandle, width: f64, height: f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_style_round_trips_through_its_id_and_serde_name() {
+        for mode in ALL_MODES {
+            assert_eq!(WidgetMode::from_id(mode.id()), Some(mode));
+            assert_eq!(
+                serde_json::to_string(&mode).unwrap(),
+                format!("\"{}\"", mode.id())
+            );
+        }
+    }
 
     #[test]
     fn default_widget_mode_is_compact() {

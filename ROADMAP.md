@@ -103,6 +103,14 @@ Local Config Agent, vocabulary coaching, the iOS keyboard.
 
 ## Next — needs its own design pass before implementation
 
+- **Meeting mode: separate speakers** (planned 2026-10-23) — record a
+  meeting and get a transcript split by speaker, all local. Feasible with
+  sherpa-onnx's speaker diarization, which we already ship, plus one
+  ~6 MB model. Phase 1 is in-person meetings through the mic (2-3 days,
+  accuracy measured on real recordings before going further); phase 2
+  adds the other side of calls via system audio (about a week more).
+  Full design and risks in `BACKLOG.md`.
+
 - **The Local Config Agent** — voice-driven edits to `~/.zshrc`, Neovim
   `init.lua`, MCP settings. Needs filesystem *write* access driven by
   voice, so it needs a safety design (confirmation step, diff preview

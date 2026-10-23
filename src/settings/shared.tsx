@@ -22,4 +22,4 @@ export type LlmModelStatus = {
   last_latency_ms: number | null;
 };
 
-export type WidgetMode = "minimal" | "compact" | "detailed";
+export type WidgetMode = "minimal" | "compact" | "detailed" | "pill" | "notch" | "caption" | "stacked";

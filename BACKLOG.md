@@ -696,6 +696,40 @@ build phases.
   for exploring directions with an image model is in
   `docs/icon-prompt.md`; best done together with, or after, a rename.
 
+- **Meeting mode: separate speakers** (planned 2026-10-23, not started).
+  Record a whole meeting and get a transcript split by speaker ("You:",
+  "Speaker 2:", …), entirely on the Mac.
+  - **Feasibility: good.** sherpa-onnx 1.13.5 (already a dependency) has
+    `OfflineSpeakerDiarization`: pyannote segmentation, a speaker
+    embedding, then clustering. The embedding model it needs
+    (`wespeaker_en_voxceleb_resnet34_LM.onnx`) is already bundled for
+    Isolated Voice; the only new file is the pyannote segmentation model
+    (about 6 MB, downloaded on first use like the Whisper models, with a
+    checksum).
+  - **Pipeline.** A meeting recording is a separate capture from
+    dictation (no paste, no hotkey hold): a "Start meeting" control in the
+    widget and menu bar. After stopping: diarize the whole file → merge
+    short turns → transcribe each turn with Whisper (base.en is fast
+    enough: about 1 hour of audio in a few minutes on Apple Silicon) →
+    label turns. If Isolated Voice is enrolled, the cluster closest to the
+    enrolled voice is labelled "You". Output goes to History as one
+    meeting entry (and a Markdown export), with an optional local Ollama
+    summary.
+  - **Phase 1: in-person (mic only), about 2-3 days.** Everyone in the
+    room through one mic. Measure diarization error on a few real
+    recordings with 2-4 speakers before going further; overlapping speech
+    is where it will be weakest.
+  - **Phase 2: calls, about 1 week more.** The other side of Zoom, Meet
+    or Teams comes through the speakers, not the mic, so it needs system
+    audio capture (ScreenCaptureKit audio, macOS 13+, Screen Recording
+    permission), mixed with the mic or, better, kept as two channels (mic
+    = you, system = everyone else) so "You" needs no guessing.
+  - **Risks.** Long recordings need streaming to disk rather than one
+    in-memory buffer; speaker count has to be estimated (or set by the
+    user); consent: recording other people needs a clear on-screen
+    indicator and a note in the UI that the user is responsible for
+    telling participants.
+
 ## Research / Exploration
 
 - **Competitive landscape: dictation/Whisper tools beyond SuperWhisper**

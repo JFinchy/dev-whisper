@@ -394,6 +394,121 @@ body:has(.dw-widget) {
   background-clip: padding-box;
 }
 
+/* ---------- Widget: discard (✕) and undo ---------- */
+.dw-icon-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.06);
+  transition:
+    background 120ms,
+    color 120ms;
+}
+.dw-icon-btn:hover {
+  color: rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.14);
+}
+.dw-undo-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dw-accent);
+  background: color-mix(in srgb, var(--dw-accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--dw-accent) 40%, transparent);
+}
+.dw-undo-btn:hover {
+  background: color-mix(in srgb, var(--dw-accent) 24%, transparent);
+}
+.dw-undo-btn kbd {
+  font: inherit;
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* ---------- Widget styles: Pill, Notch, Caption, Two-line ---------- */
+/* The record button at the small styles' size. */
+.dw-small-record {
+  display: contents;
+}
+.dw-small-record > .btn {
+  width: 26px;
+  height: 26px;
+  min-height: 0;
+}
+
+.dw-thin-progress {
+  flex: 1;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.dw-thin-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transition: width 200ms ease-out;
+}
+.dw-thin-indeterminate {
+  width: 35%;
+  animation: dw-slide 1.1s ease-in-out infinite;
+}
+@keyframes dw-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+/* Notch: black, square top, round bottom, so it reads as part of the
+   menu bar / camera housing it hangs from. */
+.dw-notch {
+  background: #000;
+  border-radius: 0 0 16px 16px;
+  box-shadow: 0 6px 18px -8px rgba(0, 0, 0, 0.6);
+}
+.dw-notch-idle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  cursor: pointer;
+}
+
+.dw-caption-text {
+  overflow-wrap: anywhere;
+}
+
+.dw-second-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding-left: 40px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dw-thin-indeterminate {
+    animation: none;
+    width: 100%;
+    opacity: 0.5;
+  }
+}
+
 /* ---------- Widget: quick-actions hover flyout ---------- */
 .dw-fly-body {
   margin-top: 6px;

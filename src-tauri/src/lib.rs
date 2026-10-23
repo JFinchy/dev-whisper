@@ -8,6 +8,7 @@ mod capture;
 mod clipboard;
 mod config;
 mod corrections;
+mod discard;
 mod doubletap;
 #[cfg(test)]
 mod e2e_audio;
@@ -45,7 +46,7 @@ mod widget;
 
 use std::sync::Mutex;
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem, Submenu},
     tray::TrayIconBuilder,
     Emitter, Manager,
 };
@@ -93,6 +94,18 @@ use widget::{get_widget_mode, set_widget_mode, set_widget_size};
 /// so both sides agree on which tray they mean without threading a handle
 /// through `RecordingState`.
 pub const TRAY_ICON_ID: &str = "main";
+
+/// The menu bar's "Widget style" items, kept so the check mark can follow
+/// a style change made anywhere else.
+struct WidgetStyleMenu(Vec<CheckMenuItem<tauri::Wry>>);
+
+pub fn sync_widget_style_menu(app: &tauri::AppHandle, mode: widget::WidgetMode) {
+    if let Some(menu) = app.try_state::<WidgetStyleMenu>() {
+        for item in &menu.0 {
+            let _ = item.set_checked(item.id().as_ref() == format!("style:{}", mode.id()));
+        }
+    }
+}
 
 /// The tray glyph is a separate, simpler asset from the Dock icon
 /// (icons/icon.png): the same prompt, wave and cursor as single strokes, no
@@ -287,6 +300,17 @@ pub fn run() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, triggered, event| {
+                    // Esc / ⇧Esc are only registered while they mean something
+                    // (see discard.rs).
+                    if event.state == PressState::Pressed && *triggered == discard::escape() {
+                        discard::on_escape(app);
+                        return;
+                    }
+                    if event.state == PressState::Pressed && *triggered == discard::undo_shortcut()
+                    {
+                        discard::undo(app);
+                        return;
+                    }
                     if event.state == PressState::Pressed
                         && app
                             .try_state::<agents::AgentState>()
@@ -405,6 +429,8 @@ pub fn run() {
             agents::get_agent_reply_shortcut,
             agents::get_agent_reply_shortcut_error,
             agents::set_agent_reply_shortcut,
+            discard::discard_recording,
+            discard::undo_discard,
             mic_permission::request_microphone_access,
             mic_permission::open_microphone_settings,
             privacy::get_history_lock,
@@ -444,6 +470,7 @@ pub fn run() {
             let saved_config = config::load(app.handle());
             logging::set_log_transcripts(saved_config.log_transcripts);
             app.manage(privacy::PrivacyState::default());
+            app.manage(discard::DiscardState::default());
             history::make_private(app.handle());
 
             let shortcut_cfg = saved_config.shortcut.clone().unwrap_or_default();
@@ -665,11 +692,33 @@ pub fn run() {
             let open_settings_item =
                 MenuItem::with_id(app, "open_settings", "Open Settings…", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            // "Widget style" submenu: one checked item per style.
+            let current_style = saved_config.widget_mode;
+            let style_items = widget::ALL_MODES
+                .iter()
+                .map(|mode| {
+                    CheckMenuItem::with_id(
+                        app,
+                        format!("style:{}", mode.id()),
+                        mode.label(),
+                        true,
+                        *mode == current_style,
+                        None::<&str>,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let style_refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = style_items
+                .iter()
+                .map(|item| item as &dyn tauri::menu::IsMenuItem<tauri::Wry>)
+                .collect();
+            let style_menu = Submenu::with_items(app, "Widget style", true, &style_refs)?;
+            app.manage(WidgetStyleMenu(style_items));
             let menu = Menu::with_items(
                 app,
                 &[
                     &toggle_recording_item,
                     &toggle_widget,
+                    &style_menu,
                     &open_settings_item,
                     &quit,
                 ],
@@ -696,7 +745,14 @@ pub fn run() {
                         let _ = open_settings(app.clone());
                     }
                     "quit" => app.exit(0),
-                    _ => {}
+                    id => {
+                        if let Some(mode) = id
+                            .strip_prefix("style:")
+                            .and_then(widget::WidgetMode::from_id)
+                        {
+                            widget::set_mode(app, mode);
+                        }
+                    }
                 })
                 .build(app)?;
 

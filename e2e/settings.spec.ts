@@ -169,4 +169,14 @@ test.describe("settings", () => {
     // The mock hotkey is ⇧⌘Space, which already has Shift, so Option is added.
     await expect(page.getByTestId("skip-shortcut-hint")).toContainText("⌥⇧⌘Space stops and pastes as-is");
   });
+
+  test("the widget style picker shows every style and switches", async ({ page, consoleErrors: _ }) => {
+    await open(page, "settings");
+    const picker = page.getByRole("radiogroup", { name: "Widget style" });
+    await expect(picker.getByRole("radio")).toHaveCount(7);
+    await expect(page.getByTestId("style-compact")).toHaveAttribute("aria-checked", "true");
+    await page.getByTestId("style-caption").click();
+    await expect.poll(() => calls(page, "set_widget_mode")).toEqual([{ mode: "caption" }]);
+    await expect(page.getByTestId("style-caption")).toHaveAttribute("aria-checked", "true");
+  });
 });
