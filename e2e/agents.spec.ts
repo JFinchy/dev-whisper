@@ -16,7 +16,7 @@ const agent = (over: Record<string, unknown> = {}) => ({
 });
 
 test.describe("coding agents: widget", () => {
-  test.use({ viewport: { width: 240, height: 360 } });
+  test.use({ viewport: { width: 280, height: 360 } });
 
   test("shows nothing when no agent is waiting", async ({ page, consoleErrors: _ }) => {
     await open(page, "widget");

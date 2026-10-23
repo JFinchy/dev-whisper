@@ -21,6 +21,7 @@ mod lifecycle;
 mod live;
 mod llm;
 mod logging;
+mod mic_permission;
 mod mic_usage;
 mod models;
 mod modes;
@@ -404,6 +405,8 @@ pub fn run() {
             agents::get_agent_reply_shortcut,
             agents::get_agent_reply_shortcut_error,
             agents::set_agent_reply_shortcut,
+            mic_permission::request_microphone_access,
+            mic_permission::open_microphone_settings,
             privacy::get_history_lock,
             privacy::set_history_lock_enabled,
             privacy::unlock_history,

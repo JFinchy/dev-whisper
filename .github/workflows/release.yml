@@ -46,12 +46,16 @@ jobs:
       # on the binary) is reported as "damaged" by macOS once downloaded.
       # `signingIdentity: "-"` in tauri.conf.json ad-hoc signs it; this
       # fails the release if that ever stops happening.
-      - name: Verify the app's signature
+      - name: Verify the app's signature and microphone permission text
         run: |
           app=$(ls -d src-tauri/target/release/bundle/macos/*.app | head -1)
           codesign --verify --deep --strict --verbose=2 "$app"
           codesign -dv "$app" 2>&1 | grep -q "Sealed Resources version" \
             || { echo "app bundle resources aren't sealed"; exit 1; }
+          # Without this key macOS never asks for the microphone and the app
+          # records silence (src-tauri/Info.plist).
+          /usr/libexec/PlistBuddy -c "Print NSMicrophoneUsageDescription" "$app/Contents/Info.plist" \
+            || { echo "Info.plist has no NSMicrophoneUsageDescription"; exit 1; }
 
       # A copy of the installer under a fixed name, so one link always
       # downloads the newest version:

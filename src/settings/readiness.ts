@@ -7,6 +7,8 @@ export type ReadinessFix =
   | "grant_accessibility"
   | "change_shortcut"
   | "choose_microphone"
+  | "allow_microphone"
+  | "open_microphone_settings"
   | "start_ollama"
   | "pull_llm_model";
 export type ReadinessCheck = {
@@ -22,6 +24,8 @@ export const FIX_LABEL: Record<ReadinessFix, string> = {
   grant_accessibility: "Open System Settings",
   change_shortcut: "Change hotkey",
   choose_microphone: "Choose microphone",
+  allow_microphone: "Allow microphone",
+  open_microphone_settings: "Open System Settings",
   start_ollama: "How to start Ollama",
   pull_llm_model: "Download model",
 };

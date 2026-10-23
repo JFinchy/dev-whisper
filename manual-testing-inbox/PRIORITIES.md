@@ -6,6 +6,7 @@ place with a one-line note.
 
 ## Critical
 
+- [ ] Microphone permission in the built app (prompt, denied, MDM-blocked states) - see `mic-permission.md`
 - [ ] Production hardening: CSP in the built app, single instance, setup checklist, verified downloads - see `production-hardening.md`
 - [ ] Double-tap Fn (listener rewritten 2026-10-14 after the old one crashed the app on paste) - see `double-tap-fn.md`
 - [ ] Always-on listening + shared capture/device groundwork - see `always-on-listening.md` (steps 2-4 and 12 affect every dictation)
@@ -31,6 +32,7 @@ place with a one-line note.
 
 ## Minor
 
+- [ ] Compact widget: 280px, contained flyout with thin scroll bar, full error text - see `compact-widget-polish.md`
 - [ ] New app icon and menu bar icon (incl. recording dot on dark menu bars) - see `new-icons.md`
 - [ ] Live input level meter - see `live-level-meter.md`
 - [ ] Insights page - see `insights.md`

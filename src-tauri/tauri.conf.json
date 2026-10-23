@@ -15,7 +15,7 @@
       {
         "label": "widget",
         "title": "Dev Whisper",
-        "width": 220,
+        "width": 280,
         "height": 60,
         "resizable": false,
         "decorations": false,
@@ -68,7 +68,8 @@
     "macOS": {
       "minimumSystemVersion": "12.0",
       "signingIdentity": "-",
-      "hardenedRuntime": false
+      "hardenedRuntime": false,
+      "entitlements": "Entitlements.plist"
     }
   }
 }

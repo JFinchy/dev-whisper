@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged into the app's generated Info.plist by Tauri. Without
+  NSMicrophoneUsageDescription macOS never shows the microphone prompt and
+  feeds the app silence (every sample zero). The release workflow fails if
+  the key is missing from the built app.
+-->
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Dev Whisper uses the microphone when you dictate, and for hands-free listening if you turn it on, to turn your speech into text on this Mac. Audio never leaves your computer.</string>
+</dict>
+</plist>

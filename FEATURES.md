@@ -264,6 +264,19 @@ built yet.
 
 ## Reliability
 
+- **Microphone permission** — `src-tauri/Info.plist` carries
+  `NSMicrophoneUsageDescription`; without it macOS never prompts and the
+  input stream delivers only zeros (the enterprise "mic never works"
+  bug, present in every release before 0.3.4). The release workflow fails
+  if a built app lacks the key. The setup checklist shows the permission
+  state (AVFoundation): "Allow the microphone" shows macOS's prompt,
+  "Microphone access is off" opens Privacy & Security > Microphone, and a
+  device-management block is named as such. A silent recording or a
+  silent stretch mid-recording is blamed on permission when that's the
+  cause, otherwise on a muted mic or a zero input level. The
+  `com.apple.security.device.audio-input` entitlement is in place for
+  when the app is notarized (hardened runtime needs it).
+
 - **Mic device retry+fallback** — retries opening a specific input
   device a few times before falling back to the system default, fixing
   the "stale device handle right after selecting it" failure mode.

@@ -70,6 +70,24 @@ test.describe("settings", () => {
     await expect.poll(() => calls(page, "open_accessibility_settings")).toHaveLength(1);
   });
 
+  test("the microphone fixes ask macOS or open its settings", async ({ page, consoleErrors: _ }) => {
+    await open(page, "settings", {
+      readiness: [
+        { id: "mic_access", level: "warn", title: "Allow the microphone", detail: "macOS asks once.", fix: "allow_microphone" },
+      ],
+    });
+    await page.getByRole("button", { name: "Allow microphone" }).click();
+    await expect.poll(() => calls(page, "request_microphone_access")).toHaveLength(1);
+
+    await open(page, "settings", {
+      readiness: [
+        { id: "mic_access", level: "error", title: "Microphone access is off", detail: "Turn it on.", fix: "open_microphone_settings" },
+      ],
+    });
+    await page.getByRole("button", { name: "Open System Settings" }).click();
+    await expect.poll(() => calls(page, "open_microphone_settings")).toHaveLength(1);
+  });
+
   test("warnings get a softer heading than blockers", async ({ page, consoleErrors: _ }) => {
     await open(page, "settings", {
       readiness: [{ id: "llm", level: "warn", title: "Ollama isn't running", detail: "No cleanup until it is.", fix: "start_ollama" }],

@@ -282,6 +282,8 @@ export function installMockBackend() {
         ? Promise.reject("History is locked.")
         : state.history.filter((h) => h.text.toLowerCase().includes(String(args.query).toLowerCase())),
     // privacy (Touch ID always succeeds here)
+    request_microphone_access: () => "authorized",
+    open_microphone_settings: () => null,
     get_history_lock: () => lockStatus(),
     set_history_lock_enabled: (args) => {
       state.historyLockEnabled = Boolean(args.enabled);

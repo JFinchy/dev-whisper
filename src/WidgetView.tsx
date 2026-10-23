@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -42,11 +42,19 @@ const STATUS_LABEL: Record<Phase, string> = {
   refining: "Refining…",
 };
 
-const COMPACT_BASE_SIZE = { width: 220, height: 60 };
+// Wide enough for "Transcribing 100%", a mic name and the gear without
+// cutting words off (220 was not).
+const COMPACT_WIDTH = 280;
+const COMPACT_BASE_SIZE = { width: COMPACT_WIDTH, height: 60 };
 // How tall compact grows while an error is showing, so the full message
 // is readable instead of being cut off by `truncate` — that silently ate
 // the Accessibility-permission error before this fix.
-const COMPACT_EXPANDED_SIZE = { width: 220, height: 108 };
+const COMPACT_EXPANDED_SIZE = { width: COMPACT_WIDTH, height: 108 };
+// An error grows the window to fit the whole message (measured), up to
+// this; anything longer is clamped, with the full text in its tooltip.
+const COMPACT_ERROR_MAX_HEIGHT = 150;
+// Vertical space around the message: the window's padding and border.
+const COMPACT_ERROR_CHROME = 22;
 // How tall compact grows for the hover flyout (mic mode + a one-off mode
 // override for the next dictation), sized for exactly one row of
 // "Next dictation" buttons. Grows downward rather than upward — this
@@ -54,9 +62,13 @@ const COMPACT_EXPANDED_SIZE = { width: 220, height: 108 };
 // resize mechanism COMPACT_EXPANDED_SIZE already relies on instead of
 // introducing new position math.
 const COMPACT_FLYOUT_BASE_HEIGHT = 168;
-// "Next dictation" is one full-width button per mode (see .dw-fly-col in
-// App.css) rather than a single cramped row, so the flyout has to grow
-// with however many modes exist — matches that CSS's row height + gap.
+// The flyout never grows the window past this; longer lists (many mics or
+// modes) scroll inside it instead of overflowing the window, which made
+// macOS draw its own scroll bar outside the widget.
+const COMPACT_FLYOUT_MAX_HEIGHT = 340;
+// "Next dictation" is a two-column grid of mode buttons (.dw-fly-grid in
+// App.css), so the flyout grows by one row per two modes — matches that
+// CSS's row height + gap.
 const FLYOUT_MODE_ROW_HEIGHT = 26;
 const FLYOUT_MODE_ROW_GAP = 4;
 
@@ -65,12 +77,10 @@ const FLYOUT_MODE_ROW_GAP = 4;
 const FLYOUT_MIC_SECTION_BASE = 18;
 
 function compactFlyoutSize(modeCount: number, micRowCount: number) {
-  const extraRows = Math.max(modeCount, 1) - 1;
+  const extraRows = Math.ceil(Math.max(modeCount, 1) / 2) - 1;
   const micRows = micRowCount > 0 ? FLYOUT_MIC_SECTION_BASE + micRowCount * (FLYOUT_MODE_ROW_HEIGHT + FLYOUT_MODE_ROW_GAP) : 0;
-  return {
-    width: 220,
-    height: COMPACT_FLYOUT_BASE_HEIGHT + extraRows * (FLYOUT_MODE_ROW_HEIGHT + FLYOUT_MODE_ROW_GAP) + micRows,
-  };
+  const natural = COMPACT_FLYOUT_BASE_HEIGHT + extraRows * (FLYOUT_MODE_ROW_HEIGHT + FLYOUT_MODE_ROW_GAP) + micRows;
+  return { width: COMPACT_WIDTH, height: Math.min(natural, COMPACT_FLYOUT_MAX_HEIGHT) };
 }
 
 function usingMic(status: DeviceStatus | null): string | null {
@@ -249,6 +259,8 @@ function WidgetView() {
   // real backend state (isolated_voice_enabled / the one-shot mode
   // override), not local-only UI state.
   const [flyoutHovered, setFlyoutHovered] = useState(false);
+  const compactMessageRef = useRef<HTMLSpanElement | null>(null);
+  const [errorHeight, setErrorHeight] = useState<number | null>(null);
   const [micMode, setMicMode] = useState(false);
   const [overrideMode, setOverrideMode] = useState<string | null>(null);
   const [modes, setModes] = useState<ModeSummary[]>([]);
@@ -522,10 +534,25 @@ function WidgetView() {
     const size = flyoutHovered
       ? compactFlyoutSize(modes.length, micRows.length)
       : flashVisible && isError
-        ? COMPACT_EXPANDED_SIZE
+        ? errorHeight
+          ? { width: COMPACT_WIDTH, height: errorHeight }
+          : COMPACT_EXPANDED_SIZE
         : COMPACT_BASE_SIZE;
     invoke("set_widget_size", size).catch((err) => console.error("set_widget_size failed:", err));
-  }, [mode, flashVisible, isError, flyoutHovered, modes.length, micRows.length]);
+  }, [mode, flashVisible, isError, flyoutHovered, modes.length, micRows.length, errorHeight]);
+
+  // How tall the compact window needs to be to show the whole error.
+  // Measured from the message itself (its full height, ignoring the line
+  // clamp), so a short error stays small and a long one isn't cut off.
+  useLayoutEffect(() => {
+    const el = compactMessageRef.current;
+    if (mode !== "compact" || !flashVisible || !isError || !el) {
+      setErrorHeight(null);
+      return;
+    }
+    const needed = Math.ceil(el.scrollHeight) + COMPACT_ERROR_CHROME;
+    setErrorHeight(Math.min(Math.max(needed, COMPACT_BASE_SIZE.height), COMPACT_ERROR_MAX_HEIGHT));
+  }, [mode, flashVisible, isError, message]);
 
   function toggleRecording() {
     invoke("toggle_recording_command").catch(actionFailed("start recording"));
@@ -683,7 +710,7 @@ function WidgetView() {
   if (mode === "minimal") {
     return (
       <main
-        className="relative flex h-screen w-screen cursor-grab items-center justify-center rounded-full border border-white/10 bg-neutral/90 backdrop-blur-md active:cursor-grabbing"
+        className="dw-widget relative flex h-screen w-screen cursor-grab items-center justify-center overflow-hidden rounded-full border border-white/10 bg-neutral/90 backdrop-blur-md active:cursor-grabbing"
         onMouseDown={startDrag}
       >
         {recordButton}
@@ -694,7 +721,7 @@ function WidgetView() {
 
   if (mode === "detailed") {
     return (
-      <main className="flex h-screen flex-col gap-1.5 rounded-2xl border border-white/10 bg-neutral/90 p-2.5 text-neutral-content backdrop-blur-md">
+      <main className="dw-widget flex h-screen flex-col gap-1.5 overflow-hidden rounded-2xl border border-white/10 bg-neutral/90 p-2.5 text-neutral-content backdrop-blur-md">
         <div className="flex items-center gap-2">
           {recordButton}
           {phase === "recording" && micSilent ? (
@@ -775,7 +802,7 @@ function WidgetView() {
   // Compact
   return (
     <main
-      className={`flex h-screen flex-col gap-1 rounded-2xl border border-white/10 bg-neutral/90 px-2.5 py-2 text-neutral-content backdrop-blur-md ${
+      className={`dw-widget flex h-screen flex-col gap-1 overflow-hidden rounded-2xl border border-white/10 bg-neutral/90 px-2.5 py-2 text-neutral-content backdrop-blur-md ${
         flyoutHovered ? "justify-start" : "justify-center"
       }`}
       onMouseEnter={() => setFlyoutHovered(true)}
@@ -812,8 +839,9 @@ function WidgetView() {
           agentPill
         ) : (
           <span
+            ref={compactMessageRef}
             className={`flex-1 cursor-grab active:cursor-grabbing ${
-              flashing && isError ? "line-clamp-4 text-xs leading-snug" : "truncate text-sm"
+              flashing && isError ? "line-clamp-6 text-xs leading-snug" : "truncate text-sm"
             } ${!flashing && phase === "idle" && warning ? "text-warning" : "opacity-75"}`}
             onMouseDown={startDrag}
             title={flashing ? (message ?? undefined) : phase === "idle" ? warning?.full : undefined}
@@ -832,24 +860,25 @@ function WidgetView() {
         </button>
       </div>
       {flyoutHovered && (
-        <div className="dw-fly-body">
+        <div className="dw-fly-body dw-scroll" data-testid="widget-flyout">
           <div className="dw-fly-label">Microphone</div>
           <div className="dw-fly-col">
             {micRows.map((row) => (
               <button
                 key={row.key}
                 type="button"
-                className={`dw-fly-btn ${row.active ? "sel" : ""}`}
+                className={`dw-fly-btn dw-fly-check ${row.active ? "sel" : ""}`}
                 disabled={row.disabled}
                 onClick={() => pickMic(row.name)}
                 title={row.label}
+                aria-pressed={row.active}
               >
-                {row.label}
+                <span className="truncate">{row.label}</span>
               </button>
             ))}
           </div>
           <div className="dw-fly-label">Mic mode</div>
-          <div className="dw-fly-row">
+          <div className="dw-fly-row dw-seg" role="group" aria-label="Mic mode">
             <button
               type="button"
               className={`dw-fly-btn ${!micMode ? "sel" : ""}`}
@@ -866,7 +895,7 @@ function WidgetView() {
             </button>
           </div>
           <div className="dw-fly-label">Next dictation</div>
-          <div className="dw-fly-col">
+          <div className="dw-fly-grid">
             {modes.map((m) => (
               <button
                 key={m.name}

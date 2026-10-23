@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 import { calls, emit, expect, open, test } from "./fixtures";
 
-test.use({ viewport: { width: 240, height: 360 } });
+test.use({ viewport: { width: 280, height: 360 } });
 
 // Hovering opens the flyout, which in a tall browser viewport moves the
 // vertically-centered record button (the real window grows downward

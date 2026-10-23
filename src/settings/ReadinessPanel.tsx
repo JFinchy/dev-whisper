@@ -8,7 +8,7 @@ import { FIX_LABEL, getReadiness, type ReadinessCheck, type ReadinessFix } from 
 // Setup checklist pinned above every Settings page. Hidden entirely once
 // everything is ready, so it only ever takes space when it has a job.
 // `onNavigate` takes the user to the section that fixes an in-app problem;
-// fixes outside the app (Accessibility, Ollama) are handled here.
+// fixes outside the app (Accessibility, the microphone, Ollama) are handled here.
 export function ReadinessPanel({ onNavigate }: { onNavigate: (fix: ReadinessFix) => void }) {
   const [checks, setChecks] = useState<ReadinessCheck[] | null>(null);
 
@@ -36,6 +36,13 @@ export function ReadinessPanel({ onNavigate }: { onNavigate: (fix: ReadinessFix)
   function fix(kind: ReadinessFix) {
     if (kind === "grant_accessibility") {
       invoke("open_accessibility_settings").catch((err) => notifyError("open_accessibility_settings", err));
+    } else if (kind === "allow_microphone") {
+      // Shows macOS's own prompt; the list refreshes once it's answered.
+      invoke("request_microphone_access")
+        .then(() => getReadiness().then(setChecks))
+        .catch((err) => notifyError("request_microphone_access", err));
+    } else if (kind === "open_microphone_settings") {
+      invoke("open_microphone_settings").catch((err) => notifyError("open_microphone_settings", err));
     } else if (kind === "start_ollama") {
       openUrl("https://ollama.com/download").catch((err) =>
         notifyError("Couldn't open the Ollama download page", err),

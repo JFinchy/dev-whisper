@@ -29,6 +29,10 @@ pub enum Fix {
     GrantAccessibility,
     ChangeShortcut,
     ChooseMicrophone,
+    /// Show macOS's microphone prompt.
+    AllowMicrophone,
+    /// Open System Settings at Privacy & Security > Microphone.
+    OpenMicrophoneSettings,
     StartOllama,
     PullLlmModel,
 }
@@ -50,6 +54,9 @@ pub struct Facts {
     pub copy_only: bool,
     pub hotkey_error: Option<String>,
     pub device: Option<DeviceStatus>,
+    pub mic_access: crate::mic_permission::MicAccess,
+    /// The app's Info.plist has `NSMicrophoneUsageDescription`.
+    pub mic_usage_description: bool,
     /// Models some mode refines with; empty means the LLM isn't used.
     pub llm_models_needed: Vec<String>,
     /// Models Ollama has pulled, or `None` if Ollama isn't reachable.
@@ -135,6 +142,8 @@ pub fn assess(facts: &Facts) -> Vec<Check> {
         },
     });
 
+    checks.push(mic_access_check(facts));
+
     if !facts.llm_models_needed.is_empty() {
         checks.push(match &facts.llm_models_pulled {
             None => Check {
@@ -176,6 +185,55 @@ pub fn assess(facts: &Facts) -> Vec<Check> {
     checks
 }
 
+/// Whether macOS lets the app hear the microphone. Without access the
+/// input stream still runs, but every sample is zero.
+fn mic_access_check(facts: &Facts) -> Check {
+    use crate::mic_permission::MicAccess;
+    let problem = |level, title: &str, detail: &str, fix| Check {
+        id: "mic_access",
+        level,
+        title: title.into(),
+        detail: detail.into(),
+        fix,
+    };
+    if !facts.mic_usage_description {
+        return problem(
+            Level::Error,
+            "This build can't ask for the microphone",
+            "It's missing the microphone permission text macOS requires, so macOS gives it \
+             silence instead of asking. Install the latest version.",
+            None,
+        );
+    }
+    match facts.mic_access {
+        MicAccess::Authorized => ok(
+            "mic_access",
+            "Microphone allowed",
+            "macOS lets Dev Whisper hear the microphone.",
+        ),
+        MicAccess::NotDetermined => problem(
+            Level::Warn,
+            "Allow the microphone",
+            "macOS asks once. Until you allow it, recordings are silent.",
+            Some(Fix::AllowMicrophone),
+        ),
+        MicAccess::Denied => problem(
+            Level::Error,
+            "Microphone access is off",
+            "macOS gives Dev Whisper silence. Turn it on in System Settings > Privacy & \
+             Security > Microphone.",
+            Some(Fix::OpenMicrophoneSettings),
+        ),
+        MicAccess::Restricted => problem(
+            Level::Error,
+            "Microphone blocked by your organization",
+            "A device-management profile on this Mac blocks microphone access for Dev \
+             Whisper. Your IT admin can allow it.",
+            None,
+        ),
+    }
+}
+
 fn ok(id: &'static str, title: &str, detail: &str) -> Check {
     Check {
         id,
@@ -215,6 +273,8 @@ pub fn get_readiness(app: AppHandle) -> Vec<Check> {
             .unwrap()
             .clone(),
         device: recording.audio.device_status(),
+        mic_access: crate::mic_permission::status(),
+        mic_usage_description: crate::mic_permission::usage_description_present(),
         llm_models_pulled: if llm_models_needed.is_empty() {
             None
         } else {
@@ -250,9 +310,43 @@ mod tests {
             device: Some(DeviceStatus::Preferred {
                 using: "AIRHUG 28".into(),
             }),
+            mic_access: crate::mic_permission::MicAccess::Authorized,
+            mic_usage_description: true,
             llm_models_needed: vec![],
             llm_models_pulled: None,
         }
+    }
+
+    #[test]
+    fn microphone_permission_problems_are_reported_with_the_right_fix() {
+        use crate::mic_permission::MicAccess;
+        let with = |mic_access| {
+            assess(&Facts {
+                mic_access,
+                ..healthy()
+            })
+        };
+        let check = |checks: Vec<Check>| checks.into_iter().find(|c| c.id == "mic_access").unwrap();
+
+        let asked = check(with(MicAccess::NotDetermined));
+        assert_eq!(
+            (asked.level, asked.fix),
+            (Level::Warn, Some(Fix::AllowMicrophone))
+        );
+        let denied = check(with(MicAccess::Denied));
+        assert_eq!(
+            (denied.level, denied.fix),
+            (Level::Error, Some(Fix::OpenMicrophoneSettings))
+        );
+        let managed = check(with(MicAccess::Restricted));
+        assert_eq!((managed.level, managed.fix), (Level::Error, None));
+
+        // A build without the Info.plist key can't even be prompted.
+        let unbundled = check(assess(&Facts {
+            mic_usage_description: false,
+            ..healthy()
+        }));
+        assert_eq!(unbundled.level, Level::Error);
     }
 
     fn level(checks: &[Check], id: &str) -> Option<Level> {

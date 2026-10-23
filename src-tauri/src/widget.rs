@@ -31,7 +31,7 @@ impl WidgetMode {
     pub fn base_size(self) -> (f64, f64) {
         match self {
             WidgetMode::Minimal => (46.0, 46.0),
-            WidgetMode::Compact => (220.0, 60.0),
+            WidgetMode::Compact => (280.0, 60.0),
             WidgetMode::Detailed => (320.0, 170.0),
         }
     }

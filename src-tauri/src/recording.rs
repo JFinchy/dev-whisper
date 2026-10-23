@@ -130,11 +130,16 @@ fn start_dictation(app: &AppHandle, state: &RecordingState, session: u64) {
             match silence.observe(level, std::time::Instant::now()) {
                 Some(true) => {
                     let mic = current_mic_name(&state);
-                    crate::applog!("audio: no signal from {mic} for 2s while recording");
-                    let _ = level_app.emit(
-                        "mic-silent",
-                        format!("No sound from {mic}. Is it muted? Hover to switch mics."),
+                    let access = crate::mic_permission::status();
+                    crate::applog!(
+                        "audio: no signal from {mic} for 2s while recording (mic access {access:?})"
                     );
+                    let message = crate::mic_permission::silence_explanation(access)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| {
+                            format!("No sound from {mic}. Is it muted? Hover to switch mics.")
+                        });
+                    let _ = level_app.emit("mic-silent", message);
                 }
                 Some(false) => {
                     crate::applog!("audio: signal resumed");
@@ -291,13 +296,20 @@ fn transcribe_and_paste(
     let transcribed = match samples {
         Ok(samples) if crate::audio::is_dead_air(&samples) => {
             let mic = current_mic_name(&state);
+            let access = crate::mic_permission::status();
             crate::applog!(
-                "audio: recording from {mic} was silent (no signal at all), skipping transcription"
+                "audio: recording from {mic} was silent (no signal at all, mic access {access:?}), \
+                 skipping transcription"
             );
-            let _ = app.emit(
-                "transcript-error",
-                format!("{mic} sent no audio. Is it muted? Hover to switch mics."),
-            );
+            let message = crate::mic_permission::silence_explanation(access)
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    format!(
+                        "{mic} sent no audio. Is it muted, or is the input level at zero in \
+                         System Settings > Sound? Hover to switch mics."
+                    )
+                });
+            let _ = app.emit("transcript-error", message);
             return;
         }
         Ok(samples) => {

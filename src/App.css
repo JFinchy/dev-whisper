@@ -361,14 +361,50 @@ body,
   color: var(--dw-muted);
 }
 
+/* ---------- Widget window ---------- */
+/* The widget window is exactly the size of its content; nothing may
+   scroll the page itself, or macOS draws a full-height overlay scroll
+   bar beside the widget. Lists that can run long scroll inside .dw-scroll. */
+html:has(.dw-widget),
+body:has(.dw-widget) {
+  overflow: hidden;
+}
+
+/* Thin, quiet scroll bar for scrolling areas inside the widget. */
+.dw-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+.dw-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.dw-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dw-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+.dw-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.32);
+  background-clip: padding-box;
+}
+
 /* ---------- Widget: quick-actions hover flyout ---------- */
 .dw-fly-body {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin-top: 6px;
+  padding: 8px 4px 2px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* Takes the rest of the window and scrolls when its lists don't fit. */
+  flex: 1;
+  min-height: 0;
 }
 
 .dw-fly-label {
@@ -398,6 +434,53 @@ body,
   text-align: left;
 }
 
+/* Mode buttons, two per row: half the height of one per row, and names
+   still have ~120px each. */
+.dw-fly-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+/* Mic list rows: a check mark on the one in use instead of a filled
+   button, so a long list stays calm. */
+.dw-fly-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 8px;
+}
+.dw-fly-check::before {
+  content: "";
+  flex: none;
+  width: 10px;
+  height: 6px;
+  margin-top: -3px;
+  border-left: 1.6px solid transparent;
+  border-bottom: 1.6px solid transparent;
+  transform: rotate(-45deg);
+}
+.dw-fly-check.sel::before {
+  border-color: currentColor;
+}
+
+/* Two-way switch (mic mode): one joined control rather than two loose
+   buttons. */
+.dw-seg {
+  gap: 0;
+  padding: 2px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.dw-seg .dw-fly-btn {
+  border-color: transparent;
+  border-radius: 7px;
+}
+.dw-seg .dw-fly-btn.sel {
+  border-color: color-mix(in srgb, var(--dw-accent) 45%, transparent);
+}
+
 .dw-fly-btn {
   flex: 1;
   min-width: 0;
@@ -406,11 +489,19 @@ body,
   text-overflow: ellipsis;
   font-size: 11px;
   font-weight: 600;
-  padding: 5px 4px;
+  padding: 5px 6px;
   border-radius: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   background: transparent;
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.72);
+  transition:
+    background 120ms,
+    border-color 120ms,
+    color 120ms;
+}
+.dw-fly-btn:not(:disabled):not(.sel):hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .dw-fly-btn:disabled {
