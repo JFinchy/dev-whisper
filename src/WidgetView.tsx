@@ -112,25 +112,54 @@ function usingMic(status: DeviceStatus | null): string | null {
 // How many recent level samples the meter shows at once — enough to read
 // as a little waveform rather than a single flickering bar, short enough
 // that the whole strip reacts quickly to a pause or a loud word.
-const LEVEL_BARS = 7;
+// Recent input levels kept for the meter (20 per second, so about 3 s);
+// each meter shows as many of the newest as fit its width.
+const LEVEL_BARS = 64;
 const SILENT_LEVELS = Array<number>(LEVEL_BARS).fill(0);
+const METER_BAR = 3;
+const METER_GAP = 2;
 
-// Small live "is audio actually coming through" indicator, in the spirit
-// of the waveform most other dictation apps show while listening —
-// `levels` is the most recent LEVEL_BARS samples from the backend's
-// `audio-level` event (oldest first), each independently bar-height'd
-// rather than smoothed into one shape, so it visibly reacts to loud vs.
-// quiet speech instead of just pulsing.
+// Live "is audio actually coming through" waveform, in the spirit of the
+// one most dictation apps show while listening. `levels` is the most
+// recent samples from the backend's `audio-level` event (oldest first).
+// It fills whatever width it's given: as many bars as fit, newest on the
+// right, mirrored around the middle, older bars fading out. Levels are
+// square-rooted so quiet speech still visibly moves.
 function LevelMeter({ levels, className }: { levels: number[]; className?: string }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [count, setCount] = useState(12);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const fit = Math.floor((el.clientWidth + METER_GAP) / (METER_BAR + METER_GAP));
+      setCount(Math.max(4, Math.min(fit, levels.length)));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [levels.length]);
+  const shown = levels.slice(-count);
+  // The bars sit in an absolutely positioned layer, so they never give the
+  // meter a width of its own: its width comes only from the layout, and
+  // measuring it can't feed back into it (a resize loop that froze the
+  // widget otherwise).
   return (
-    <div className={`flex h-full items-center gap-[2px] ${className ?? ""}`} data-testid="level-meter">
-      {levels.map((level, i) => (
-        <span
-          key={i}
-          className="w-[3px] shrink-0 rounded-full bg-error transition-[height] duration-100 ease-out"
-          style={{ height: `${Math.max(level * 100, 15)}%` }}
-        />
-      ))}
+    <div ref={ref} className={`relative h-full min-w-0 ${className ?? ""}`} data-testid="level-meter">
+      <div className="absolute inset-0 flex items-center justify-end gap-[2px] overflow-hidden">
+        {shown.map((level, i) => (
+          <span
+            key={i}
+            className="shrink-0 rounded-full bg-error transition-[height] duration-100 ease-out"
+            style={{
+              width: METER_BAR,
+              height: `${Math.max(Math.sqrt(level) * 100, 14)}%`,
+              opacity: 0.35 + 0.65 * ((i + 1) / shown.length),
+            }}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -931,14 +960,19 @@ function WidgetView() {
         <div className="flex items-center gap-2">
           {recordButton}
           <div className="flex h-5 min-w-0 flex-1 cursor-grab items-center gap-2 active:cursor-grabbing" onMouseDown={startDrag}>
-            <span className={`shrink-0 truncate text-xs ${statusTone || "opacity-70"}`}>
-              {phase === "idle" && !flashing && lastPasted ? "Pasted" : shortStatus}
-            </span>
-            {showProgress ? (
-              <ThinProgress stage={activeStage!.stage} percent={activeStage!.percent} />
-            ) : phase === "recording" ? (
-              <LevelMeter levels={levels} className="flex-1" />
-            ) : null}
+            {phase === "recording" && !micSilent ? (
+              <>
+                <LevelMeter levels={levels} className="flex-1" />
+                <span className="shrink-0 text-xs tabular-nums opacity-60">{shortStatus}</span>
+              </>
+            ) : (
+              <>
+                <span className={`shrink-0 truncate text-xs ${statusTone || "opacity-70"}`}>
+                  {phase === "idle" && !flashing && lastPasted ? "Pasted" : shortStatus}
+                </span>
+                {showProgress && <ThinProgress stage={activeStage!.stage} percent={activeStage!.percent} />}
+              </>
+            )}
           </div>
           {discardButton}
           {undoButton}
@@ -1025,11 +1059,8 @@ function WidgetView() {
           </button>
         </div>
         {phase === "recording" && liveText && !micSilent ? (
-          <p
-            className="flex flex-1 items-end overflow-hidden text-xs italic opacity-50"
-            data-testid="live-transcript"
-          >
-            <span className="line-clamp-3">{liveTail(liveText)}</span>
+          <p className="dw-caption-text flex-1 overflow-hidden text-sm leading-snug" data-testid="live-transcript">
+            <span className="line-clamp-5">{liveTail(liveText)}</span>
           </p>
         ) : (
         <p

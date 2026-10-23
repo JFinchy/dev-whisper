@@ -55,6 +55,20 @@ const MIN_DICTATION: usize = 3 * SAMPLE_RATE;
 /// (the audio keeps buffering meanwhile) instead of piling up work.
 const QUEUE_DEPTH: usize = 2;
 const POLL: Duration = Duration::from_millis(100);
+/// While a phrase is still being spoken, how often its draft is refreshed,
+/// and how much speech it needs before the first draft.
+const PREVIEW_EVERY: Duration = Duration::from_millis(700);
+const PREVIEW_MIN_SPEECH: usize = ms(600);
+/// A new draft only once this much more speech has arrived.
+const PREVIEW_STEP: usize = ms(400);
+
+/// Work for the transcriber thread.
+enum Job {
+    /// A finished chunk: its text is part of the transcript.
+    Final(Vec<f32>),
+    /// The phrase still being spoken: a draft shown until its final arrives.
+    Preview(Vec<f32>),
+}
 
 /// A stretch of audio worth transcribing: speech plus padding, as sample
 /// ranges into the recording (silence between ranges is dropped).
@@ -80,7 +94,7 @@ impl Chunk {
 /// Turns a stream of per-window speech/non-speech decisions into chunks.
 /// Knows nothing about audio, so the cutting rules are testable with
 /// scripted decisions.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Chunker {
     /// Samples seen so far (always a whole number of windows).
     pos: usize,
@@ -217,6 +231,18 @@ impl Segmenter {
 
     pub fn total_samples(&self) -> usize {
         self.audio.len()
+    }
+
+    /// Speech in the phrase still being spoken (not yet cut into a chunk).
+    pub fn pending_speech(&self) -> usize {
+        self.chunker.speech_len()
+    }
+
+    /// The audio of the phrase still being spoken, padded like a chunk
+    /// would be, without cutting it.
+    pub fn pending_audio(&self) -> Option<Vec<f32>> {
+        let chunk = self.chunker.clone().finish(self.analyzed)?;
+        Some(chunk.audio(&self.audio))
     }
 
     pub fn emitted_samples(&self) -> usize {
@@ -388,11 +414,33 @@ fn run(
     };
 
     let transcripts = Arc::new(Mutex::new(Transcripts::default()));
-    let (job_tx, job_rx) = mpsc::sync_channel::<Vec<f32>>(QUEUE_DEPTH);
+    let (job_tx, job_rx) = mpsc::sync_channel::<Job>(QUEUE_DEPTH);
+    // Set by the transcriber while it works, so drafts only go to an idle
+    // transcriber and never delay a final chunk.
+    let busy = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // Once the recording has stopped, drafts are pointless and would only
+    // delay the final text.
+    let stopping = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let transcriber = {
-        let (app, transcripts) = (app.clone(), transcripts.clone());
-        std::thread::spawn(move || transcribe_jobs(&app, &job_rx, &transcripts, reply.as_ref()))
+        let (app, transcripts, busy, stopping) = (
+            app.clone(),
+            transcripts.clone(),
+            busy.clone(),
+            stopping.clone(),
+        );
+        std::thread::spawn(move || {
+            transcribe_jobs(
+                &app,
+                &job_rx,
+                &transcripts,
+                &busy,
+                &stopping,
+                reply.as_ref(),
+            )
+        })
     };
+    let mut last_preview = Instant::now();
+    let mut previewed_speech = 0usize;
 
     let mut is_speech = |window: &[f32]| {
         vad.accept_waveform(window);
@@ -406,7 +454,10 @@ fn run(
 
     let recording = loop {
         match finish_rx.recv_timeout(POLL) {
-            Ok(recording) => break recording,
+            Ok(recording) => {
+                stopping.store(true, std::sync::atomic::Ordering::SeqCst);
+                break recording;
+            }
             Err(RecvTimeoutError::Disconnected) => {
                 // Cancelled. Closing the queue ends the transcriber.
                 drop(job_tx);
@@ -426,9 +477,28 @@ fn run(
         let mono = crate::stt::downmix(&raw, channels);
         let resampler = resampler.get_or_insert_with(|| StreamResampler::new(rate));
         let samples = resampler.push(&mono);
-        for chunk in segmenter.push(&samples, &mut is_speech) {
-            if job_tx.send(chunk).is_err() {
+        let chunks = segmenter.push(&samples, &mut is_speech);
+        if !chunks.is_empty() {
+            previewed_speech = 0;
+        }
+        for chunk in chunks {
+            if job_tx.send(Job::Final(chunk)).is_err() {
                 break;
+            }
+        }
+        // A draft of the phrase in progress, when the transcriber is free
+        // and there's enough new speech to say something new.
+        let pending = segmenter.pending_speech();
+        if last_preview.elapsed() >= PREVIEW_EVERY
+            && pending >= PREVIEW_MIN_SPEECH
+            && pending >= previewed_speech + PREVIEW_STEP
+            && !busy.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            if let Some(audio) = segmenter.pending_audio() {
+                if job_tx.try_send(Job::Preview(audio)).is_ok() {
+                    last_preview = Instant::now();
+                    previewed_speech = pending;
+                }
             }
         }
     };
@@ -438,7 +508,7 @@ fn run(
     let analyzed = segmenter.total_samples();
     if recording.len() > analyzed {
         for chunk in segmenter.push(&recording[analyzed..], &mut is_speech) {
-            let _ = job_tx.send(chunk);
+            let _ = job_tx.send(Job::Final(chunk));
         }
     }
     let tail = segmenter.finish();
@@ -464,11 +534,25 @@ fn run(
 /// and publishing the running transcript for the widget.
 fn transcribe_jobs(
     app: &AppHandle,
-    jobs: &mpsc::Receiver<Vec<f32>>,
+    jobs: &mpsc::Receiver<Job>,
     transcripts: &Mutex<Transcripts>,
+    busy: &std::sync::atomic::AtomicBool,
+    stopping: &std::sync::atomic::AtomicBool,
     reply: Option<&crate::agents::WaitingAgent>,
 ) {
-    for audio in jobs {
+    use std::sync::atomic::Ordering;
+    for job in jobs {
+        busy.store(true, Ordering::SeqCst);
+        let audio = match job {
+            Job::Final(audio) => audio,
+            Job::Preview(audio) => {
+                if !stopping.load(Ordering::SeqCst) {
+                    preview(app, &audio, transcripts, reply);
+                }
+                busy.store(false, Ordering::SeqCst);
+                continue;
+            }
+        };
         let state = app.state::<RecordingState>();
         let model = crate::recording::resolve_mode(app, false, reply).model;
         let context = join_texts(&transcripts.lock().unwrap().texts);
@@ -496,6 +580,38 @@ fn transcribe_jobs(
                 transcripts.lock().unwrap().failed = true;
             }
         }
+        busy.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Transcribes the phrase still being spoken (quick pass) and shows it
+/// after the finished text. Never stored: the final chunk replaces it.
+fn preview(
+    app: &AppHandle,
+    audio: &[f32],
+    transcripts: &Mutex<Transcripts>,
+    reply: Option<&crate::agents::WaitingAgent>,
+) {
+    let state = app.state::<RecordingState>();
+    let model = crate::recording::resolve_mode(app, false, reply).model;
+    let context = join_texts(&transcripts.lock().unwrap().texts);
+    let started = Instant::now();
+    match state.whisper.transcribe_preview(audio, model, &context) {
+        Ok(text) => {
+            let text = crate::stt::strip_non_speech(&text);
+            crate::applog!(
+                "live: draft of {:.1}s in {}ms",
+                audio.len() as f32 / SAMPLE_RATE as f32,
+                started.elapsed().as_millis()
+            );
+            if !text.is_empty() {
+                let finished = transcripts.lock().unwrap().texts.clone();
+                let mut parts = finished;
+                parts.push(text);
+                let _ = app.emit("live-transcript", join_texts(&parts));
+            }
+        }
+        Err(err) => crate::applog!("live: draft failed (ignored): {err}"),
     }
 }
 

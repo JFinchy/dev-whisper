@@ -187,6 +187,17 @@ built yet.
   ⇧Esc are registered only while they mean something, so other apps keep
   them, and not at all if the dictation hotkey itself uses Esc
   (`discard.rs`).
+- **Live drafts** — while a phrase is still being spoken, its audio is
+  re-transcribed about every 0.7 s with a quick pass (Whisper's encoder
+  limited to the clip's length, about 30-45% faster on short clips) and
+  shown after the finished text; the phrase's final, full-quality text
+  replaces it at the next pause. Drafts only run when the transcriber is
+  idle and never after you stop, so they can't delay the paste. In the
+  real-speech test, a 12 s run-on sentence shows its first words after
+  1.7 s instead of 12.3 s.
+- **Voice meter fills its space** — as many bars as fit the widget's
+  width, newest on the right, older ones fading, levels square-rooted so
+  quiet speech still moves.
 - **Seven widget styles** — Minimal, Pill (dot and waveform, text on
   hover), Compact, Compact two-line (adds mic and next-dictation mode),
   Notch (black, docked top-center under the menu bar, widens while

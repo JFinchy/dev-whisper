@@ -245,6 +245,31 @@ impl WhisperEngine {
         context: &str,
         on_progress: &(dyn Fn(u8) + Sync),
     ) -> Result<String, String> {
+        self.transcribe(samples, model_override, context, on_progress, false)
+    }
+
+    /// A quick, lower-fidelity pass for the live preview of a phrase that's
+    /// still being spoken: Whisper's encoder is limited to the clip's own
+    /// length (`audio_ctx`) instead of a full 30 s window, which makes a
+    /// few-second clip several times faster. The final transcript never
+    /// uses this.
+    pub fn transcribe_preview(
+        &self,
+        samples: &[f32],
+        model_override: Option<(String, PathBuf)>,
+        context: &str,
+    ) -> Result<String, String> {
+        self.transcribe(samples, model_override, context, &|_| {}, true)
+    }
+
+    fn transcribe(
+        &self,
+        samples: &[f32],
+        model_override: Option<(String, PathBuf)>,
+        context: &str,
+        on_progress: &(dyn Fn(u8) + Sync),
+        quick: bool,
+    ) -> Result<String, String> {
         let model_id = match model_override {
             Some((id, path)) => {
                 self.model_paths.lock().unwrap().insert(id.clone(), path);
@@ -294,10 +319,14 @@ impl WhisperEngine {
             params.set_initial_prompt(&vocab_prompt);
         }
         params.set_n_threads(num_cpus());
-        WHISPER_PROGRESS.store(0, std::sync::atomic::Ordering::Relaxed);
-        params.set_progress_callback_safe(|percent: i32| {
-            WHISPER_PROGRESS.store(percent, std::sync::atomic::Ordering::Relaxed);
-        });
+        if quick {
+            params.set_audio_ctx(preview_audio_ctx(samples.len()));
+        } else {
+            WHISPER_PROGRESS.store(0, std::sync::atomic::Ordering::Relaxed);
+            params.set_progress_callback_safe(|percent: i32| {
+                WHISPER_PROGRESS.store(percent, std::sync::atomic::Ordering::Relaxed);
+            });
+        }
 
         let done = std::sync::atomic::AtomicBool::new(false);
         let result = std::thread::scope(|scope| {
@@ -324,8 +353,8 @@ impl WhisperEngine {
         result.map_err(|e| format!("whisper inference failed: {e}"))?;
 
         // Learn this model's speed on this Mac (short clips are dominated by
-        // fixed overhead and would skew it).
-        if audio_s >= 1.0 {
+        // fixed overhead and would skew it; quick passes aren't comparable).
+        if audio_s >= 1.0 && !quick {
             let measured =
                 (started.elapsed().as_millis() as f32 - TRANSCRIBE_OVERHEAD_MS).max(0.0) / audio_s;
             let mut speeds = self.speed_ms_per_audio_s.lock().unwrap();
@@ -344,6 +373,16 @@ impl WhisperEngine {
 
         Ok(transcript.trim().to_string())
     }
+}
+
+/// Encoder context for a clip of `samples` (16 kHz): Whisper's 1500 frames
+/// cover 30 s, so 50 per second, plus a margin so the last word isn't cut.
+/// Rounded up to a multiple of 64: whisper.cpp's Metal backend aborts the
+/// process (`GGML_ASSERT(nb01 % 8 == 0)`) on other values.
+pub fn preview_audio_ctx(samples: usize) -> i32 {
+    let seconds = samples as f32 / WHISPER_SAMPLE_RATE as f32;
+    let frames = (seconds * 50.0).ceil() as i32 + 64;
+    (((frames + 63) / 64) * 64).clamp(128, 1472)
 }
 
 /// How much of the earlier transcript is fed back as prompt. Whisper keeps
@@ -548,6 +587,20 @@ mod tests {
         assert_eq!(estimated_percent(10.0, 0.0), 0);
     }
     use super::*;
+
+    #[test]
+    fn preview_audio_ctx_is_metal_safe_and_bounded() {
+        for samples in [0, 1, 8_000, 16_000, 47_999, 160_000, 480_000, 2_000_000] {
+            let ctx = preview_audio_ctx(samples);
+            assert_eq!(ctx % 64, 0, "{samples} samples -> {ctx}");
+            assert!((128..=1500).contains(&ctx));
+            let needed = (samples as f32 / 16_000.0 * 50.0).ceil() as i32;
+            assert!(
+                ctx >= needed.min(1472),
+                "{samples} samples -> {ctx} < {needed}"
+            );
+        }
+    }
     use std::sync::Mutex;
 
     /// `transcribes_without_panicking` and

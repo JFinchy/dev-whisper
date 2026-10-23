@@ -61,6 +61,12 @@ passed.
 models, point it at another file:
 `DW_E2E_MODEL=/path/to/ggml-small.en-q5_1.bin bun run test:audio`.
 
+`live_drafts_show_words_before_the_phrase_ends` streams a long sentence
+with no pause and checks that draft text (the quick pass,
+`WhisperEngine::transcribe_preview`) shows up seconds before the phrase is
+cut into a chunk; `quick_pass_is_faster_on_short_clips` times the quick
+and full passes against each other.
+
 The audio tests run one at a time (`--test-threads=1`): Whisper's progress
 counter is process-wide, so two transcriptions running at once would mix
 up each other's progress checks.

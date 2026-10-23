@@ -316,3 +316,175 @@ mod tests {
         );
     }
 }
+
+/// Live drafts: a long sentence spoken without a pause is only cut into a
+/// chunk at its end, so without drafts nothing shows until then. Streams
+/// the audio as if live (wall-clock time is simulated from audio time plus
+/// measured inference time) and reports when text first appears, how fast
+/// the quick draft pass is against a full pass, and the drafts' accuracy.
+#[test]
+#[ignore = "needs macOS `say` and a Whisper model; run with `bun run test:audio`"]
+fn live_drafts_show_words_before_the_phrase_ends() {
+    let model = model_path();
+    assert!(model.exists(), "no Whisper model at {}", model.display());
+    let vad_model = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/silero_vad.onnx");
+    let sentence = "So what I'd like to do next is split the recording module into two parts, \
+                    one that only captures audio and one that decides when to stop, \
+                    and then add tests for both of them before we touch the widget again.";
+    let dir = std::env::temp_dir().join(format!("dw-audio-draft-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let wav = dir.join("sentence.wav");
+    speak(sentence, &wav).unwrap();
+    let mut recording = crate::stt::load_samples_16k_mono(&wav).unwrap();
+    recording.extend(std::iter::repeat_n(0.0f32, 16_000)); // a second of silence after
+    let audio_s = recording.len() as f32 / 16_000.0;
+
+    let engine = WhisperEngine::new("e2e".into(), model);
+    engine.ensure_loaded().expect("model failed to load");
+    let vad = crate::live::vad_from_model(&vad_model).expect("VAD failed to load");
+    let mut is_speech = |window: &[f32]| {
+        vad.accept_waveform(window);
+        let speech = vad.detected();
+        vad.clear();
+        speech
+    };
+
+    let mut segmenter = crate::live::Segmenter::new();
+    let mut first_final_at: Option<f32> = None;
+    let mut first_draft_at: Option<f32> = None;
+    let mut busy_until = 0.0f32; // simulated time the transcriber is free
+    let mut last_draft = -10.0f32;
+    let mut drafted_speech = 0usize;
+    let mut drafts = 0;
+    let (mut quick_ms, mut quick_audio) = (0u128, 0.0f32);
+    let mut last_draft_text = String::new();
+    for (i, piece) in recording.chunks(1600).enumerate() {
+        let now = (i + 1) as f32 * 0.1;
+        for chunk in segmenter.push(piece, &mut is_speech) {
+            let started = Instant::now();
+            let text = engine
+                .transcribe_samples_in_context(&chunk, None, "", &|_| {})
+                .unwrap();
+            let done = now.max(busy_until) + started.elapsed().as_secs_f32();
+            busy_until = done;
+            if !crate::stt::strip_non_speech(&text).is_empty() {
+                first_final_at.get_or_insert(done);
+            }
+        }
+        let pending = segmenter.pending_speech();
+        if now - last_draft >= 0.7
+            && pending >= 9_600
+            && pending >= drafted_speech + 6_400
+            && now >= busy_until
+        {
+            if let Some(audio) = segmenter.pending_audio() {
+                let started = Instant::now();
+                let text = engine.transcribe_preview(&audio, None, "").unwrap();
+                let elapsed = started.elapsed();
+                quick_ms += elapsed.as_millis();
+                quick_audio += audio.len() as f32 / 16_000.0;
+                busy_until = now + elapsed.as_secs_f32();
+                last_draft = now;
+                drafted_speech = pending;
+                drafts += 1;
+                let text = crate::stt::strip_non_speech(&text);
+                if !text.is_empty() {
+                    first_draft_at.get_or_insert(busy_until);
+                    last_draft_text = text;
+                }
+            }
+        }
+    }
+    if let Some(tail) = segmenter.finish() {
+        let started = Instant::now();
+        let text = engine
+            .transcribe_samples_in_context(&tail, None, "", &|_| {})
+            .unwrap();
+        if !crate::stt::strip_non_speech(&text).is_empty() {
+            first_final_at.get_or_insert(audio_s + started.elapsed().as_secs_f32());
+        }
+    }
+
+    // Full pass vs quick pass on the same clip (the last draft's audio).
+    let clip = segmenter_clip(&recording);
+    let started = Instant::now();
+    let full_text = engine.transcribe_samples(&clip, None).unwrap();
+    let full_ms = started.elapsed().as_millis();
+    let started = Instant::now();
+    let quick_text = engine.transcribe_preview(&clip, None, "").unwrap();
+    let quick_clip_ms = started.elapsed().as_millis();
+    let draft_wer = wer(sentence, &crate::stt::strip_non_speech(&quick_text));
+    let full_wer = wer(sentence, &crate::stt::strip_non_speech(&full_text));
+
+    println!(
+        "\nlive drafts: {audio_s:.1}s of continuous speech, {drafts} drafts ({:.0} ms per audio second)\n  first text without drafts: {:.1}s\n  first text with drafts:    {:.1}s\n  same {:.1}s clip: full pass {full_ms}ms (WER {full_wer:.3}), quick pass {quick_clip_ms}ms (WER {draft_wer:.3})\n  last draft {last_draft_text:?}\n",
+        quick_ms as f32 / quick_audio.max(0.1),
+        first_final_at.unwrap_or(f32::NAN),
+        first_draft_at.unwrap_or(f32::NAN),
+        clip.len() as f32 / 16_000.0,
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let first_draft = first_draft_at.expect("drafts should show text during the sentence");
+    let first_final = first_final_at.expect("the sentence should be transcribed");
+    assert!(
+        first_draft < first_final - 2.0,
+        "drafts should show words well before the phrase is cut ({first_draft:.1}s vs {first_final:.1}s)"
+    );
+    assert!(
+        draft_wer <= 0.25,
+        "draft WER {draft_wer:.3} is too high for a preview"
+    );
+}
+
+/// The speech part of a recording (trailing silence dropped), for timing
+/// one clip both ways.
+fn segmenter_clip(recording: &[f32]) -> Vec<f32> {
+    let end = recording
+        .iter()
+        .rposition(|s| s.abs() > 0.001)
+        .map_or(recording.len(), |i| i + 1);
+    recording[..end].to_vec()
+}
+
+/// Times the full and quick passes fairly: alternating, several times, at
+/// several clip lengths (the first call on a model is slower). Drafts are
+/// short clips, where the quick pass has to win.
+#[test]
+#[ignore = "needs macOS `say` and a Whisper model; run with `bun run test:audio`"]
+fn quick_pass_is_faster_on_short_clips() {
+    let model = model_path();
+    let dir = std::env::temp_dir().join(format!("dw-audio-quick-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let wav = dir.join("s.wav");
+    speak("So what I'd like to do next is split the recording module into two parts, one that only captures audio and one that decides when to stop, and then add tests for both of them.", &wav).unwrap();
+    let audio = crate::stt::load_samples_16k_mono(&wav).unwrap();
+    let engine = WhisperEngine::new("e2e".into(), model);
+    engine.ensure_loaded().unwrap();
+    let _ = engine.transcribe_samples(&audio[..32_000], None); // warm up
+    for secs in [1.5f32, 3.0, 5.0, 8.0] {
+        let clip = &audio[..((secs * 16_000.0) as usize).min(audio.len())];
+        let (mut full, mut quick) = (Vec::new(), Vec::new());
+        for _ in 0..4 {
+            let t = Instant::now();
+            let _ = engine.transcribe_samples(clip, None).unwrap();
+            full.push(t.elapsed().as_millis());
+            let t = Instant::now();
+            let _ = engine.transcribe_preview(clip, None, "").unwrap();
+            quick.push(t.elapsed().as_millis());
+        }
+        full.sort();
+        quick.sort();
+        println!(
+            "clip {secs:>4.1}s: full median {}ms, quick median {}ms",
+            full[2], quick[2]
+        );
+        if secs <= 5.0 {
+            assert!(
+                quick[2] < full[2],
+                "quick pass not faster on a {secs}s clip"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
